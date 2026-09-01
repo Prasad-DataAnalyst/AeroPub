@@ -51,8 +51,9 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Per-State profiles and the fixture capture tool
 - [x] Publication watcher — adaptive cadence, change detection, overdue
 - [x] Immutable content-addressed archive, and the HTTP transport
+- [x] Universal change record and generic operational impact
 - [ ] First real fixture captured from a State
-- [ ] eAIP parser and the first change record
+- [ ] eAIP parser feeding facts into the change record
 
 ## Development
 

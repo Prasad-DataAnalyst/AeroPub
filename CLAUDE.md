@@ -41,7 +41,13 @@ it rather than quietly using it.
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
-HTTP transport. Next: a captured fixture from a real State, then the eAIP parser built against it.
+HTTP transport, the universal change record and the generic impact layer. Next: a captured fixture
+from a real State, then the eAIP parser built against it.
+
+Layers one and two carry no operator context. A generic impact statement that names a fleet, a
+network or a customer has leaked tenant reasoning upward; there is a test asserting none of them do.
+Where no rule covers an attribute, say so — a plausible sentence about something nobody modelled
+reads exactly like one that was.
 
 The archive has no delete, prune or purge, and must not grow one. Content-addressed storage
 deduplicates unchanged fetches, which is what makes keeping everything affordable.
