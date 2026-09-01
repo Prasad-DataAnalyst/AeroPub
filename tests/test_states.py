@@ -9,6 +9,9 @@ checked.
 
 import pytest
 
+from datetime import date
+
+from aeropub.airac import AiracCycle, cycle_for
 from aeropub.registry import DetectionTier, Source, SourceFormat, SourceKind
 from aeropub.states import StateProfile, get_profile, profiles
 from aeropub.states import qatar
@@ -92,15 +95,71 @@ class TestVerification:
         assert [s.source_id for s in profile.unverified_sources()] == ["unchecked"]
 
 
+OBSERVED_URLS = {
+    # Live Qatar eAIP addresses seen in a public search index on 01 SEP 2026.
+    # Not fetched — the host is blocked from the build environment — but these
+    # are real addresses on the authority's own domain, and the URL builders
+    # must reproduce them exactly or the structure inference is wrong.
+    "1801-pdf": "https://www.aim.gov.qa/eaip/2018-01-04-AIRAC/pdf/GEN-0.1.pdf",
+    "2201-html": "https://www.aim.gov.qa/eaip/2022-01-27-AIRAC/html/eAIP/GEN-0.1-en-GB.html",
+    "2210-html": "https://www.aim.gov.qa/eaip/2022-10-06-AIRAC/html/eAIP/GEN-3.1-en-GB.html",
+    "2505-aic": "https://www.aim.gov.qa/eaip/2025-05-15-AIRAC/html/eAIC/eAIC-2025-03-A-en-GB.html",
+    "2510-aic": "https://www.aim.gov.qa/eaip/2025-10-02-AIRAC/html/eAIC/eAIC-2025-07-A-en-GB.html",
+}
+
+
+class TestQatarUrlStructure:
+    """The builders must reproduce real observed addresses, exactly."""
+
+    def test_section_html_url(self):
+        c = AiracCycle.from_identifier("2201")
+        assert qatar.eaip_section_url(c, "GEN-0.1") == OBSERVED_URLS["2201-html"]
+
+    def test_section_html_url_other_cycle(self):
+        c = AiracCycle.from_identifier("2210")
+        assert qatar.eaip_section_url(c, "GEN-3.1") == OBSERVED_URLS["2210-html"]
+
+    def test_section_pdf_url(self):
+        c = AiracCycle.from_identifier("1801")
+        assert qatar.eaip_pdf_url(c, "GEN-0.1") == OBSERVED_URLS["1801-pdf"]
+
+    def test_circular_url(self):
+        c = AiracCycle.from_identifier("2505")
+        assert qatar.eaic_url(c, 2025, 3) == OBSERVED_URLS["2505-aic"]
+
+    def test_circular_number_is_zero_padded(self):
+        c = AiracCycle.from_identifier("2510")
+        assert qatar.eaic_url(c, 2025, 7) == OBSERVED_URLS["2510-aic"]
+
+    def test_edition_is_addressed_by_airac_effective_date(self):
+        # The path carries the effective date, not the cycle identifier, so the
+        # AIRAC calendar is what addresses the publication.
+        c = AiracCycle.from_identifier("2201")
+        assert c.effective_date.isoformat() in qatar.eaip_base(c)
+        assert c.identifier not in qatar.eaip_base(c)
+
+    @pytest.mark.parametrize("url", sorted(OBSERVED_URLS.values()))
+    def test_every_observed_date_is_a_real_airac_date(self, url):
+        # Independent cross-check of the AIRAC calendar against a State's own
+        # published paths, spanning 2018 to 2025.
+        stamp = url.split("/eaip/")[1].split("-AIRAC")[0]
+        day = date.fromisoformat(stamp)
+        assert cycle_for(day).effective_date == day
+
+
 class TestQatar:
     def test_is_registered_and_retrievable(self):
         assert get_profile("OT") is qatar.PROFILE
         assert get_profile("ot") is qatar.PROFILE
 
-    def test_carries_the_addresses_the_operator_supplied(self):
-        urls = {s.url for s in qatar.PROFILE.sources}
-        assert qatar.AIM_URL in urls
-        assert qatar.DATASETS_URL in urls
+    def test_carries_the_dataset_catalogue_the_operator_supplied(self):
+        assert qatar.DATASETS_URL in {s.url for s in qatar.PROFILE.sources}
+
+    def test_sources_for_a_cycle_address_that_edition(self):
+        c = AiracCycle.from_identifier("2601")
+        built = qatar.sources_for(c)
+        assert all(qatar.eaip_base(c) in s.url for s in built)
+        assert all(not s.is_verified for s in built)
 
     def test_nothing_claims_to_be_verified(self):
         # The host was unreachable from the build environment. Until a capture
