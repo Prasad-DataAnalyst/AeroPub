@@ -50,8 +50,9 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Source registry and live status board — API keys, State URLs, freshness
 - [x] Per-State profiles and the fixture capture tool
 - [x] Publication watcher — adaptive cadence, change detection, overdue
-- [ ] One live source end to end, with a working provenance receipt
-- [ ] First change record
+- [x] Immutable content-addressed archive, and the HTTP transport
+- [ ] First real fixture captured from a State
+- [ ] eAIP parser and the first change record
 
 ## Development
 

@@ -40,9 +40,11 @@ it rather than quietly using it.
 ## Build order
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
-board, per-State profiles, the fixture capture tool and the publication watcher. Next: an HTTP
-fetcher implementing the `Fetcher` protocol, then one live source end to end, once fixtures can be
-captured.
+board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
+HTTP transport. Next: a captured fixture from a real State, then the eAIP parser built against it.
+
+The archive has no delete, prune or purge, and must not grow one. Content-addressed storage
+deduplicates unchanged fetches, which is what makes keeping everything affordable.
 
 **This build environment has no outbound web access.** Egress policy blocks every external host
 except package registries, so no source can be reached from here. Capture fixtures from a networked
