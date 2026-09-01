@@ -96,7 +96,9 @@ holding one, plus a masked hint.
 ### Adding a State
 
 States do not publish alike, so each gets its own module under
-`src/aeropub/states/`. See `qatar.py`. A profile records what the State
+`src/aeropub/states/`. See `qatar.py` and `saudi_arabia.py` — two Gulf States under the same
+ICAO framework that address their editions with entirely different URL grammar, which is why
+there is no shared guess. A profile records what the State
 publishes and where, and keeps three things apart: **registered** (we have a
 URL), **verified** (a human confirmed it serves what we think), and **absent**
 (the State genuinely does not publish this) — with everything else reported as

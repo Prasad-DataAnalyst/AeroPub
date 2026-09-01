@@ -89,9 +89,9 @@ class StateProfile:
 
 def profiles() -> dict[str, StateProfile]:
     """Every State profile currently implemented, by location indicator prefix."""
-    from aeropub.states import qatar
+    from aeropub.states import qatar, saudi_arabia
 
-    return {p.code: p for p in (qatar.PROFILE,)}
+    return {p.code: p for p in (qatar.PROFILE, saudi_arabia.PROFILE)}
 
 
 def get_profile(code: str) -> StateProfile:

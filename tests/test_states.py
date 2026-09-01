@@ -14,7 +14,7 @@ from datetime import date
 from aeropub.airac import AiracCycle, cycle_for
 from aeropub.registry import DetectionTier, Source, SourceFormat, SourceKind
 from aeropub.states import StateProfile, get_profile, profiles
-from aeropub.states import qatar
+from aeropub.states import qatar, saudi_arabia
 
 
 def a_source(source_id="x", kind=SourceKind.AIP, **kw) -> Source:
@@ -186,3 +186,121 @@ class TestRegistryOfProfiles:
     def test_unknown_state_error_names_what_is_implemented(self):
         with pytest.raises(KeyError, match="implemented"):
             get_profile("ZZ")
+
+
+SAUDI_OBSERVED = {
+    # Live Saudi eAIP addresses seen in a public search index on 01 SEP 2026.
+    # Not fetched — the host is blocked from the build environment — but real
+    # addresses on the authority's own domain. The builders must reproduce them
+    # exactly, or the structure decoding is wrong.
+    "aic-2025-05": "https://aimss.sans.com.sa/assets/FileManagerFiles/AIC/OE-eAIC-2025-05-en-SA.pdf",
+    "aic-2024-08": "https://aimss.sans.com.sa/assets/FileManagerFiles/AIC/OE-eAIC-2024-08-en-SA.pdf",
+    "amdt-2405": (
+        "https://aimss.sans.com.sa/assets/FileManagerFiles/"
+        "AIRAC%20AIP%20AMDT%2005_24_2024_05_16/eAIC/03-2019_2019_03_28/OE-AIC-en-GB.html"
+    ),
+    "amdt-2511": (
+        "https://aimss.sans.com.sa/assets/FileManagerFiles/"
+        "AIRAC%20AIP%20AMDT%2011_25_2025_10_30/eAIC/07-2024_2024_10_29/OE-AIC-en-GB.html"
+    ),
+    "amdt-2601": (
+        "https://aimss.sans.com.sa/assets/FileManagerFiles/"
+        "AIRAC%20AIP%20AMDT%2001_26_2026_01_22/eAIC/05-2025_2025_10_30/OE-AIC-en-GB.html"
+    ),
+}
+
+
+class TestSaudiUrlStructure:
+    """The builders must reproduce real observed addresses, exactly."""
+
+    def test_standalone_circular_pdf(self):
+        assert saudi_arabia.standalone_circular_url(2025, 5) == SAUDI_OBSERVED["aic-2025-05"]
+        assert saudi_arabia.standalone_circular_url(2024, 8) == SAUDI_OBSERVED["aic-2024-08"]
+
+    @pytest.mark.parametrize(
+        "edition,number,year,issued,key",
+        [
+            ("2405", 3, 2019, date(2019, 3, 28), "amdt-2405"),
+            ("2511", 7, 2024, date(2024, 10, 29), "amdt-2511"),
+            ("2601", 5, 2025, date(2025, 10, 30), "amdt-2601"),
+        ],
+    )
+    def test_circular_inside_an_amendment_edition(self, edition, number, year, issued, key):
+        url = saudi_arabia.circular_url(
+            AiracCycle.from_identifier(edition), number, year, issued
+        )
+        assert url == SAUDI_OBSERVED[key]
+
+    def test_a_circular_date_is_not_always_an_airac_date(self):
+        # 29 October 2024 sits inside edition 2411, which became effective on
+        # the 31st. Typing the circular date as a cycle would have produced
+        # confidently wrong URLs that 404 in silence.
+        assert cycle_for(date(2024, 10, 29)).effective_date != date(2024, 10, 29)
+        assert AiracCycle.from_identifier("2411").effective_date == date(2024, 10, 31)
+
+    @pytest.mark.parametrize(
+        "identifier,expected",
+        [
+            ("2405", "AIRAC AIP AMDT 05_24_2024_05_16"),
+            ("2511", "AIRAC AIP AMDT 11_25_2025_10_30"),
+            ("2601", "AIRAC AIP AMDT 01_26_2026_01_22"),
+        ],
+    )
+    def test_amendment_directory_name(self, identifier, expected):
+        assert saudi_arabia.amendment_name(AiracCycle.from_identifier(identifier)) == expected
+
+    def test_the_amendment_number_is_the_cycle_ordinal(self):
+        # Decoded, not assumed: three editions spanning 2024 to 2026 agree.
+        for identifier in ("2405", "2511", "2601"):
+            cycle = AiracCycle.from_identifier(identifier)
+            name = saudi_arabia.amendment_name(cycle)
+            assert name.split()[3].startswith(f"{cycle.ordinal:02d}_")
+
+    def test_spaces_in_the_directory_name_are_encoded(self):
+        url = saudi_arabia.amendment_base(AiracCycle.from_identifier("2601"))
+        assert " " not in url
+        assert "%20" in url
+
+    @pytest.mark.parametrize(
+        "identifier,stamp",
+        [("2405", date(2024, 5, 16)), ("2511", date(2025, 10, 30)), ("2601", date(2026, 1, 22))],
+    )
+    def test_every_edition_date_is_a_real_airac_date(self, identifier, stamp):
+        # Independent cross-check of the calendar against a second State's own
+        # published paths. Edition dates are regular; circular dates are not.
+        assert cycle_for(stamp).effective_date == stamp
+        assert AiracCycle.from_identifier(identifier).effective_date == stamp
+
+
+class TestSaudiProfile:
+    def test_is_registered_under_its_location_indicator_prefix(self):
+        assert get_profile("OE") is saudi_arabia.PROFILE
+        assert saudi_arabia.PROFILE.code == "OE"
+
+    def test_nothing_claims_to_be_verified(self):
+        assert saudi_arabia.PROFILE.unverified_sources() == saudi_arabia.PROFILE.sources
+
+    def test_nothing_is_declared_absent_without_checking(self):
+        assert saudi_arabia.PROFILE.absent == frozenset()
+
+    def test_submission_cutoff_is_distinct_from_the_icao_distribution_deadline(self):
+        # 70/84 days is an internal originator deadline; ICAO's 42/56 governs
+        # AIS to recipients. Different stages, and conflating them misreads both.
+        from aeropub.airac import DISTRIBUTION_LEAD_DAYS, MAJOR_CHANGE_LEAD_DAYS
+        assert saudi_arabia.SUBMISSION_CUTOFF_DAYS > DISTRIBUTION_LEAD_DAYS
+        assert saudi_arabia.MAJOR_SUBMISSION_CUTOFF_DAYS > MAJOR_CHANGE_LEAD_DAYS
+
+
+class TestStatesDifferFromEachOther:
+    def test_two_gulf_states_address_editions_differently(self):
+        # Same region, same ICAO framework, different URL grammar — which is why
+        # each State gets a module rather than one shared guess.
+        cycle = AiracCycle.from_identifier("2601")
+        qa = qatar.eaip_base(cycle)
+        sa = saudi_arabia.amendment_base(cycle)
+        assert cycle.effective_date.isoformat() in qa
+        assert cycle.effective_date.isoformat() not in sa
+        assert f"{cycle.ordinal:02d}_" in sa
+
+    def test_both_are_registered(self):
+        assert {"OT", "OE"} <= set(profiles())
