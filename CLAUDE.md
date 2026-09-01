@@ -31,5 +31,9 @@ These are not style preferences. Breaking any of them breaks the product's core 
 
 ## Build order
 
-Plan section 30. Currently: AIRAC calendar and the bitemporal fact model done; next is one
-live source end to end.
+Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
+board. Next: one live source end to end, once the FAA API key arrives.
+
+Secrets never enter the registry, the database, a log or a status board. A source that needs a key
+holds a `CredentialRef` — the name of an environment variable plus a masked hint. Read the secret at
+point of use and do not cache it.

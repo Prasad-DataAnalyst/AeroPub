@@ -47,6 +47,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 
 - [x] AIRAC cycle calendar — the time spine every other component consumes
 - [x] `Fact` and `SourceRef` model — the bitemporal core, with CES resolution
+- [x] Source registry and live status board — API keys, State URLs, freshness
 - [ ] One live source end to end, with a working provenance receipt
 - [ ] Publication watcher
 - [ ] First change record
