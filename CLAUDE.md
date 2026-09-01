@@ -20,6 +20,14 @@ These are not style preferences. Breaking any of them breaks the product's core 
 5. **Deterministic before probabilistic.** Rules first, LLM assistance second, and never to suppress
    a rule hit. An LLM may write a parser; it does not read each document at runtime.
 
+## Secrets
+
+Never accept, store, log or commit a credential. The registry holds a `CredentialRef` — the *name*
+of an environment variable plus a masked hint — and reads the secret at point of use without caching
+it. Capture strips request headers from fixture metadata so a captured file can be committed
+publicly. If a credential ever appears in conversation or a file, say so plainly and advise rotating
+it rather than quietly using it.
+
 ## Conventions
 
 - Python 3.10+, standard library only unless a dependency genuinely earns its place.

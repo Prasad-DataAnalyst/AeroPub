@@ -8,6 +8,8 @@ tests honest by the same standard it exists to enforce.
 import hashlib
 import json
 
+import pytest
+
 from aeropub.capture import capture, fixture_dir
 
 
@@ -50,6 +52,53 @@ class TestCapture:
         src.write_bytes(b"after")
         second = capture(src.as_uri(), "v2", into=tmp_path / "fx")
         assert first["content_hash"] != second["content_hash"]
+
+
+class TestAuthenticatedCapture:
+    """A captured fixture must be safe to commit to a public repository."""
+
+    def test_credentials_never_reach_the_fixture(self, tmp_path):
+        src = tmp_path / "served.html"
+        src.write_bytes(b"protected content")
+        secret = "session=super-secret-token"
+
+        meta = capture(
+            src.as_uri(), "protected", into=tmp_path / "fx",
+            headers={"Cookie": secret},
+        )
+
+        written = (tmp_path / "fx" / "protected.json").read_text()
+        assert secret not in written
+        assert "super-secret-token" not in written
+        assert secret not in json.dumps(meta)
+
+    def test_records_that_a_capture_was_authenticated(self, tmp_path):
+        # Enough to know the fixture came from a logged-in session; not enough
+        # to repeat the request.
+        src = tmp_path / "served.html"
+        src.write_bytes(b"x")
+        meta = capture(
+            src.as_uri(), "protected", into=tmp_path / "fx",
+            headers={"Cookie": "session=abc"},
+        )
+        assert meta["authenticated"] == ["Cookie"]
+
+    def test_unauthenticated_capture_records_nothing(self, tmp_path):
+        src = tmp_path / "served.html"
+        src.write_bytes(b"x")
+        meta = capture(src.as_uri(), "open", into=tmp_path / "fx")
+        assert meta["authenticated"] == []
+
+
+class TestHeaderParsing:
+    def test_splits_on_the_first_colon(self):
+        from aeropub.capture import _parse_header
+        assert _parse_header("Cookie: a=1; b=2") == ("Cookie", "a=1; b=2")
+
+    def test_rejects_a_header_without_a_colon(self):
+        from aeropub.capture import _parse_header
+        with pytest.raises(ValueError, match="Name: value"):
+            _parse_header("Cookie")
 
 
 class TestFixtureLocation:

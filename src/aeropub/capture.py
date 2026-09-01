@@ -18,6 +18,17 @@ Each capture writes two files into ``tests/fixtures/``:
     ``SourceRef`` when the fixture is replayed, so a test asserts against data
     with the same provenance chain as production.
 
+Sources behind a login are captured by passing a header from a browser session
+you are already signed into::
+
+    python -m aeropub.capture https://aim.gov.qa/datasets.html \
+        --as ot-datasets --header "Cookie: $QATAR_AIM_COOKIE"
+
+The secret stays on your machine. It is never written into the fixture, never
+recorded in the metadata, and never needs to be shared with anyone — request
+headers are dropped from what gets saved, precisely so a captured fixture can
+be committed to a public repository without leaking the session that fetched it.
+
 Deliberately uses only the standard library, so it runs anywhere without a
 virtualenv — including on a laptop that merely has network access.
 """
@@ -42,10 +53,21 @@ USER_AGENT = (
 
 DEFAULT_TIMEOUT = 60
 
+#: Request headers never reach the fixture metadata. A captured file is meant to
+#: be committed, and a Cookie or Authorization header in it would be a leak.
+_NEVER_RECORDED = frozenset({"cookie", "authorization", "proxy-authorization", "x-api-key"})
+
 
 def fixture_dir() -> Path:
     """Where fixtures live, relative to the repository root."""
     return Path(__file__).resolve().parents[2] / "tests" / "fixtures"
+
+
+def _parse_header(raw: str) -> tuple[str, str]:
+    name, sep, value = raw.partition(":")
+    if not sep or not name.strip():
+        raise ValueError(f"header must be 'Name: value', got {raw!r}")
+    return name.strip(), value.strip()
 
 
 def capture(
@@ -54,12 +76,20 @@ def capture(
     *,
     into: Path | None = None,
     timeout: int = DEFAULT_TIMEOUT,
+    headers: dict[str, str] | None = None,
 ) -> dict:
-    """Fetch ``url`` and write it as a fixture pair. Returns the metadata."""
+    """Fetch ``url`` and write it as a fixture pair. Returns the metadata.
+
+    ``headers`` may carry authentication for a source behind a login. Whatever
+    is passed is used for the request and then discarded — it does not appear in
+    the returned metadata or the written files.
+    """
     target = into or fixture_dir()
     target.mkdir(parents=True, exist_ok=True)
 
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    sent = {"User-Agent": USER_AGENT}
+    sent.update(headers or {})
+    request = urllib.request.Request(url, headers=sent)
     fetched_at = datetime.now(timezone.utc)
 
     with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -78,7 +108,12 @@ def capture(
         "http_status": status,
         "content_hash": digest,
         "content_length": len(body),
-        "headers": headers,
+        "response_headers": headers,
+        # Which request headers were sent, by name only. Enough to know a
+        # capture was authenticated; not enough to repeat it.
+        "authenticated": sorted(
+            n for n in (sent.keys() - {"User-Agent"}) if n.lower() in _NEVER_RECORDED
+        ),
     }
 
     (target / f"{name}.raw").write_bytes(body)
@@ -100,10 +135,28 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--into", type=Path, default=None)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT)
+    parser.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="'Name: value'",
+        help=(
+            "request header, repeatable. Use for sources behind a login, e.g. "
+            "--header \"Cookie: $SESSION\". Never written to the fixture."
+        ),
+    )
     args = parser.parse_args(argv)
 
     try:
-        meta = capture(args.url, args.name, into=args.into, timeout=args.timeout)
+        extra = dict(_parse_header(h) for h in args.header)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+
+    try:
+        meta = capture(
+            args.url, args.name, into=args.into, timeout=args.timeout, headers=extra
+        )
     except urllib.error.HTTPError as exc:
         print(f"HTTP {exc.code} from {args.url}", file=sys.stderr)
         return 1
@@ -116,6 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  http {meta['http_status']}   sha256 {meta['content_hash'][:16]}...")
     print(f"  wrote {where / (args.name + '.raw')}")
     print(f"  wrote {where / (args.name + '.json')}")
+    if meta["authenticated"]:
+        print(f"  authenticated via {', '.join(meta['authenticated'])} "
+              "(header not recorded in the fixture)")
     if meta["final_url"] != meta["url"]:
         print("  note: redirected — update the registry URL to the final address")
     return 0

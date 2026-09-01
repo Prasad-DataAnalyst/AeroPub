@@ -72,8 +72,24 @@ python -m aeropub.capture https://aim.gov.qa/datasets.html --as ot-datasets
 ```
 
 It writes `tests/fixtures/<name>.raw` and `<name>.json` — the body byte for byte,
-plus the url, fetch time, HTTP status, headers and SHA-256 needed to cite it.
-Commit both.
+plus the url, fetch time, HTTP status, response headers and SHA-256 needed to
+cite it. Commit both.
+
+For a source behind a login, pass a header from a browser session you are
+already signed into:
+
+```bash
+python -m aeropub.capture https://aim.gov.qa/datasets.html \
+    --as ot-datasets --header "Cookie: $QATAR_AIM_COOKIE"
+```
+
+The secret stays on your machine. Request headers are dropped from what gets
+saved — the fixture records only *that* a capture was authenticated, never how —
+so it is safe to commit to a public repository.
+
+**Never put a credential in a source file, a commit, or a message.** Secrets
+belong in your environment; the registry stores only the name of the variable
+holding one, plus a masked hint.
 
 ### Adding a State
 
