@@ -31,4 +31,5 @@ These are not style preferences. Breaking any of them breaks the product's core 
 
 ## Build order
 
-Plan section 30. Currently: AIRAC calendar done; next is the `Fact` and `SourceRef` model.
+Plan section 30. Currently: AIRAC calendar and the bitemporal fact model done; next is one
+live source end to end.

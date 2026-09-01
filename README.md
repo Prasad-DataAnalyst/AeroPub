@@ -46,7 +46,7 @@ These are settled and deliberate. [`docs/plan.md`](docs/plan.md) has the reasoni
 Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 
 - [x] AIRAC cycle calendar — the time spine every other component consumes
-- [ ] `Fact` and `SourceRef` model — the bitemporal core
+- [x] `Fact` and `SourceRef` model — the bitemporal core, with CES resolution
 - [ ] One live source end to end, with a working provenance receipt
 - [ ] Publication watcher
 - [ ] First change record
