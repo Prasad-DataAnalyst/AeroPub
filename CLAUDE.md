@@ -32,7 +32,17 @@ These are not style preferences. Breaking any of them breaks the product's core 
 ## Build order
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
-board. Next: one live source end to end, once the FAA API key arrives.
+board, per-State profiles and the fixture capture tool. Next: one live source end to end, once
+fixtures can be captured.
+
+**This build environment has no outbound web access.** Egress policy blocks every external host
+except package registries, so no source can be reached from here. Capture fixtures from a networked
+machine with `python -m aeropub.capture` and commit them; parsers are then built against those.
+Never fill the gap by writing what a source is assumed to return.
+
+Keep three coverage states apart and never let them look alike: **registered** (a URL exists),
+**verified** (a human confirmed it), **absent** (the State genuinely does not publish it). Anything
+else is unknown, and unknown is reported, not assumed.
 
 Secrets never enter the registry, the database, a log or a status board. A source that needs a key
 holds a `CredentialRef` — the name of an environment variable plus a masked hint. Read the secret at

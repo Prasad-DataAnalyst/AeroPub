@@ -48,6 +48,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] AIRAC cycle calendar — the time spine every other component consumes
 - [x] `Fact` and `SourceRef` model — the bitemporal core, with CES resolution
 - [x] Source registry and live status board — API keys, State URLs, freshness
+- [x] Per-State profiles and the fixture capture tool
 - [ ] One live source end to end, with a working provenance receipt
 - [ ] Publication watcher
 - [ ] First change record
@@ -60,3 +61,25 @@ python -m pytest
 ```
 
 Requires Python 3.10 or later. No runtime dependencies yet.
+
+### Capturing a fixture
+
+Parsers are built against real captured responses, never against hand-written
+expectations. Run this from a machine that can reach the source:
+
+```bash
+python -m aeropub.capture https://aim.gov.qa/datasets.html --as ot-datasets
+```
+
+It writes `tests/fixtures/<name>.raw` and `<name>.json` — the body byte for byte,
+plus the url, fetch time, HTTP status, headers and SHA-256 needed to cite it.
+Commit both.
+
+### Adding a State
+
+States do not publish alike, so each gets its own module under
+`src/aeropub/states/`. See `qatar.py`. A profile records what the State
+publishes and where, and keeps three things apart: **registered** (we have a
+URL), **verified** (a human confirmed it serves what we think), and **absent**
+(the State genuinely does not publish this) — with everything else reported as
+unknown rather than assumed.

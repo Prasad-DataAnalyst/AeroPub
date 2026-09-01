@@ -226,6 +226,13 @@ class Source:
     """Overrides the tier default when a source needs its own cadence."""
 
     url_history: tuple[UrlChange, ...] = ()
+    verified_at: datetime | None = None
+    """When a human last confirmed this URL serves what we think it does.
+
+    A registered URL is a claim until someone checks it. An unverified source
+    is not an error, but it is not evidence either, and the board says so.
+    """
+
     note: str = ""
 
     def __post_init__(self) -> None:
@@ -236,6 +243,14 @@ class Source:
             raise ValueError(f"Source.url must be an http(s) URL, got {self.url!r}")
         if self.interval is not None and self.interval <= timedelta(0):
             raise ValueError("Source.interval must be positive")
+
+    @property
+    def is_verified(self) -> bool:
+        return self.verified_at is not None
+
+    def verified(self, at: datetime | None = None) -> "Source":
+        """A copy marked as confirmed by a human at ``at``."""
+        return replace(self, verified_at=at or _utcnow())
 
     @property
     def check_interval(self) -> timedelta:
@@ -333,6 +348,11 @@ class StatusRow:
     consecutive_failures: int
     credential_status: CredentialStatus | None
     last_error: str | None
+
+    @property
+    def is_unverified(self) -> bool:
+        """Registered but never confirmed against the authority's own site."""
+        return not self.source.is_verified
 
     @property
     def needs_attention(self) -> bool:
@@ -561,17 +581,18 @@ def render_board(rows: list[StatusRow], *, now: datetime | None = None) -> str:
     moment = now or _utcnow()
     header = (
         f"{'':1} {'AUTHORITY':9} {'SOURCE':26} {'STATE':18} "
-        f"{'LAST CHECK':12} {'FRESHNESS':13} {'KEY':12}"
+        f"{'LAST CHECK':12} {'FRESHNESS':13} {'KEY':12} {'URL':10}"
     )
     lines = [header, "-" * len(header)]
 
     for row in rows:
         marker = "!" if row.needs_attention else " "
         key = row.credential_status.value if row.credential_status else "-"
+        url_state = "unverified" if row.is_unverified else "verified"
         lines.append(
             f"{marker} {row.source.authority:9} {row.source.name[:26]:26} "
             f"{row.state.value:18} {_ago(row.last_checked_at, moment):12} "
-            f"{row.freshness.value:13} {key:12}"
+            f"{row.freshness.value:13} {key:12} {url_state:10}"
         )
         if row.last_error:
             lines.append(f"{'':12}  error: {row.last_error}")
