@@ -52,6 +52,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Publication watcher — adaptive cadence, change detection, overdue
 - [x] Immutable content-addressed archive, and the HTTP transport
 - [x] Universal change record and generic operational impact
+- [x] Validation harness — physical, relational and continuity invariants
 - [ ] First real fixture captured from a State
 - [ ] eAIP parser feeding facts into the change record
 

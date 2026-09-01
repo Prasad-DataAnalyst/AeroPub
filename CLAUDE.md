@@ -41,8 +41,13 @@ it rather than quietly using it.
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
-HTTP transport, the universal change record and the generic impact layer. Next: a captured fixture
-from a real State, then the eAIP parser built against it.
+HTTP transport, the universal change record, the generic impact layer and the validation harness.
+Next: a captured fixture from a real State, then the eAIP parser built against it.
+
+Validation findings are graded, and the grades mean different things. INVALID cannot be true and is
+quarantined; SUSPECT is probably a unit error and is held for confirmation; ADVISORY is unusual but
+legitimate and publishes with a note. Never promote an advisory to a failure to be safe — a harness
+that cries wolf gets switched off, which costs more than the false negative it was avoiding.
 
 Layers one and two carry no operator context. A generic impact statement that names a fleet, a
 network or a customer has leaked tenant reasoning upward; there is a test asserting none of them do.

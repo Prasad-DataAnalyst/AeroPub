@@ -5,6 +5,7 @@ from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
 from aeropub.provenance import Confidence, SourceRef
+from aeropub.validation import Finding, Severity, validate
 from aeropub.registry import (
     CheckOutcome,
     CredentialRef,
@@ -33,6 +34,7 @@ __all__ = [
     "DetectionTier",
     "Fact",
     "FactStore",
+    "Finding",
     "Impact",
     "Freshness",
     "Precedence",
@@ -44,11 +46,13 @@ __all__ = [
     "SourceRegistry",
     "SourceState",
     "StatusRow",
+    "Severity",
     "assess",
     "current_cycle",
     "cycle_for",
     "diff_cycles",
     "diff_effective",
+    "validate",
     "cycles_in_year",
     "render_board",
 ]
