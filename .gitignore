@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test and type-checking caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Source archive and working data — never committed.
+# The raw store is an immutable archive of fetched publications; it lives in
+# object storage, not in git. See docs/plan.md section 27 on why it is never pruned.
+/data/
+/archive/
+*.sqlite
+*.db
