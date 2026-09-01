@@ -49,8 +49,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] `Fact` and `SourceRef` model — the bitemporal core, with CES resolution
 - [x] Source registry and live status board — API keys, State URLs, freshness
 - [x] Per-State profiles and the fixture capture tool
+- [x] Publication watcher — adaptive cadence, change detection, overdue
 - [ ] One live source end to end, with a working provenance receipt
-- [ ] Publication watcher
 - [ ] First change record
 
 ## Development

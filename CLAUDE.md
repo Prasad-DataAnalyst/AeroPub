@@ -40,8 +40,9 @@ it rather than quietly using it.
 ## Build order
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
-board, per-State profiles and the fixture capture tool. Next: one live source end to end, once
-fixtures can be captured.
+board, per-State profiles, the fixture capture tool and the publication watcher. Next: an HTTP
+fetcher implementing the `Fetcher` protocol, then one live source end to end, once fixtures can be
+captured.
 
 **This build environment has no outbound web access.** Egress policy blocks every external host
 except package registries, so no source can be reached from here. Capture fixtures from a networked
