@@ -53,6 +53,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Immutable content-addressed archive, and the HTTP transport
 - [x] Universal change record and generic operational impact
 - [x] Validation harness — physical, relational and continuity invariants
+- [x] NOTAM parser — Q-line and Items A–G, built from the ICAO format
 - [ ] First real fixture captured from a State
 - [ ] eAIP parser feeding facts into the change record
 

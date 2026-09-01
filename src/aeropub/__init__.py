@@ -5,6 +5,7 @@ from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
 from aeropub.provenance import Confidence, SourceRef
+from aeropub.notam import Notam, NotamKind, QLine
 from aeropub.validation import Finding, Severity, validate
 from aeropub.registry import (
     CheckOutcome,
@@ -36,8 +37,11 @@ __all__ = [
     "FactStore",
     "Finding",
     "Impact",
+    "Notam",
+    "NotamKind",
     "Freshness",
     "Precedence",
+    "QLine",
     "Redistribution",
     "Source",
     "SourceFormat",

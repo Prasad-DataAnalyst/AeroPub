@@ -41,8 +41,13 @@ it rather than quietly using it.
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
-HTTP transport, the universal change record, the generic impact layer and the validation harness.
-Next: a captured fixture from a real State, then the eAIP parser built against it.
+HTTP transport, the universal change record, the generic impact layer, the validation harness and
+the NOTAM parser. Next: a captured fixture from a real State, then the eAIP parser built against it.
+
+NOTAM is the one source parseable from its specification rather than a captured sample, because
+ICAO defines the format. An eAIP is not — every State invents its own layout, so those parsers wait
+for fixtures. The NOTAM Q-code tables are a deliberate subset: decode only codes carrying no doubt
+and leave the rest as None. A half-decoded reading looks like a complete one.
 
 Validation findings are graded, and the grades mean different things. INVALID cannot be true and is
 quarantined; SUSPECT is probably a unit error and is held for confirmation; ADVISORY is unusual but
