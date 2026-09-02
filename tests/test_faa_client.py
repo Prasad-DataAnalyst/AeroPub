@@ -25,7 +25,12 @@ import pytest
 
 from aeropub.archive import Archive
 from aeropub.faa.auth import AccessToken, TokenClient
-from aeropub.faa.client import NmsClient, _NoRedirect, parse_signed_url
+from aeropub.faa.client import (
+    MAX_THROTTLE_WAIT,
+    NmsClient,
+    _NoRedirect,
+    parse_signed_url,
+)
 from aeropub.faa.config import ENVIRONMENTS
 from aeropub.faa.errors import (
     NmsAuthError,
@@ -496,6 +501,50 @@ class TestFailureModes:
         router = Router({"/v1/ping": urllib.error.URLError("no route to host")})
         with pytest.raises(NmsTransportError, match="could not reach"):
             _client(router).ping()
+
+    def test_a_waiting_caller_holds_instead_of_reporting_the_faa_unavailable(self):
+        # A one-shot diagnostic makes four sequential calls to one host. If it
+        # raised on its own politeness gap it would report the FAA unavailable
+        # for a delay entirely of our own making — a false alarm about somebody
+        # else's service, which is worse than the delay it avoids.
+        router = Router({"/v1/ping": (b"pong", 200, {})})
+        moment = [NOW]
+        slept = []
+
+        client = NmsClient(
+            ENVIRONMENTS["prod"],
+            tokens=_tokens(lambda: moment[0]),
+            throttle=HostThrottle(gap=timedelta(seconds=2)),
+            opener=router,
+            clock=lambda: moment[0],
+            wait_for_throttle=True,
+            sleep=lambda s: (slept.append(s), moment.__setitem__(0, moment[0] + timedelta(seconds=s))),
+        )
+        client.ping()
+        client.ping()
+
+        assert slept == [2.0]
+        assert len(router.requests) == 2
+
+    def test_a_waiting_caller_still_refuses_an_unreasonable_hold(self):
+        # Past the ceiling it raises. A check that pauses for six hours is not
+        # waiting, it is hanging, and the operator cannot tell the difference.
+        router = Router({"/v1/ping": (b"pong", 200, {})})
+        throttle = HostThrottle(gap=timedelta(0))
+        throttle.back_off(
+            ENVIRONMENTS["prod"].url("ping"), MAX_THROTTLE_WAIT + timedelta(seconds=1), at=NOW
+        )
+        client = NmsClient(
+            ENVIRONMENTS["prod"],
+            tokens=_tokens(),
+            throttle=throttle,
+            opener=router,
+            clock=lambda: NOW,
+            wait_for_throttle=True,
+            sleep=lambda s: pytest.fail("should not have slept"),
+        )
+        with pytest.raises(NmsUnavailableError, match="holding off"):
+            client.ping()
 
     def test_the_throttle_holds_a_host_off_rather_than_hammering_it(self):
         # A State or an authority that blocks our address becomes a silent

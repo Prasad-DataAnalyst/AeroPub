@@ -225,6 +225,24 @@ class TestVerify:
         assert [s["name"] for s in document["stages"]][-1] == "ping"
         assert {c["env_var"] for c in document["credentials"]} == set(BOTH)
 
+    def test_the_check_builds_a_client_that_waits_for_the_throttle(self, monkeypatch):
+        # Regression. The stages run back to back against one host, so with the
+        # default two-second gap the data stage failed with "the FAA is
+        # unavailable" when nothing was wrong with the FAA at all.
+        import aeropub.faa.check as check_module
+
+        captured = {}
+
+        class Recording(NmsClient):
+            def __init__(self, *args, **kwargs):
+                captured.update(kwargs)
+                raise NmsTransportError("stop here — construction is what is under test")
+
+        monkeypatch.setattr(check_module, "NmsClient", Recording)
+        with pytest.raises(NmsTransportError):
+            verify(ENVIRONMENTS["staging"], environ=BOTH)
+        assert captured["wait_for_throttle"] is True
+
     def test_an_unreachable_gateway_reports_the_stage_that_broke(self):
         report = verify(
             ENVIRONMENTS["staging"],

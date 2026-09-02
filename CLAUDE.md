@@ -51,6 +51,14 @@ credentials are named and never held, and the two responses that *are* credentia
 the signed-URL handover — are the only things excluded from the archive. `docs/faa-nms.md` has the
 reasoning. Do not add a connector that hardcodes a host.
 
+Every connector gets a conformance run like `tests/test_faa_conformance.py`: a real HTTPS server
+speaking the authority's documented contract, driving the unmodified client over a real socket.
+Mocked transport tests prove logic and prove nothing about plumbing, and the faults they cannot
+reach — a redirect followed when it should not be, a header lost on the wire, our own throttle
+reported as the authority's outage — only appear against a live service, which is the worst place
+to find them. Note what it does *not* prove: that the authority behaves as documented. Only
+`python -m aeropub.faa.check` against the real endpoint shows that.
+
 NOTAM is the one source parseable from its specification rather than a captured sample, because
 ICAO defines the format. An eAIP is not — every State invents its own layout, so those parsers wait
 for fixtures. The NOTAM Q-code tables are a deliberate subset: decode only codes carrying no doubt

@@ -31,6 +31,26 @@ display version and a real version.
 
 Exit codes: `0` verified, `1` credentials, `2` unavailable, `3` protocol.
 
+## What "working" has been proven to mean
+
+Two different claims, and they are not interchangeable.
+
+**The client conforms to the documented contract.** `tests/test_faa_conformance.py`
+stands up an HTTPS server implementing the FAA's onboarding pack and drives the
+unmodified client through the whole sequence over a real socket, real TLS and
+real urllib: token, ping, filtered NOTAM, checklist, both handover forms, the
+unauthenticated storage download, gunzip, AIXM parse, and a citation resolving
+back to archived bytes. Nothing is stubbed. That is what catches faults the
+mocked tests structurally cannot — whether urllib really declines the redirect,
+whether the `HTTPError` really carries `Location`, whether the bearer survives
+the wire.
+
+**The FAA's gateway matches its own documentation.** Only a call against the
+real service shows that, and `python -m aeropub.faa.check` is how it is made.
+Until it has been run with a real key, that claim is untested. If it then
+fails, the conformance suite is what tells you the fault is the FAA differing
+from its specification rather than our transport being broken.
+
 ## Environments
 
 | Name | Host | Notes |
@@ -95,6 +115,15 @@ refusing us".
 **It sniffs the bundle.** GCS can transcode a gzipped object on the way out, so
 the payload may arrive already decompressed. A client that assumes gzip fails
 on the whole feed.
+
+**It waits for its own throttle rather than blaming the FAA.** The host gap
+protects a small AIS estate from a scheduler running many sources, and there
+refusing and rescheduling is right — sleeping would stall the whole tick. But a
+diagnostic making four sequential calls to one host is not abusive, and
+reporting "the FAA is unavailable" because our own two-second gap had not
+elapsed is a false alarm about somebody else's service. `check` opts into
+waiting, up to `MAX_THROTTLE_WAIT`; past that it raises, because a check that
+pauses for six hours is not waiting, it is hanging.
 
 **It measures token expiry against our clock.** Never against the gateway's
 `issued_at`: the two clocks differ, and trusting theirs means holding a token

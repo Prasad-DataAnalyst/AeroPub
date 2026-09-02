@@ -212,6 +212,10 @@ def verify(
         tokens=TokenClient(env, creds, environ=env_map),
         archive=archive,
         environ=env_map,
+        # Stages run back to back against one host. Without this the check
+        # reports the FAA unavailable when what actually happened is that our
+        # own two-second host gap had not elapsed since the previous stage.
+        wait_for_throttle=True,
     )
     try:
         token = active.tokens.token(force=True)

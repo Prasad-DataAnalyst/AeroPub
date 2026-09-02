@@ -54,6 +54,7 @@ from aeropub.http import USER_AGENT, HostThrottle
 
 __all__ = [
     "GZIP_MAGIC",
+    "MAX_THROTTLE_WAIT",
     "InitialLoad",
     "NmsClient",
     "NmsResponse",
@@ -63,6 +64,11 @@ __all__ = [
 
 #: First two bytes of any gzip member (RFC 1952).
 GZIP_MAGIC = b"\x1f\x8b"
+
+#: The longest a waiting caller will hold for the host throttle. Past this it
+#: raises instead, because a diagnostic that pauses for six hours is not
+#: waiting, it is hanging, and the operator cannot tell the difference.
+MAX_THROTTLE_WAIT = timedelta(seconds=30)
 
 
 def _utcnow() -> datetime:
@@ -213,6 +219,8 @@ class NmsClient:
         timeout: int = 120,
         opener: Callable[..., Any] | None = None,
         clock: Callable[[], datetime] = _utcnow,
+        wait_for_throttle: bool = False,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.environment = environment or load_environment(environ=environ)
         self.tokens = tokens or TokenClient(self.environment, environ=environ)
@@ -220,6 +228,14 @@ class NmsClient:
         self.throttle = throttle or HostThrottle()
         self.timeout = timeout
         self._clock = clock
+        # The host gap protects a State's estate from a scheduler running many
+        # sources; refusing and rescheduling is right there, because sleeping
+        # would stall the whole tick. A one-shot diagnostic making four
+        # sequential calls to one host is not abusive, and reporting "the FAA
+        # is unavailable" because our own politeness gap has not elapsed is a
+        # false alarm about somebody else's service. So it waits instead.
+        self.wait_for_throttle = wait_for_throttle
+        self._sleep = sleep
         # No redirect handler: the initial-load handover crosses hosts carrying
         # an Authorization header, and that hop must be made deliberately.
         self._opener = opener or urllib.request.build_opener(
@@ -274,11 +290,16 @@ class NmsClient:
 
         now = self._clock()
         if not self.throttle.may_request(url, now=now):
-            wait = int((self.throttle.ready_at(url, now=now) - now).total_seconds())
-            raise NmsUnavailableError(
-                f"holding off {self.environment.host} for another {wait}s",
-                retry_after=wait,
-            )
+            remaining = self.throttle.ready_at(url, now=now) - now
+            if self.wait_for_throttle and remaining <= MAX_THROTTLE_WAIT:
+                self._sleep(max(remaining.total_seconds(), 0))
+                now = self._clock()
+            else:
+                wait = int(remaining.total_seconds())
+                raise NmsUnavailableError(
+                    f"holding off {self.environment.host} for another {wait}s",
+                    retry_after=wait,
+                )
         self.throttle.record_request(url, at=now)
 
         started = time.monotonic()
