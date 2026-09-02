@@ -1,0 +1,14 @@
+{
+  "name": "nms-initial-load-sample",
+  "source_id": "FAA-NMS",
+  "authority": "FAA (US Federal Aviation Administration)",
+  "document": "NMS-API sample initial load (AIXM 5.1)",
+  "origin": "delivered by the FAA with API registration, as nmsapi_sample_initial_load.xml",
+  "delivery": "email attachment, not an HTTP capture",
+  "captured_by": "not python -m aeropub.capture; this file arrived out of band and is stored verbatim",
+  "content_hash": "c0c157490d4b9df423655a78526b09687054c5ae726c3c279bb2e99641972a16",
+  "content_length": 9083,
+  "content_type": "application/xml",
+  "feed_timestamp": "2025-09-12T17:24:02.017Z",
+  "note": "Real FAA-issued sample content, stored byte for byte and unedited. It carries two genuine NOTAM (8WC runway end identifier lights, and a ZBW UAS airspace notice) and no credential of any kind. The numberReturned attribute reports 21468 because the sample is an excerpt of a full domestic load; tests assert against the two messages actually present and treat the mismatch as the truncation signal it is."
+}

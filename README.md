@@ -54,7 +54,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Universal change record and generic operational impact
 - [x] Validation harness — physical, relational and continuity invariants
 - [x] NOTAM parser — Q-line and Items A–G, built from the ICAO format
-- [ ] First real fixture captured from a State
+- [x] FAA NMS-API connector — OAuth2, AIXM 5.1, and the first live State source
+- [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 
 ## Development
@@ -94,6 +95,29 @@ so it is safe to commit to a public repository.
 **Never put a credential in a source file, a commit, or a message.** Secrets
 belong in your environment; the registry stores only the name of the variable
 holding one, plus a masked hint.
+
+### Connecting the FAA
+
+The first live credentialed source. The FAA issues an OAuth2 pair on a
+spreadsheet during onboarding — the **KEY** column is the client id, **SECRET**
+is the client secret:
+
+```bash
+export FAA_NMS_CLIENT_ID=...
+export FAA_NMS_CLIENT_SECRET=...
+export FAA_NMS_ENVIRONMENT=fit      # fit, staging or prod
+
+python -m aeropub.faa.check         # add --json for the machine-readable report
+```
+
+The check runs configuration → credentials → token → ping → data and stops at
+the first failure, so the output names the stage that broke. Nothing it prints
+can contain a secret.
+
+When the FAA moves a host or renames a path, correct it in a JSON overlay named
+by `AEROPUB_FAA_NMS_CONFIG` — no code change, no release.
+[`docs/faa-nms.md`](docs/faa-nms.md) has the connector's reasoning, including
+the three things the FAA's own curl examples do not tell you.
 
 ### Adding a State
 

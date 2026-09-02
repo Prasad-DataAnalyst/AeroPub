@@ -41,8 +41,15 @@ it rather than quietly using it.
 
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
-HTTP transport, the universal change record, the generic impact layer, the validation harness and
-the NOTAM parser. Next: a captured fixture from a real State, then the eAIP parser built against it.
+HTTP transport, the universal change record, the generic impact layer, the validation harness, the
+NOTAM parser, and the FAA NMS-API connector. Next: a captured fixture from a State that publishes
+an eAIP, then the eAIP parser built against it.
+
+`src/aeropub/faa/` is the reference shape for every connector that follows: where the service lives
+is data an operator can correct from a JSON overlay while the service runs (`AEROPUB_FAA_NMS_CONFIG`),
+credentials are named and never held, and the two responses that *are* credentials — the token and
+the signed-URL handover — are the only things excluded from the archive. `docs/faa-nms.md` has the
+reasoning. Do not add a connector that hardcodes a host.
 
 NOTAM is the one source parseable from its specification rather than a captured sample, because
 ICAO defines the format. An eAIP is not — every State invents its own layout, so those parsers wait

@@ -88,10 +88,19 @@ class StateProfile:
 
 
 def profiles() -> dict[str, StateProfile]:
-    """Every State profile currently implemented, by location indicator prefix."""
-    from aeropub.states import qatar, saudi_arabia
+    """Every State profile currently implemented, by location indicator prefix.
 
-    return {p.code: p for p in (qatar.PROFILE, saudi_arabia.PROFILE)}
+    The United States profile is built rather than imported, so its addresses
+    reflect whichever NMS environment is configured now. A board showing
+    production URLs for a connection pointed at staging would be wrong in the
+    quiet way that matters.
+    """
+    from aeropub.states import qatar, saudi_arabia, united_states
+
+    return {
+        p.code: p
+        for p in (qatar.PROFILE, saudi_arabia.PROFILE, united_states.profile())
+    }
 
 
 def get_profile(code: str) -> StateProfile:

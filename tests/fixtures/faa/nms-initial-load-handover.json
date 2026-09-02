@@ -1,0 +1,15 @@
+{
+  "name": "nms-initial-load-handover",
+  "source_id": "FAA-NMS",
+  "authority": "FAA (US Federal Aviation Administration)",
+  "document": "NMS-API initial-load handover response",
+  "origin": "delivered by the FAA with API registration, as nms_api_initial_load_example.json",
+  "delivery": "email attachment, not an HTTP capture",
+  "content_hash": "42b9c267dae31c36e4a256e82090b72e8b721c873b298e650c7fcb079fc6221d",
+  "content_length": 444,
+  "content_type": "application/json",
+  "redacted": [
+    "data.url X-Goog-Signature"
+  ],
+  "note": "The FAA's own example, with one field removed. The X-Goog-Signature value is a Google Cloud Storage V4 bearer capability; this one expired 300 seconds after 2025-09-12T17:25:04Z and grants nothing, but a credential-shaped string is not committed to a public repository regardless of its state. Everything the parser reads \u2014 the bucket path, the parameter set, X-Goog-Date and X-Goog-Expires \u2014 is intact and unedited."
+}

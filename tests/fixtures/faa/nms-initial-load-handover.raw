@@ -1,0 +1,6 @@
+{
+   "status": "Success",
+   "data": {
+      "url": "https://storage.googleapis.com/faa-nms-cfn-nms-initial-load-preprod/INITIAL_LOAD/DOM/initial_load_aixm_20250912T172401Z.gz?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Credential=nms-api-sa%40faa-staging-preprod-main-0.iam.gserviceaccount.com%2F20250912%2Fauto%2Fstorage%2Fgoog4_request&X-Goog-Date=20250912T172504Z&X-Goog-Expires=300&X-Goog-SignedHeaders=host&X-Goog-Signature=REDACTED"
+   }
+}
