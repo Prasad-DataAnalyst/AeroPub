@@ -50,6 +50,7 @@ from aeropub.faa.client import NmsClient, _NoRedirect
 from aeropub.faa.config import ClientCredentials, NmsEndpoint, NmsEnvironment
 from aeropub.faa.errors import NmsAuthError, NmsConfigurationError
 from aeropub.http import HostThrottle
+from aeropub.netcheck import Layer, probe
 
 pytestmark = pytest.mark.skipif(
     shutil.which("openssl") is None,
@@ -482,7 +483,7 @@ class TestDriftOverTheWire:
 
 class TestCheckOverTheWire:
     def test_the_operator_check_reports_a_verified_connection(
-        self, environment, client
+        self, environment, client, opener
     ):
         from aeropub.faa.check import EXIT_OK, verify
 
@@ -493,18 +494,24 @@ class TestCheckOverTheWire:
                 "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
             },
             client=client,
+            network_probe=probe(environment.url("ping"), opener=opener),
         )
         assert report.exit_code == EXIT_OK, report.render()
         assert [s.name for s in report.stages] == [
-            "configuration", "credentials", "token", "ping",
+            "configuration", "credentials", "network", "token", "ping",
         ]
         assert report.ok
+        # The network stage really probed the gateway, credential-free, and
+        # got the 401 an unauthenticated caller should get.
+        assert report.network["reachable"] and report.network["http_status"] == 401
         # A recognition hint, and nothing more: the leading characters of the
         # token never appear, whatever its length.
         assert report.token["masked"].startswith("****")
         assert TOKEN_PAYLOAD["access_token"][:8] not in report.token["masked"]
 
-    def test_the_verified_report_never_carries_the_token(self, environment, client):
+    def test_the_verified_report_never_carries_the_token(
+        self, environment, client, opener
+    ):
         from aeropub.faa.check import verify
 
         report = verify(
@@ -514,6 +521,7 @@ class TestCheckOverTheWire:
                 "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
             },
             client=client,
+            network_probe=probe(environment.url("ping"), opener=opener),
         )
         rendered = report.render() + json.dumps(report.to_dict())
         assert TOKEN_PAYLOAD["access_token"] not in rendered
@@ -545,13 +553,14 @@ class TestCheckOverTheWire:
         report = verify(
             environment, environ=environ, client=client, fetch_data=True,
             archive=client.archive,
+            network_probe=probe(environment.url("ping"), opener=opener),
         )
         stages = [s.name for s in report.stages]
-        assert stages == ["configuration", "credentials", "token", "ping", "data"]
+        assert stages == ["configuration", "credentials", "network", "token", "ping", "data"]
         assert "holding off" not in "".join(s.detail for s in report.stages)
 
     def test_the_data_stage_refuses_to_call_a_short_read_verified(
-        self, environment, client
+        self, environment, client, opener
     ):
         # The sample is an excerpt claiming 21,468 messages. Two arrive. The
         # check reports that and fails, rather than presenting two NOTAM as a
@@ -568,6 +577,7 @@ class TestCheckOverTheWire:
             client=client,
             fetch_data=True,
             archive=client.archive,
+            network_probe=probe(environment.url("ping"), opener=opener),
         )
         data = [s for s in report.stages if s.name == "data"][0]
         assert "2 NOTAM read of 21468" in data.detail

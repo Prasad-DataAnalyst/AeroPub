@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
 from aeropub.faa.config import ClientCredentials, NmsEnvironment, load_environment
+from aeropub.netcheck import opener_for
 from aeropub.faa.errors import (
     NmsAuthError,
     NmsConfigurationError,
@@ -172,7 +173,7 @@ class TokenClient:
         # the caller. What must never happen, and does not, is this class
         # copying a secret out of it into state of its own.
         self._environ = environ
-        self._opener = opener or urllib.request.urlopen
+        self._opener = opener or opener_for(environ=environ)
         self._clock = clock
         self._token: AccessToken | None = None
         self._lock = threading.Lock()

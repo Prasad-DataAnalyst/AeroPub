@@ -7,7 +7,7 @@ present credential looks identical to a working one until something asks.
 Run it after installing a key, after the FAA changes anything, and from the
 status screen. It reports in stages, so a failure names the stage that broke:
 
-    configuration → credentials → token → ping → data
+    configuration → credentials → network → token → ping → data
 
 ``--json`` emits the same report as a document, which is what the status API
 serves and what the console screen renders. No stage of it can print a secret:
@@ -41,14 +41,20 @@ from aeropub.faa.errors import (
     NmsUnavailableError,
 )
 from aeropub.faa.sources import credential_rows
+from aeropub.netcheck import Probe, probe
 
 __all__ = ["ConnectionReport", "StageResult", "main", "verify"]
+
 
 #: Exit codes, so a scheduled check can be acted on without parsing output.
 EXIT_OK = 0
 EXIT_CREDENTIALS = 1
 EXIT_UNAVAILABLE = 2
 EXIT_PROTOCOL = 3
+EXIT_NETWORK = 4
+"""Something between us and the FAA refused the connection. Distinct from
+UNAVAILABLE because the remedy is a network administrator rather than
+patience, and distinct from CREDENTIALS because the key is very likely fine."""
 
 
 @dataclass
@@ -80,6 +86,7 @@ class ConnectionReport:
     stages: list[StageResult] = field(default_factory=list)
     credentials: list[dict[str, Any]] = field(default_factory=list)
     token: dict[str, Any] | None = None
+    network: dict[str, Any] | None = None
     exit_code: int = EXIT_OK
 
     @property
@@ -98,6 +105,7 @@ class ConnectionReport:
             "ok": self.ok,
             "exit_code": self.exit_code,
             "credentials": self.credentials,
+            "network": self.network,
             "token": self.token,
             "stages": [asdict(stage) for stage in self.stages],
         }
@@ -120,6 +128,15 @@ class ConnectionReport:
         lines.append("")
         lines.append("Connection")
         lines.extend(stage.line() for stage in self.stages)
+        if self.network:
+            lines.append("")
+            lines.append("Network")
+            lines.append(f"  host             {self.network['host']}")
+            lines.append(f"  proxy            {self.network['proxy'] or 'none (direct)'}")
+            lines.append(f"  ca bundle        {self.network['ca_bundle'] or 'system default'}")
+            if not self.network["reachable"]:
+                lines.append(f"  blocked at       {self.network['layer']}")
+                lines.append(f"  remedy           {self.network['remedy']}")
         if self.token:
             lines.append("")
             lines.append("Token")
@@ -144,6 +161,7 @@ def verify(
     fetch_data: bool = False,
     archive: Archive | None = None,
     now: datetime | None = None,
+    network_probe: Probe | None = None,
 ) -> ConnectionReport:
     """Run the staged check and return the report.
 
@@ -206,7 +224,38 @@ def verify(
         return report
     report.stages.append(StageResult("credentials", True, "both halves present"))
 
-    # -- stage 3: token --------------------------------------------------
+    # -- stage 3: network -------------------------------------------------
+    # Credential-free, and deliberately before the token request. An egress
+    # proxy refusing the host and the FAA rejecting a key look identical from
+    # here, and telling someone to rotate a working credential because their
+    # own network blocked the call is the most expensive wrong answer this
+    # tool can give.
+    reach = network_probe if network_probe is not None else probe(env.url("ping"))
+    report.network = {
+        "host": reach.host,
+        "layer": reach.layer.value,
+        "reachable": reach.reachable,
+        "http_status": reach.http_status,
+        "proxy": reach.proxy,
+        "ca_bundle": reach.ca_bundle,
+        "detail": reach.detail,
+        "remedy": reach.remedy(),
+    }
+    if not reach.reachable:
+        report.stages.append(
+            StageResult("network", False, f"{reach.describe()} — {reach.remedy()}",
+                        duration_ms=reach.duration_ms)
+        )
+        report.exit_code = (
+            EXIT_NETWORK if reach.layer.is_network_policy or reach.layer.is_ours
+            else EXIT_UNAVAILABLE
+        )
+        return report
+    report.stages.append(
+        StageResult("network", True, reach.describe(), duration_ms=reach.duration_ms)
+    )
+
+    # -- stage 4: token --------------------------------------------------
     active = client or NmsClient(
         env,
         tokens=TokenClient(env, creds, environ=env_map),
@@ -244,7 +293,7 @@ def verify(
     }
     report.stages.append(StageResult("token", True, token.response.describe()))
 
-    # -- stage 4: ping ---------------------------------------------------
+    # -- stage 5: ping ---------------------------------------------------
     try:
         response = active.ping()
     except NmsAuthError as exc:
@@ -266,7 +315,7 @@ def verify(
         )
     )
 
-    # -- stage 5: data ---------------------------------------------------
+    # -- stage 6: data ---------------------------------------------------
     if fetch_data:
         try:
             load = active.fetch_initial_load("DOMESTIC")

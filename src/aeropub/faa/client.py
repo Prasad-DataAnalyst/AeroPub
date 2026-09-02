@@ -51,6 +51,7 @@ from aeropub.faa.errors import (
     redact,
 )
 from aeropub.http import USER_AGENT, HostThrottle
+from aeropub.netcheck import opener_for
 
 __all__ = [
     "GZIP_MAGIC",
@@ -238,9 +239,12 @@ class NmsClient:
         self._sleep = sleep
         # No redirect handler: the initial-load handover crosses hosts carrying
         # an Authorization header, and that hop must be made deliberately.
-        self._opener = opener or urllib.request.build_opener(
-            _NoRedirect()
-        ).open
+        # opener_for keeps CA handling identical between the token client and
+        # this one, and honours an explicitly configured bundle for the
+        # corporate proxy whose CA is on disk but in no variable the platform
+        # pre-sets. ProxyHandler still comes from build_opener's defaults, so
+        # HTTPS_PROXY is honoured without being restated here.
+        self._opener = opener or opener_for(extra_handlers=(_NoRedirect(),), environ=environ)
 
     # -- source identity -------------------------------------------------
 

@@ -29,7 +29,53 @@ configuration → credentials → token → ping → data
 serves and what the console screen renders — there is one code path, not a
 display version and a real version.
 
-Exit codes: `0` verified, `1` credentials, `2` unavailable, `3` protocol.
+Exit codes: `0` verified, `1` credentials, `2` unavailable, `3` protocol,
+`4` network. The last is separate because its remedy is a network
+administrator, not a new key and not patience.
+
+## Egress: what has to be reachable
+
+Four hosts, and the fourth is the one that gets missed.
+
+| Host | Port | Why |
+|---|---|---|
+| `api-nms.aim.faa.gov` | 443 | Production API and token endpoint |
+| `api-staging.cgifederal-aim.com` | 443 | Staging |
+| `api-fit.cgifederal-aim.com` | 443 | FIT |
+| **`storage.googleapis.com`** | **443** | **The initial-load bundle** |
+
+`/notams/il` hands off to a signed Google Cloud Storage URL on a host that has
+nothing to do with the FAA. Allowlist only the FAA hosts and everything appears
+to work — token, ping, NOTAM queries, the checklist — right up to the daily
+full load, which fails on a host nobody thought to mention. Only the
+environments actually in use need permitting; there is no reason to open all
+three.
+
+The connector needs no proxy configuration of its own: it honours `HTTPS_PROXY`
+and `no_proxy`, and trusts the CA named by `AEROPUB_CA_BUNDLE`, `SSL_CERT_FILE`,
+`REQUESTS_CA_BUNDLE` or `CURL_CA_BUNDLE`. Behind an intercepting proxy, point
+one of those at the proxy's CA. There is no option to skip verification and
+there must never be one — a connector that can be talked into trusting anything
+is one whose citations mean nothing.
+
+When something between you and the FAA refuses the connection, the network
+stage says which layer and who owns it, rather than leaving it as "could not
+reach the FAA":
+
+```
+FAIL  network — proxy_denied: egress proxy answered 403 to CONNECT
+      An egress proxy refused a tunnel to api-nms.aim.faa.gov. This is a
+      policy decision, not a fault: ask whoever owns the egress allowlist
+      to permit api-nms.aim.faa.gov:443. Do not route around it.
+```
+
+That stage is credential-free and runs before the token request on purpose. An
+egress proxy refusing the host and the FAA rejecting a key look identical from
+inside a client, and telling somebody to rotate a perfectly good credential
+because their own network blocked the call is the most expensive wrong answer
+this tool could give. A `401` from the probe is a **success**: it proves DNS,
+the proxy, TLS and the FAA's front door all work, and that only the key is
+missing.
 
 ## What "working" has been proven to mean
 

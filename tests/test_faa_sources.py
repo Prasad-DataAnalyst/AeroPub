@@ -17,6 +17,7 @@ import pytest
 from aeropub.faa.auth import AccessToken, TokenClient
 from aeropub.faa.check import (
     EXIT_CREDENTIALS,
+    EXIT_NETWORK,
     EXIT_OK,
     EXIT_UNAVAILABLE,
     ConnectionReport,
@@ -27,6 +28,7 @@ from aeropub.faa.client import NmsClient
 from aeropub.faa.config import ENVIRONMENTS, ClientCredentials
 from aeropub.faa.errors import NmsTransportError, NmsUnavailableError
 from aeropub.faa.sources import credential_rows, nms_sources
+from aeropub.netcheck import Layer, Probe
 from aeropub.http import HostThrottle
 from aeropub.registry import (
     CredentialStatus,
@@ -139,6 +141,19 @@ class TestUnitedStatesProfile:
         assert "TJ" in us_profile(ENVIRONMENTS["prod"], environ={}).notes
 
 
+
+def _reachable(host: str = "api-staging.cgifederal-aim.com") -> Probe:
+    """A probe standing in for a reachable authority.
+
+    The probe itself is exercised against real sockets in test_netcheck.py;
+    what these tests are about is how the check stages behave once it has
+    answered, and reaching out to the FAA to establish that would make the
+    suite depend on the network of whoever runs it.
+    """
+    return Probe(url=f"https://{host}/nmsapi/v1/ping", host=host,
+                 layer=Layer.OK, http_status=401, detail="reachable")
+
+
 class _Response(io.BytesIO):
     def __init__(self, body, status=200):
         super().__init__(body)
@@ -188,11 +203,12 @@ class TestVerify:
         assert "spreadsheet" in report.stages[-1].detail
 
     def test_a_working_connection_reaches_ping(self):
-        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client())
+        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client(), network_probe=_reachable())
         assert report.ok and report.exit_code == EXIT_OK
         assert [s.name for s in report.stages] == [
             "configuration",
             "credentials",
+            "network",
             "token",
             "ping",
         ]
@@ -201,6 +217,7 @@ class TestVerify:
         report = verify(
             ENVIRONMENTS["staging"],
             environ=BOTH,
+            network_probe=_reachable(),
             client=_client(error=NmsUnavailableError("HTTP 503", status=503)),
         )
         assert report.exit_code == EXIT_UNAVAILABLE
@@ -211,14 +228,14 @@ class TestVerify:
         assert "PRODUCTION" in report.render()
 
     def test_the_report_carries_no_token_value(self):
-        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client())
+        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client(), network_probe=_reachable())
         rendered = report.render() + json.dumps(report.to_dict())
         assert "BEARER TOKEN HERE" not in rendered
         assert report.token["masked"] == "****"
         assert report.token["organization"] == "faa-XXXX"
 
     def test_the_report_serialises_for_the_status_api(self):
-        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client())
+        report = verify(ENVIRONMENTS["staging"], environ=BOTH, client=_client(), network_probe=_reachable())
         document = json.loads(json.dumps(report.to_dict()))
         assert document["ok"] is True
         assert document["environment"] == "staging"
@@ -240,13 +257,57 @@ class TestVerify:
 
         monkeypatch.setattr(check_module, "NmsClient", Recording)
         with pytest.raises(NmsTransportError):
-            verify(ENVIRONMENTS["staging"], environ=BOTH)
+            verify(ENVIRONMENTS["staging"], environ=BOTH, network_probe=_reachable())
         assert captured["wait_for_throttle"] is True
+
+    def test_a_blocked_host_is_reported_before_the_key_is_blamed(self):
+        # The expensive wrong answer this tool could give: an egress proxy
+        # refusing the host and the FAA rejecting a key look identical from
+        # here, and telling someone to rotate a working credential because
+        # their own network blocked the call wastes a day and a key.
+        blocked = Probe(
+            url="https://api-staging.cgifederal-aim.com/nmsapi/v1/ping",
+            host="api-staging.cgifederal-aim.com",
+            layer=Layer.PROXY_DENIED,
+            detail="egress proxy answered 403 to CONNECT",
+        )
+        report = verify(ENVIRONMENTS["staging"], environ=BOTH, network_probe=blocked)
+
+        assert report.exit_code == EXIT_NETWORK
+        assert [s.name for s in report.stages] == ["configuration", "credentials", "network"]
+        assert report.token is None, "no token was requested, so none can be reported"
+        assert "api-staging.cgifederal-aim.com:443" in report.stages[-1].detail
+        assert report.credentials[0]["status"] == "unverified"
+
+    def test_an_untrusted_proxy_certificate_is_ours_not_the_faas(self):
+        result = Probe(
+            url="https://api-staging.cgifederal-aim.com/nmsapi/v1/ping",
+            host="api-staging.cgifederal-aim.com",
+            layer=Layer.TLS_UNTRUSTED,
+            detail="certificate verify failed",
+        )
+        report = verify(ENVIRONMENTS["staging"], environ=BOTH, network_probe=result)
+        assert report.exit_code == EXIT_NETWORK
+        assert "CA bundle" in report.stages[-1].detail
+
+    def test_the_report_records_the_proxy_and_ca_in_force(self):
+        # So an operator can see what the connector actually used, rather than
+        # what they believe the environment sets.
+        report = verify(
+            ENVIRONMENTS["staging"], environ=BOTH, client=_client(),
+            network_probe=Probe(
+                url="https://x/ping", host="x", layer=Layer.OK, http_status=401,
+                proxy="http://proxy:8080", ca_bundle="/etc/ssl/corp.pem",
+            ),
+        )
+        assert report.network["proxy"] == "http://proxy:8080"
+        assert report.network["ca_bundle"] == "/etc/ssl/corp.pem"
 
     def test_an_unreachable_gateway_reports_the_stage_that_broke(self):
         report = verify(
             ENVIRONMENTS["staging"],
             environ=BOTH,
+            network_probe=_reachable(),
             client=_client(error=NmsTransportError("could not reach host")),
         )
         assert report.exit_code == EXIT_UNAVAILABLE

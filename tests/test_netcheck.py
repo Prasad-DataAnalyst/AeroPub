@@ -1,0 +1,217 @@
+"""Naming the layer that broke.
+
+Most of this runs against real sockets: a real TLS server with a certificate
+nothing trusts, and a real closed port. Both bind to 127.0.0.1, which sits in
+every sane ``no_proxy``, so the results are the same whether or not the machine
+running the tests is behind an egress proxy.
+
+The proxy-denial and DNS classifications are asserted against the exception
+objects urllib actually raises, rather than by arranging the failure — a test
+that needs a hostile proxy to run is a test that does not run.
+"""
+
+from __future__ import annotations
+
+import socket
+import ssl
+import shutil
+import subprocess
+import threading
+import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+import pytest
+
+from aeropub.netcheck import (
+    CA_BUNDLE_VARS,
+    Layer,
+    Probe,
+    _classify,
+    ca_bundle,
+    opener_for,
+    probe,
+    proxy_for,
+)
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("openssl") is None, reason="needs openssl to mint a certificate"
+)
+
+
+@pytest.fixture(scope="module")
+def guarded(tmp_path_factory):
+    """A real HTTPS server, with a certificate nothing trusts, answering 401."""
+    certs = tmp_path_factory.mktemp("netcheck-certs")
+    cert, key = certs / "cert.pem", certs / "key.pem"
+    subprocess.run(
+        ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-keyout", str(key),
+         "-out", str(cert), "-days", "1", "-nodes", "-subj", "/CN=localhost",
+         "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1"],
+        check=True, capture_output=True,
+    )
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = b'{"error":"invalid_token"}'
+            self.send_response(401)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(certfile=str(cert), keyfile=str(key))
+    server.socket = context.wrap_socket(server.socket, server_side=True)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield {"url": f"https://localhost:{server.server_address[1]}/ping", "cert": cert}
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class TestReachability:
+    def test_a_401_is_reachable_not_a_failure(self, guarded):
+        # The whole point of a credential-free probe. An authority answering
+        # 401 has proved DNS, the proxy, TLS and its own front door all work.
+        # Reporting that as unreachable is what sends someone to rotate a
+        # perfectly good key.
+        result = probe(
+            guarded["url"],
+            opener=opener_for(ca_bundle_path=str(guarded["cert"])),
+            environ={},
+        )
+        assert result.reachable
+        assert result.layer is Layer.OK
+        assert result.http_status == 401
+        assert "as expected" in result.detail
+        assert result.remedy() == ""
+
+    def test_an_untrusted_certificate_is_ours_to_fix(self, guarded):
+        # Same server, same port, no CA. An intercepting proxy looks exactly
+        # like this, and it is configuration rather than an attack — but it is
+        # not distinguishable from one, so it is never waved through.
+        result = probe(guarded["url"], environ={})
+        assert result.layer is Layer.TLS_UNTRUSTED
+        assert result.layer.is_ours
+        assert not result.layer.is_network_policy
+        assert "CA bundle" in result.remedy()
+        assert all(v in result.remedy() for v in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"))
+
+    def test_a_closed_port_is_refused(self):
+        sock = socket.socket()
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+        sock.close()
+
+        result = probe(f"https://127.0.0.1:{port}/", timeout=5, environ={})
+        assert result.layer in (Layer.REFUSED, Layer.TIMEOUT)
+        assert not result.reachable
+
+
+class TestClassification:
+    def test_a_refused_tunnel_is_the_proxys_doing_not_the_authoritys(self):
+        # The single most misread failure in this stack. The proxy answers
+        # CONNECT before any TLS happens, and urllib surfaces it as a bare
+        # string that reads exactly like the authority refusing us.
+        reason = "Tunnel connection failed: 403 Forbidden"
+        layer, detail = _classify(OSError(reason), reason)
+        assert layer is Layer.PROXY_DENIED
+        assert layer.is_network_policy
+        assert "403" in detail
+
+    def test_a_407_is_also_the_proxy(self):
+        reason = "Tunnel connection failed: 407 Proxy Authentication Required"
+        assert _classify(OSError(reason), reason)[0] is Layer.PROXY_DENIED
+
+    def test_an_unresolvable_name_is_dns(self):
+        exc = socket.gaierror(-2, "Name or service not known")
+        assert _classify(exc, str(exc))[0] is Layer.DNS
+
+    def test_a_verification_failure_is_told_apart_from_other_tls_faults(self):
+        verify = ssl.SSLCertVerificationError("certificate verify failed: unable to get issuer")
+        assert _classify(verify, str(verify))[0] is Layer.TLS_UNTRUSTED
+        other = ssl.SSLError("record layer failure")
+        assert _classify(other, str(other))[0] is Layer.TLS
+
+    def test_an_unrecognised_fault_is_unknown_not_guessed(self):
+        assert _classify(OSError("something new"), "something new")[0] is Layer.UNKNOWN
+
+
+class TestRemedies:
+    def test_a_policy_denial_names_the_host_and_port_to_allow(self):
+        # So the message can be forwarded to a network team unedited.
+        result = Probe(
+            url="https://api-nms.aim.faa.gov/nmsapi/v1/ping",
+            host="api-nms.aim.faa.gov",
+            layer=Layer.PROXY_DENIED,
+            detail="egress proxy answered 403 to CONNECT",
+        )
+        assert "api-nms.aim.faa.gov:443" in result.remedy()
+        assert "Do not route around it" in result.remedy()
+
+    def test_the_owner_of_each_failure_is_recorded(self):
+        assert Layer.PROXY_DENIED.is_network_policy
+        assert Layer.PROXY_UNREACHABLE.is_network_policy
+        assert Layer.TLS_UNTRUSTED.is_ours
+        assert Layer.DNS.is_ours
+        assert not Layer.REFUSED.is_ours and not Layer.REFUSED.is_network_policy
+
+
+class TestConfiguration:
+    def test_the_ca_bundle_comes_from_the_first_variable_that_exists(self, tmp_path):
+        bundle = tmp_path / "ca.pem"
+        bundle.write_text("")
+        assert ca_bundle({"SSL_CERT_FILE": str(bundle)}) == str(bundle)
+        # A variable naming a file that is not there is not a bundle.
+        assert ca_bundle({"SSL_CERT_FILE": str(tmp_path / "absent.pem")}) is None
+        assert ca_bundle({}) is None
+
+    def test_aeropub_ca_bundle_wins_over_the_platform_variables(self, tmp_path):
+        ours, theirs = tmp_path / "ours.pem", tmp_path / "theirs.pem"
+        ours.write_text("")
+        theirs.write_text("")
+        assert CA_BUNDLE_VARS[0] == "AEROPUB_CA_BUNDLE"
+        assert ca_bundle(
+            {"AEROPUB_CA_BUNDLE": str(ours), "SSL_CERT_FILE": str(theirs)}
+        ) == str(ours)
+
+    def test_no_proxy_is_honoured_so_the_report_is_not_misleading(self):
+        env = {"HTTPS_PROXY": "http://proxy:8080", "NO_PROXY": "localhost,.faa.gov"}
+        assert proxy_for("https://api-nms.aim.faa.gov/x", env) is None
+        assert proxy_for("https://localhost:9/x", env) is None
+        assert proxy_for("https://example.gov/x", env) == "http://proxy:8080"
+
+    def test_verification_cannot_be_switched_off(self):
+        # Not a preference. A connector that can be talked into trusting
+        # anything is one whose citations mean nothing.
+        import inspect
+
+        import aeropub.netcheck as module
+
+        source = inspect.getsource(module)
+        assert "CERT_NONE" not in source
+        assert "check_hostname = False" not in source
+        assert "_create_unverified" not in source
+
+        opener = opener_for(environ={})
+        handler = [h for h in opener.__self__.handlers
+                   if type(h).__name__ == "HTTPSHandler"][0]
+        context = handler._context
+        assert context.check_hostname is True
+        assert context.verify_mode is ssl.CERT_REQUIRED
+
+    def test_the_opener_still_carries_the_proxy_handler(self):
+        # ProxyHandler comes from build_opener's defaults. Losing it would mean
+        # every request in a proxied environment silently timing out instead.
+        opener = opener_for(environ={})
+        names = [type(h).__name__ for h in opener.__self__.handlers]
+        assert "ProxyHandler" in names

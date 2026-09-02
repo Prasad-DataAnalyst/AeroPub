@@ -110,9 +110,14 @@ export FAA_NMS_ENVIRONMENT=fit      # fit, staging or prod
 python -m aeropub.faa.check         # add --json for the machine-readable report
 ```
 
-The check runs configuration → credentials → token → ping → data and stops at
-the first failure, so the output names the stage that broke. Nothing it prints
-can contain a secret.
+The check runs configuration → credentials → network → token → ping → data and
+stops at the first failure, so the output names the stage that broke. Nothing
+it prints can contain a secret.
+
+Egress needs four hosts, not three — `api-nms.aim.faa.gov` (or the staging/FIT
+host in use) **and `storage.googleapis.com`**, where the initial-load bundle
+actually lives. Miss the fourth and everything works except the daily full
+load. The network stage names the blocked host and who can unblock it.
 
 When the FAA moves a host or renames a path, correct it in a JSON overlay named
 by `AEROPUB_FAA_NMS_CONFIG` — no code change, no release.
