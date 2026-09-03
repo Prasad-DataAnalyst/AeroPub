@@ -58,6 +58,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] NOTAM register — indexed by the aerodrome, runway or airspace each one affects
 - [x] AIP index — GEN 0–4, ENR 0–6, AD 0–3 incl. AD 2.1–2.25, with per-section coverage
 - [x] Aerodrome dossier — every AD 2 section, effective values, live NOTAM, gaps stated
+- [x] Change bulletin — cycle to cycle, ranked, cited, and honest about what it did not compare
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 

@@ -42,8 +42,8 @@ it rather than quietly using it.
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
 HTTP transport, the universal change record, the generic impact layer, the validation harness, the
-NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index and the aerodrome
-dossier. Next: a captured
+NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier
+and the change bulletin. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 
@@ -67,6 +67,20 @@ attributed to a section" rather than guessed into a plausible one, because a val
 heading reads as though that section said it. NOTAM are shown against the objects they name, never
 routed into an AD 2 section by reading their text. A dossier built with nothing still prints all 25
 sections: an omission that is invisible is the failure this project exists to avoid.
+
+`bulletin.py` is plan section 31's milestone — what changed between two cycles, why it matters, and
+where every value came from. It has one claim to earn: "everything that changed" is false for any
+section not read on **both** dates, so coverage is first-class. `blind` names those sections,
+`is_conclusive` is false whenever any exist, and an empty bulletin with blind sections says "no
+change detected in what was compared", never "nothing changed". Without coverage it says
+completeness cannot be stated rather than assuming it. A bulletin that quietly omitted unread
+sections would read as a clean bill of health, which is the most dangerous artefact this system
+could produce.
+
+`Attention` is a reading order, not a severity: action, then anything no rule covers (it may be
+either), then opportunities, then the rest. Severity is a property of a change *and* an operator and
+belongs to layer three. A test asserts nothing a reader sees names a fleet, a network or a customer,
+and that the band names avoid severity vocabulary.
 
 `src/aeropub/faa/` is the reference shape for every connector that follows: where the service lives
 is data an operator can correct from a JSON overlay while the service runs (`AEROPUB_FAA_NMS_CONFIG`),
