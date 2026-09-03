@@ -17,6 +17,8 @@ shape it establishes:
   that are credentials** — the token response and the signed-URL handover
   (:mod:`aeropub.faa.client`).
 - **Structure is read, meaning is not invented** (:mod:`aeropub.faa.aixm`).
+- **NOTAM are indexed by what they affect, at the precision the source has**
+  (:mod:`aeropub.faa.register` onto :mod:`aeropub.notam_register`).
 
 Getting started::
 
@@ -46,6 +48,7 @@ from aeropub.faa.errors import (
     NmsTransportError,
     NmsUnavailableError,
 )
+from aeropub.faa.register import register_feed, registered, subjects_of
 from aeropub.faa.sources import CredentialRow, credential_rows, nms_sources
 
 __all__ = [
@@ -75,4 +78,7 @@ __all__ = [
     "iter_notams",
     "load_environment",
     "nms_sources",
+    "register_feed",
+    "registered",
+    "subjects_of",
 ]

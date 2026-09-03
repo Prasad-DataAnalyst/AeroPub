@@ -223,6 +223,52 @@ printed text beside them carries the ICAO `YYMMDDHHMM`. Reading the first with
 the second's rule yields month 25 and a silent `None`, which is how a feed
 loses every validity window it has.
 
+## From AIXM to an aerodrome dossier
+
+`aeropub.faa.register` maps the linked features onto the same entity keys the
+fact store uses — `8WC`, `8WC/RWY20` — so a NOTAM and a declared distance can
+be about the same runway:
+
+```python
+register = register_feed(NotamFeed(load.open()), load.entry)
+print(register.render("8WC", datetime.now(timezone.utc)))
+```
+
+```
+8WC — 2025-09-01 06:00Z
+  STL 08/430
+      runway direction 20
+      runway 02/20
+      aerodrome 8WC
+      RWY 20 RWY END ID LGT U/S
+      FAA NMS NOTAM STL 08/430, AIXMBasicMessage NMS_ID_1757609538792382 …
+```
+
+Three refusals in that output are the point of it.
+
+**NOTAM are not facts.** `Fact` validity is a date; a NOTAM is valid from a
+minute. A runway unserviceable from 02:34 was serviceable at 02:00, so the
+register keeps the source's own precision rather than rounding into the fact
+store and over-claiming for part of a day.
+
+**A schedule is never assumed away.** The Boston UAS notice runs
+`Daily:1100-0001`, dormant for eleven hours inside its own window. At 06:00 the
+register reports `SCHEDULE_UNKNOWN` — not in force, not dismissed. It still
+appears in a briefing, because an unread schedule is a reason to read the NOTAM.
+
+**Filed is not affected.** That same notice links no feature at all, so its
+only subject is `KZBW` with kind `FILED_LOCATION`. It is counted in
+`coverage()["filed_location_only"]` and returned by `unattributed()`, never
+attached to a runway to make the index look complete.
+
+An entity with no NOTAM indexed reads as a coverage gap, not as a quiet
+aerodrome — the two must never look alike.
+
+One reconciliation is still open: entity keys follow what each message carries,
+so an aerodrome can key as `8WC` in a message with no ICAO indicator and `K8WC`
+in one that has it. The fix is the `/locationseries` endpoint, which is exactly
+the FAA's local-to-ICAO mapping and which this connector already fetches.
+
 ## Coverage this connector does not provide
 
 NOTAM only. The FAA also publishes an eAIP, the digital chart supplement,

@@ -55,6 +55,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Validation harness — physical, relational and continuity invariants
 - [x] NOTAM parser — Q-line and Items A–G, built from the ICAO format
 - [x] FAA NMS-API connector — OAuth2, AIXM 5.1, and the first live State source
+- [x] NOTAM register — indexed by the aerodrome, runway or airspace each one affects
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 

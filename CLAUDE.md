@@ -59,6 +59,19 @@ reported as the authority's outage — only appear against a live service, which
 to find them. Note what it does *not* prove: that the authority behaves as documented. Only
 `python -m aeropub.faa.check` against the real endpoint shows that.
 
+NOTAM are indexed, not turned into facts. `Fact` validity is a `date`; a NOTAM is valid from a
+minute and may carry a schedule that leaves it dormant for hours inside its own window. Flattening
+either would over-claim, so `notam_register.py` keeps the source's precision and reports
+`SCHEDULE_UNKNOWN` rather than `IN_FORCE` for a window we cover but a schedule we have not read.
+Never collapse that state into a yes: a NOTAM active 1100-0001 daily reported as in force at 0600
+is wrong in the direction that gets someone airborne on a false assumption.
+
+Subject roll-up runs one way. Asking about an aerodrome returns its runways; asking about a runway
+must never return a NOTAM filed against the whole aerodrome, which would attribute an apron closure
+to a runway. Where a source links no feature, the subject records only where the message was filed,
+kind `FILED_LOCATION` — knowing a NOTAM concerns ZBW is real information and is not the same
+information as knowing which runway it closes.
+
 NOTAM is the one source parseable from its specification rather than a captured sample, because
 ICAO defines the format. An eAIP is not — every State invents its own layout, so those parsers wait
 for fixtures. The NOTAM Q-code tables are a deliberate subset: decode only codes carrying no doubt
