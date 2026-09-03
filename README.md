@@ -62,6 +62,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Forward view — what changes next, and which of it nobody will publish a word about
 - [x] Durable store — SQLite, append-only enforced by the schema itself
 - [x] Publication conduct — conditions carried on NOTAM past the three-month limit
+- [x] Six output lenses — crew, aerodrome, route, ATS, dispatch and AIS, each stating its own gaps
 - [x] Durable store — SQLite, append-only enforced by the schema itself
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record

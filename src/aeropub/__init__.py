@@ -7,6 +7,9 @@ The two questions the platform answers, and where each is assembled:
 - *"What changes next, including what nobody will announce?"* — :func:`aeropub.horizon.horizon`
 - *"How does this State actually publish?"* — :func:`aeropub.quality.assess_quality`
 
+Each of those is one body of evidence. :func:`aeropub.lenses.view` arranges it
+for one of six readers without ever filtering away a coverage gap.
+
 Everything below those is the machinery they stand on: the AIRAC calendar as
 the time spine, :class:`Fact` and :class:`SourceRef` as the attributed core,
 :class:`FactStore` resolving the Consolidated Effective State, the AIP index
@@ -36,6 +39,7 @@ from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
 from aeropub.entities import aerodrome_of, covers, scope_of
 from aeropub.horizon import Horizon, Transition, Trigger, horizon
+from aeropub.lenses import LENSES, Audience, Lens, LensView, lens_for, view
 from aeropub.store import SqliteFactStore, open_store
 from aeropub.notam import Notam, NotamKind, QLine
 from aeropub.notam_register import (
@@ -63,6 +67,12 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "view",
+    "lens_for",
+    "LensView",
+    "Lens",
+    "Audience",
+    "LENSES",
     "open_store",
     "assess_quality",
     "SqliteFactStore",

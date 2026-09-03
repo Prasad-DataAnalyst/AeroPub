@@ -73,6 +73,24 @@ real findings.
 Nothing here calls a State non-compliant. It reports the duration, cites every message, names the
 standard, and stops. A test asserts the rendered output contains no verdict vocabulary.
 
+`lenses.py` arranges one body of evidence for six readers. A lens selects and orders; it never
+computes, because six implementations of one calculation would eventually disagree and the one that
+disagreed would be the one somebody flew on.
+
+**A lens filters findings; it never filters gaps.** Filtering a threat brief down to what concerns a
+crew makes "AD 2.10 was never read" concern nobody, so it vanishes — leaving a clean-looking page
+about an aerodrome whose obstacle environment is unknown. Every lens names the sections its reader
+depends on, those gaps are shown first whatever the filter says, and `is_sound` is false while any
+remain.
+
+Selection is **by section, not by domain**. The domain vocabulary is shared with the impact layer
+and is deliberately coarse: `dispatch` spans aerodrome dispatchability and flight planning, and
+`procedures` spans ATS procedure and runway lighting, so an ATS document filtered on domains
+collected every fire category change in the network. Domains remain the fallback for content with no
+section mapped — and content with neither a section nor a domain lands with the two lenses that
+declare `catches_unclassified`, because a change nobody has classified reaching nobody is the same
+failure the bulletin layer already refuses.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
