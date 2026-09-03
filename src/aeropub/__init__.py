@@ -33,6 +33,7 @@ from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
 from aeropub.entities import aerodrome_of, covers, scope_of
 from aeropub.horizon import Horizon, Transition, Trigger, horizon
+from aeropub.store import SqliteFactStore, open_store
 from aeropub.notam import Notam, NotamKind, QLine
 from aeropub.notam_register import (
     ForceState,
@@ -59,6 +60,8 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "open_store",
+    "SqliteFactStore",
     "horizon",
     "Trigger",
     "Transition",

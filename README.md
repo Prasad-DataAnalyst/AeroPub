@@ -60,6 +60,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Aerodrome dossier — every AD 2 section, effective values, live NOTAM, gaps stated
 - [x] Change bulletin — cycle to cycle, ranked, cited, and honest about what it did not compare
 - [x] Forward view — what changes next, and which of it nobody will publish a word about
+- [x] Durable store — SQLite, append-only enforced by the schema itself
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 

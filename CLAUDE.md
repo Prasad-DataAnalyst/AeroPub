@@ -41,6 +41,21 @@ the thing to protect: a window with `valid_to` of the 20th applies *on* the 20th
 the 21st, and a day either way is the difference between a restriction lifting before a flight or
 after it.
 
+`store.py` is the durable side: SQLite for facts and provenance, the content-addressed archive for
+the documents. Append-only is enforced by the schema, not by convention — DELETE always aborts and
+UPDATE aborts unless it is setting `superseded_at` on a row that has none, changing nothing else.
+Held in memory that rule is a habit; written to disk it has to survive every future maintainer, and
+a promise kept only by people remembering it is not a promise. Tests exercise those triggers through
+raw SQL, because going through the store's own API would only prove the API is polite.
+
+Resolution is delegated to `FactStore`, never reimplemented in SQL. Two implementations of the CES
+layering that could disagree would be the worst divergence in this system. The store loads rows and
+hands them to the tested resolver; `for_entity()` is the pushdown that keeps a country's NOTAM out of
+memory when the question is about one runway.
+
+Postgres is the later answer, when several airlines share an instance. Nothing above `store.py`
+changes then, because the analysis layers take a fact source rather than a database.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
