@@ -17,6 +17,14 @@ proved every one of those layers works, so reachability is established without
 a key — which is exactly what an operator needs to know *before* concluding
 their key is bad.
 
+That reading has one condition, and missing it produced a wrong verdict here
+once: *any HTTP status means reachable* holds only when the answer came from
+the **origin**. A forward proxy answering on the origin's behalf breaks the
+assumption — this session's proxy returns a plain ``403`` with a block-page
+body for a host that is not on its allowlist, which read naively says the host
+answered. It did not; nothing left the building. Proxy denials are therefore
+identified before the status is trusted.
+
 Nothing here disables certificate verification, and nothing here should ever
 grow the option. A connector that can be talked into trusting anything is one
 whose citations mean nothing.
@@ -41,6 +49,49 @@ __all__ = ["Layer", "Probe", "opener_for", "probe"]
 #: sensible tool consults them. Set by most managed environments and by
 #: corporate proxy tooling, so the common case needs no configuration at all.
 CA_BUNDLE_VARS = ("AEROPUB_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
+
+
+#: Response headers by which a forward proxy identifies its own block page.
+#: Checked before the status, because a proxy answering 403 on the origin's
+#: behalf looks exactly like the origin answering 403.
+PROXY_DENIAL_HEADERS: tuple[str, ...] = (
+    "x-deny-reason",      # this session's agent proxy
+    "x-squid-error",
+    "x-bluecoat-error",
+    "x-proxy-error",
+)
+
+#: Body phrases used where a proxy sets no header of its own. Deliberately
+#: narrow: matching loosely would turn an origin's own 403 into a network
+#: finding and send an operator to the wrong team.
+PROXY_DENIAL_PHRASES: tuple[str, ...] = (
+    "not in allowlist",
+    "blocked by the network egress",
+    "access denied by",
+)
+
+
+def _proxy_denial(headers: Any, body: bytes | str | None) -> str | None:
+    """Whether this response is a proxy's block page rather than the origin's.
+
+    Returns the reason if so. Header first, because it is structured; the body
+    phrases are the fallback for proxies that announce themselves only in prose.
+    """
+    if headers is not None:
+        for name in PROXY_DENIAL_HEADERS:
+            try:
+                value = headers.get(name)
+            except AttributeError:
+                value = None
+            if value:
+                return f"egress proxy refused the host ({name}: {value})"
+    if body:
+        text = body.decode("utf-8", "replace") if isinstance(body, bytes) else body
+        lowered = text.lower()
+        for phrase in PROXY_DENIAL_PHRASES:
+            if phrase in lowered:
+                return f"egress proxy refused the host — {text.strip()[:120]}"
+    return None
 
 
 class Layer(str, Enum):
@@ -235,22 +286,46 @@ def probe(
     request = urllib.request.Request(url, headers={"User-Agent": user_agent})
 
     started = time.monotonic()
+
+    def elapsed() -> int:
+        return int((time.monotonic() - started) * 1000)
+
     try:
         with call(request, timeout=timeout) as response:
+            denial = _proxy_denial(getattr(response, "headers", None), None)
+            if denial:
+                return Probe(
+                    url=url, host=host, layer=Layer.PROXY_DENIED, detail=denial,
+                    http_status=getattr(response, "status", None),
+                    proxy=via, ca_bundle=bundle, duration_ms=elapsed(),
+                )
             return Probe(
                 url=url, host=host, layer=Layer.OK,
                 http_status=getattr(response, "status", None),
                 detail="reachable", proxy=via, ca_bundle=bundle,
-                duration_ms=int((time.monotonic() - started) * 1000),
+                duration_ms=elapsed(),
             )
     except urllib.error.HTTPError as exc:
-        # Any HTTP status means the whole path worked. 401 is the expected
-        # answer to an unauthenticated probe and is the strongest signal here.
+        # Any HTTP status means the whole path worked — but only if the answer
+        # came from the origin. A proxy's block page is a 403 that never left
+        # the building, so it is identified before the status is trusted.
+        try:
+            body = exc.read()
+        except Exception:  # pragma: no cover - a body is a nicety
+            body = None
+        denial = _proxy_denial(getattr(exc, "headers", None), body)
+        if denial:
+            return Probe(
+                url=url, host=host, layer=Layer.PROXY_DENIED, detail=denial,
+                http_status=exc.code, proxy=via, ca_bundle=bundle,
+                duration_ms=elapsed(),
+            )
+        # 401 is the expected answer to an unauthenticated probe, and the
+        # strongest signal available without a credential.
         return Probe(
             url=url, host=host, layer=Layer.OK, http_status=exc.code,
             detail=f"reachable (HTTP {exc.code} without a credential, as expected)",
-            proxy=via, ca_bundle=bundle,
-            duration_ms=int((time.monotonic() - started) * 1000),
+            proxy=via, ca_bundle=bundle, duration_ms=elapsed(),
         )
     except urllib.error.URLError as exc:
         layer, detail = _classify(exc.reason, str(exc.reason))

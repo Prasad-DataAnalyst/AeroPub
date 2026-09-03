@@ -13,12 +13,15 @@ that needs a hostile proxy to run is a test that does not run.
 from __future__ import annotations
 
 import os
+import io
 import socket
 import ssl
+import urllib.error
 import shutil
 import subprocess
 import threading
 import urllib.error
+from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -131,6 +134,95 @@ class TestReachability:
         result = probe(f"https://127.0.0.1:{port}/", timeout=5, environ={})
         assert result.layer in (Layer.REFUSED, Layer.TIMEOUT)
         assert not result.reachable
+
+
+class TestProxyBlockPages:
+    """A 403 that never left the building.
+
+    "Any HTTP status means reachable" holds only when the answer came from the
+    origin. This session's proxy answers plain HTTP for a host outside its
+    allowlist with a 403 and a block-page body, and reading that naively
+    reported an unreachable manufacturer's site as reachable — which would send
+    an operator hunting for a fault at the far end of a connection that was
+    never made.
+    """
+
+    def _headers(self, **fields):
+        message = Message()
+        for name, value in fields.items():
+            message[name.replace("_", "-")] = value
+        return message
+
+    def test_a_structured_denial_header_is_believed_over_the_status(self, guarded):
+        opener = opener_for(ca_bundle_path=str(guarded["cert"]))
+
+        def blocked(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden",
+                self._headers(x_deny_reason="host_not_allowed"),
+                io.BytesIO(b"Host not in allowlist"),
+            )
+
+        result = probe(guarded["url"], opener=blocked, environ={})
+        assert result.layer is Layer.PROXY_DENIED
+        assert result.layer.is_network_policy
+        assert "host_not_allowed" in result.detail
+        assert not result.reachable
+
+    def test_a_block_page_body_is_caught_where_no_header_says_so(self, guarded):
+        def blocked(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden", Message(),
+                io.BytesIO(
+                    b"Host not in allowlist: www.example.gov. Add this host to "
+                    b"your network egress settings to allow access."
+                ),
+            )
+
+        result = probe(guarded["url"], opener=blocked, environ={})
+        assert result.layer is Layer.PROXY_DENIED
+        assert "allowlist" in result.detail
+
+    def test_a_denial_delivered_as_a_success_is_still_a_denial(self, guarded):
+        # Some proxies serve their block page with 200.
+        class _Response(io.BytesIO):
+            def __init__(self, headers):
+                super().__init__(b"blocked")
+                self.status = 200
+                self.headers = headers
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                self.close()
+                return False
+
+        headers = self._headers(x_deny_reason="host_not_allowed")
+        result = probe(guarded["url"],
+                       opener=lambda r, timeout=None: _Response(headers), environ={})
+        assert result.layer is Layer.PROXY_DENIED
+
+    def test_the_origins_own_403_is_not_turned_into_a_network_finding(self, guarded):
+        # Matching loosely would send an operator to the wrong team for an
+        # authorisation problem at the far end.
+        def refused(request, timeout=None):
+            raise urllib.error.HTTPError(
+                request.full_url, 403, "Forbidden", Message(), io.BytesIO(b"Forbidden")
+            )
+
+        result = probe(guarded["url"], opener=refused, environ={})
+        assert result.layer is Layer.OK
+        assert result.reachable
+        assert result.http_status == 403
+
+    def test_a_401_from_the_origin_still_reads_as_reachable(self, guarded):
+        result = probe(
+            guarded["url"],
+            opener=opener_for(ca_bundle_path=str(guarded["cert"])),
+            environ={},
+        )
+        assert result.reachable and result.http_status == 401
 
 
 class TestClassification:
