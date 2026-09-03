@@ -121,6 +121,49 @@ template is a deployment that looks fine until somebody prints. Data is embedded
 because an AIP extract containing one would otherwise end the script element — silently, and only
 for the aerodromes whose text happens to have one.
 
+## Aircraft, and the licence line through the middle of them
+
+`aircraft.py` answers *does this aeroplane fit this aerodrome* and refuses to answer *what can it
+lift off this runway today*. The split is plan decision D and it is a licensing fact before it is a
+design one.
+
+**FCOM and FPPM do not ship with this product and never will.** They are the manufacturer's
+proprietary documentation, licensed to the operator who bought the aeroplane. An operator has every
+right to their own copy and to compute against it; a platform has no right to redistribute it.
+Certified performance computation stays with the operator's own tool. What crosses into AeroPub is
+data the operator supplies under their own licence, marked `Origin.OPERATOR`, kept to their tenant,
+and excluded from `AircraftType.redistributable`.
+
+**ACAP is the public equivalent and it covers most of what aerodrome work needs.** Boeing, Airbus,
+Embraer and COMAC publish *Airplane Characteristics for Airport Planning* freely, to the NAS 3601
+specification: dimensions, wheel spans, turning radii, ground service arrangements, and the ACN
+pavement tables. That answers fit. It does not answer what an aeroplane lifts off a wet runway at
+42 °C, and the module does not pretend otherwise.
+
+**No aircraft figures are in the source.** `Characteristic` cannot be constructed without a
+`SourceRef`, exactly as `Fact` cannot, and two tests parse the module's own AST to prove no type
+designator and no numeric literal outside Annex 14 Table 1-1 has been baked in. The library begins
+empty and fills from documents that were actually read. A wingspan recalled from memory is the
+failure this whole project is built against, and it is worse here: one metre moves an aeroplane
+across a code letter boundary and changes which taxiways it may use.
+
+What *is* encoded is the standard — Annex 14 Volume I Table 1-1, the way `airac.py` encodes the
+28-day cycle. The table is read **one column at a time**, first matching row per criterion, and then
+1.6.3 applies: the more demanding of the two letters wins. The order of those two steps is the whole
+subtlety. Code D and Code E share the 9–14 m wheel span band, so taking the most demanding letter
+across all admitting rows at once calls a 34 m span aeroplane Code E — a letter its wingspan has
+already ruled out. Each criterion gets one vote, and the shared band votes D. A figure outside the
+table yields no letter at all rather than borrowing the other column's.
+
+The pavement comparison has the same shape of trap. A PCN is not a number; it is a number *and* a
+pavement type *and* a subgrade *and* a tyre pressure limit *and* how it was determined. An ACN
+quoted against a rigid pavement on subgrade B says nothing about a flexible pavement on subgrade C.
+`compare_pavement` returns `NOT_COMPARABLE` across either mismatch rather than comparing the
+numbers anyway, because the alternative is a confident answer about the wrong pavement. `OVERLOAD`
+is not a prohibition — Annex 14 provides for overload operations — but it needs the aerodrome's
+procedures and its consent, never a dispatch decision alone, and a `U` rating says what the pavement
+has been seen to carry rather than what it was calculated to carry.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
@@ -149,8 +192,10 @@ legitimately contains one (`8WC/RWY02/20`).
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
 HTTP transport, the universal change record, the generic impact layer, the validation harness, the
-NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier
-and the change bulletin. Next: a captured
+NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier,
+the change bulletin, the change horizon, SQLite persistence, AIS quality intelligence, the six
+output lenses, the JSON surface, the printable dossier and the aircraft reference code and pavement
+checks. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 

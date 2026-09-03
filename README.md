@@ -39,6 +39,7 @@ These are settled and deliberate. [`docs/plan.md`](docs/plan.md) has the reasoni
 | **Universal first, operator second** | Every publication gets a change record and a generic impact assessment with no fleet configured. Fleet filtering is a layer on top, never a precondition |
 | **Fail loud** | A source that cannot be read produces a visible coverage gap, never a blank. Absence that looks like "nothing changed" is the dangerous failure here |
 | **The archive is never pruned** | Superseded NOTAM are retained after States drop them. This cannot be applied retroactively |
+| **Fit is ours; performance is the operator's** | Aerodrome compatibility is computed from public ACAP data and Annex 14. FCOM and FPPM are the manufacturer's, licensed to the operator — certified performance stays in the operator's own tool, and anything they supply from it is marked, kept to their tenant and never redistributed |
 | **Decision support, not source of truth** | The official AIP and NOTAM as published by the State remain authoritative |
 
 ## Status
@@ -65,7 +66,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Six output lenses — crew, aerodrome, route, ATS, dispatch and AIS, each stating its own gaps
 - [x] JSON/API payloads — versioned, deterministic, provenance on every value, licence honoured
 - [x] Printable dossier — a controlled document that renders the payload verbatim
-- [x] Durable store — SQLite, append-only enforced by the schema itself
+- [x] Aircraft reference code and pavement — Annex 14 Table 1-1, ACN against PCN, no figures shipped
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 
