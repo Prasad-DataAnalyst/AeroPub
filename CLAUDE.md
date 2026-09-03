@@ -42,8 +42,22 @@ it rather than quietly using it.
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
 HTTP transport, the universal change record, the generic impact layer, the validation harness, the
-NOTAM parser, and the FAA NMS-API connector. Next: a captured fixture from a State that publishes
-an eAIP, then the eAIP parser built against it.
+NOTAM parser, the FAA NMS-API connector, the NOTAM register and the AIP index. Next: a captured
+fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
+step 5, the milestone that proves the system.
+
+`aip.py` is the AIP's own structure, built from Annex 15 and PANS-AIM the way the NOTAM parser was
+built from the NOTAM format: 127 sections across GEN 0–4, ENR 0–6 and AD 0–3, including AD 2.1–2.25
+per aerodrome and AD 3.1–3.23 per heliport. It is the reference structure, not a claim about any
+State. AD 2.25 is marked `icao_defined=False` because Annex 15's own list stops at 2.24 — claiming
+ICAO mandates a section it does not would make a State's omission look like a deficiency.
+
+Coverage is recorded per section and keeps four states apart: `HELD` (and citable — recording it
+without a `SourceRef` is refused), `ABSENT` (which needs its basis, normally the State's own
+checklist, because absence is a claim about the State and not about our search), `FAILED`, and
+`NOT_CHECKED`. The last two are our gaps; the first two are not. A coverage report prints every
+expected section whether held or not, so an aerodrome nobody looked at cannot read like one with
+nothing to report.
 
 `src/aeropub/faa/` is the reference shape for every connector that follows: where the service lives
 is data an operator can correct from a JSON overlay while the service runs (`AEROPUB_FAA_NMS_CONFIG`),
