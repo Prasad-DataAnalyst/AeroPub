@@ -12,6 +12,7 @@ that needs a hostile proxy to run is a test that does not run.
 
 from __future__ import annotations
 
+import os
 import socket
 import ssl
 import shutil
@@ -36,6 +37,21 @@ from aeropub.netcheck import (
 pytestmark = pytest.mark.skipif(
     shutil.which("openssl") is None, reason="needs openssl to mint a certificate"
 )
+
+
+@pytest.fixture
+def clean_proxy_env(monkeypatch):
+    """A process environment with no proxy variables of any spelling.
+
+    getproxies_environment() lowercases every name ending in ``_proxy`` and
+    merges them into one mapping, so HTTPS_PROXY, https_proxy and a platform's
+    own NPM_CONFIG_HTTPS_PROXY all compete for the same key. Setting one
+    without clearing the rest tests the machine, not the code.
+    """
+    for name in list(os.environ):
+        if name.lower().endswith("_proxy"):
+            monkeypatch.delenv(name, raising=False)
+    return monkeypatch
 
 
 @pytest.fixture(scope="module")
@@ -209,9 +225,34 @@ class TestConfiguration:
         assert context.check_hostname is True
         assert context.verify_mode is ssl.CERT_REQUIRED
 
-    def test_the_opener_still_carries_the_proxy_handler(self):
-        # ProxyHandler comes from build_opener's defaults. Losing it would mean
-        # every request in a proxied environment silently timing out instead.
+    def test_the_opener_uses_the_proxy_the_machine_requires(self, clean_proxy_env):
+        # Losing proxy handling would mean every request in a proxied
+        # environment silently timing out. Every *_proxy variable is cleared
+        # first: getproxies_environment lowercases and merges them all, so a
+        # machine that sets https_proxy alongside HTTPS_PROXY — this one does,
+        # and so do most managed environments — decides the outcome instead of
+        # the test.
+        clean_proxy_env.setenv("HTTPS_PROXY", "http://proxy.internal:8080")
+        opener = opener_for(environ={})
+        handlers = {type(h).__name__: h for h in opener.__self__.handlers}
+        assert "ProxyHandler" in handlers
+        assert handlers["ProxyHandler"].proxies.get("https") == "http://proxy.internal:8080"
+
+    def test_proxy_settings_come_from_the_process_not_the_argument(self, clean_proxy_env):
+        # environ selects the CA bundle. Reading proxies from a caller-supplied
+        # mapping instead would let a caller quietly bypass the proxy the
+        # machine actually requires.
+        clean_proxy_env.setenv("HTTPS_PROXY", "http://proxy.internal:8080")
+        opener = opener_for(environ={"HTTPS_PROXY": "http://ignored:9999"})
+        handlers = {type(h).__name__: h for h in opener.__self__.handlers}
+        assert handlers["ProxyHandler"].proxies.get("https") == "http://proxy.internal:8080"
+
+    def test_no_proxy_configured_is_not_proxying_disabled(self, clean_proxy_env):
+        # build_opener constructs a ProxyHandler, finds nothing for it to
+        # handle, and drops it. Absence means "no proxy here", not "proxying
+        # switched off" — worth pinning, because the opposite reading turns a
+        # working opener into a bug report.
         opener = opener_for(environ={})
         names = [type(h).__name__ for h in opener.__self__.handlers]
-        assert "ProxyHandler" in names
+        assert "ProxyHandler" not in names
+        assert "HTTPSHandler" in names

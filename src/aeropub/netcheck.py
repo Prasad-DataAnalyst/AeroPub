@@ -163,6 +163,16 @@ def opener_for(
     its own, and Python's default TLS context honours ``SSL_CERT_FILE``. This
     exists for the environment where they are not — a corporate proxy whose CA
     is on disk but not in any variable the platform pre-sets.
+
+    ``environ`` selects the CA bundle only. Proxy settings always come from the
+    process environment, because that is where a real connection has to read
+    them: an opener built from a caller-supplied mapping would quietly bypass
+    the proxy the machine actually requires.
+
+    Note that ``build_opener`` only *lists* a ``ProxyHandler`` when a proxy is
+    configured — with none set it constructs one, finds nothing to handle, and
+    drops it. Absence from ``opener.__self__.handlers`` therefore means "no
+    proxy in this environment", not "proxying disabled".
     """
     path = ca_bundle_path or ca_bundle(environ)
     context = ssl.create_default_context(cafile=path) if path else ssl.create_default_context()
