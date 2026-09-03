@@ -59,6 +59,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] AIP index — GEN 0–4, ENR 0–6, AD 0–3 incl. AD 2.1–2.25, with per-section coverage
 - [x] Aerodrome dossier — every AD 2 section, effective values, live NOTAM, gaps stated
 - [x] Change bulletin — cycle to cycle, ranked, cited, and honest about what it did not compare
+- [x] Forward view — what changes next, and which of it nobody will publish a word about
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 

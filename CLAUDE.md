@@ -28,6 +28,19 @@ it. Capture strips request headers from fixture metadata so a captured file can 
 publicly. If a credential ever appears in conversation or a file, say so plainly and advise rotating
 it rather than quietly using it.
 
+`horizon.py` looks the other way. A supplement expiring publishes nothing; a NOTAM lapsing publishes
+nothing; the layer beneath resurfaces and the operationally true value changes with no message
+issued. The CES already knows this, so walking the layer boundaries forward turns it into a list.
+Three triggers, and the distinction is the whole point: PUBLISHED will reach an operator through
+normal channels, REVERSION and WITHDRAWAL will not. Never collapse them — "5 changes ahead" without
+"3 of them unannounced" throws away the only part nobody else can tell you.
+
+It is exact, not predictive: it states what the publications in hand imply, and `as_known_at` records
+the belief it was computed from so a horizon is reproducible rather than arguable. The off-by-one is
+the thing to protect: a window with `valid_to` of the 20th applies *on* the 20th, so the change is on
+the 21st, and a day either way is the difference between a restriction lifting before a flight or
+after it.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

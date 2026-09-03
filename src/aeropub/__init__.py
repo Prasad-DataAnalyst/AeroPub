@@ -4,6 +4,7 @@ The two questions the platform answers, and where each is assembled:
 
 - *"Tell me everything about this."* — :func:`aeropub.dossier.build`
 - *"Something was published; what does it mean?"* — :func:`aeropub.bulletin.between_cycles`
+- *"What changes next, including what nobody will announce?"* — :func:`aeropub.horizon.horizon`
 
 Everything below those is the machinery they stand on: the AIRAC calendar as
 the time spine, :class:`Fact` and :class:`SourceRef` as the attributed core,
@@ -31,6 +32,7 @@ from aeropub.provenance import Confidence, SourceRef
 from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_bulletin
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
 from aeropub.entities import aerodrome_of, covers, scope_of
+from aeropub.horizon import Horizon, Transition, Trigger, horizon
 from aeropub.notam import Notam, NotamKind, QLine
 from aeropub.notam_register import (
     ForceState,
@@ -57,6 +59,10 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "horizon",
+    "Trigger",
+    "Transition",
+    "Horizon",
     "section",
     "scope_of",
     "covers",
