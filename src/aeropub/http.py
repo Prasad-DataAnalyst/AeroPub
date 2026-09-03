@@ -24,7 +24,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from email.utils import format_datetime, parsedate_to_datetime
+from email.utils import parsedate_to_datetime
 from typing import Mapping
 from urllib.parse import urlsplit
 

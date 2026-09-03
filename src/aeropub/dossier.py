@@ -30,7 +30,6 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-from typing import Iterable
 
 from aeropub.aip import (
     AipCoverage,
@@ -40,10 +39,11 @@ from aeropub.aip import (
     section_for_attribute,
 )
 from aeropub.airac import AiracCycle
+from aeropub.entities import covers, normalise, scope_of
 from aeropub.facts import Fact, FactStore
 from aeropub.notam_register import ForceState, NotamRegister, RegisteredNotam
 
-__all__ = ["AerodromeDossier", "SectionEntry", "ValueLine", "build"]
+__all__ = ["AerodromeDossier", "SectionEntry", "ValueLine", "build", "build_dossier"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,9 +60,8 @@ class ValueLine:
 
     @property
     def scope(self) -> str:
-        """``"aerodrome"`` or the runway the value belongs to."""
-        _, _, rest = self.entity.partition("/")
-        return rest or "aerodrome"
+        """``"aerodrome"`` or the object on it the value belongs to."""
+        return scope_of(self.entity) or "aerodrome"
 
     def describe(self) -> str:
         return (
@@ -221,11 +220,6 @@ class AerodromeDossier:
         return "\n".join(lines)
 
 
-def _belongs_to(entity: str, aerodrome: str) -> bool:
-    """Whether a fact entity is this aerodrome or something on it."""
-    return entity == aerodrome or entity.startswith(f"{aerodrome}/")
-
-
 def build(
     aerodrome: str,
     *,
@@ -248,7 +242,7 @@ def build(
     if moment.tzinfo is None:
         raise ValueError("as_at must be timezone-aware (UTC)")
     day = on or moment.date()
-    key = aerodrome.strip().upper()
+    key = normalise(aerodrome)
     if not key:
         raise ValueError("aerodrome must be a non-empty string")
 
@@ -260,7 +254,7 @@ def build(
     # publishes it in.
     by_section: dict[str, list[ValueLine]] = defaultdict(list)
     unplaced: list[ValueLine] = []
-    for entity in sorted(e for e in store.entities() if _belongs_to(e, key)):
+    for entity in sorted(e for e in store.entities() if covers(key, e)):
         for attribute in sorted(store.attributes(entity)):
             fact = store.effective(entity, attribute, day)
             if fact is None:
@@ -298,3 +292,9 @@ def build(
         unplaced=tuple(unplaced),
         cycle=cycle,
     )
+
+
+#: Exported at package level under a name that says what it builds. ``build``
+#: is fine inside ``aeropub.dossier``; at the top of the package it says
+#: nothing.
+build_dossier = build

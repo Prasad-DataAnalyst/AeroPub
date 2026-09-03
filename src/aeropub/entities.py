@@ -1,0 +1,140 @@
+"""The entity key grammar — how everything in this system is named.
+
+A fact, a NOTAM subject, a dossier and a bulletin all have to agree on what
+``"OTHH/RWY34L"`` means, or they cannot be joined. That grammar is small enough
+to be tempting to reimplement at each call site, and it was: four copies of
+"this key, or something beneath it", one of them subtly different from the
+others. That is precisely how a runway NOTAM stops appearing on an aerodrome
+dossier six months after everything worked.
+
+The grammar
+-----------
+=============================  ==========================================
+``OTHH``                       an aerodrome, by ICAO indicator where one
+                               exists and by the State's own identifier
+                               where it does not (``8WC`` has no ICAO form)
+``OTHH/RWY34L``                an object on that aerodrome
+``8WC/RWY02/20``               a full runway pair — the designator itself
+                               contains a slash, which is why only the
+                               *first* separator divides the key
+``AIRSPACE:EGTT``              a free-standing object, belonging to no
+                               aerodrome
+=============================  ==========================================
+
+Containment runs one way. ``covers("OTHH", "OTHH/RWY34L")`` is true, and
+``covers("OTHH/RWY34L", "OTHH")`` is false: an apron closure filed against the
+whole aerodrome must never surface as a finding about a runway.
+"""
+
+from __future__ import annotations
+
+from typing import Iterable, Iterator
+
+__all__ = [
+    "APRON",
+    "RUNWAY",
+    "SEPARATOR",
+    "TAXIWAY",
+    "aerodrome_of",
+    "beneath",
+    "compose",
+    "covers",
+    "is_free_standing",
+    "normalise",
+    "scope_of",
+]
+
+#: What divides an aerodrome from an object on it. Only the first occurrence
+#: divides: a runway pair designator legitimately contains one.
+SEPARATOR = "/"
+
+#: What divides a free-standing object's kind from its designator.
+KIND_SEPARATOR = ":"
+
+RUNWAY = "RWY"
+TAXIWAY = "TWY"
+APRON = "APRON"
+
+
+def normalise(key: str) -> str:
+    """Canonical form: trimmed, upper case, single-spaced.
+
+    Applied at every boundary, so ``" othh "`` and ``"OTHH"`` are one entity
+    rather than two that never join.
+    """
+    return " ".join(str(key).strip().upper().split())
+
+
+def is_free_standing(key: str) -> bool:
+    """Whether this names an object belonging to no aerodrome.
+
+    Airspace, routes and navaids are not on an aerodrome, so they carry a kind
+    prefix instead of an aerodrome one. Rolling one up under an aerodrome would
+    attribute a danger area to a runway.
+    """
+    head, sep, _ = normalise(key).partition(KIND_SEPARATOR)
+    return bool(sep) and SEPARATOR not in head
+
+
+def aerodrome_of(key: str) -> str | None:
+    """The aerodrome a key hangs from, or ``None`` for a free-standing object."""
+    canonical = normalise(key)
+    if is_free_standing(canonical):
+        return None
+    return canonical.partition(SEPARATOR)[0] or None
+
+
+def scope_of(key: str) -> str | None:
+    """What the key names *on* its aerodrome, or ``None`` for the aerodrome itself.
+
+    ``"OTHH/RWY34L"`` gives ``"RWY34L"``; ``"OTHH"`` gives ``None``. Only the
+    first separator divides, so ``"8WC/RWY02/20"`` gives ``"RWY02/20"`` rather
+    than losing the second half of a runway pair.
+    """
+    canonical = normalise(key)
+    if is_free_standing(canonical):
+        return None
+    rest = canonical.partition(SEPARATOR)[2]
+    return rest or None
+
+
+def compose(aerodrome: str, prefix: str, designator: str) -> str:
+    """Build a key for an object on an aerodrome.
+
+    Raises rather than producing a key with an empty half: ``"RWY20"`` with no
+    aerodrome names a runway at every aerodrome that has one, and ``"OTHH/"``
+    names nothing at all.
+    """
+    ad = normalise(aerodrome)
+    thing = normalise(designator)
+    if not ad:
+        raise ValueError(
+            f"cannot key {normalise(prefix)}{thing} with no aerodrome: on its own it names "
+            "an object at every aerodrome that has one"
+        )
+    if not thing:
+        raise ValueError(f"cannot key an object on {ad} with no designator")
+    return f"{ad}{SEPARATOR}{normalise(prefix)}{thing}"
+
+
+def covers(parent: str, key: str) -> bool:
+    """Whether ``key`` is ``parent`` or sits beneath it.
+
+    The one implementation of this rule. Containment is one-directional by
+    design: asking about an aerodrome reaches its runways, asking about a
+    runway does not reach the aerodrome.
+
+    Matching is on a whole path segment, so ``"OTHH"`` does not cover
+    ``"OTHHX"`` — a prefix that is not a segment boundary is a different
+    aerodrome, not a child.
+    """
+    top = normalise(parent)
+    candidate = normalise(key)
+    return candidate == top or candidate.startswith(f"{top}{SEPARATOR}")
+
+
+def beneath(parent: str, keys: Iterable[str]) -> Iterator[str]:
+    """Every key covered by ``parent``, in the order given."""
+    for key in keys:
+        if covers(parent, key):
+            yield key

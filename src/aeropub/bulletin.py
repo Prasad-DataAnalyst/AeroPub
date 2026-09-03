@@ -48,6 +48,7 @@ from aeropub.aip import SECTIONS, AipCoverage, HoldingState, Section, aerodrome_
 from aeropub.aip import section_for_attribute
 from aeropub.airac import AiracCycle
 from aeropub.changes import Change, ChangeKind, diff_effective
+from aeropub.entities import covers, normalise
 from aeropub.facts import FactStore
 from aeropub.impact import Direction, Impact, assess
 
@@ -379,7 +380,7 @@ def compile_bulletin(
     Facts on anything beneath ``entity`` are included: a runway's declared
     distances belong in the aerodrome's bulletin.
     """
-    key = entity.strip().upper()
+    key = normalise(entity)
     if not key:
         raise ValueError("entity must be a non-empty string")
     if after < before:
@@ -388,7 +389,7 @@ def compile_bulletin(
     wanted = set(attributes) if attributes is not None else None
     reported: list[ReportedChange] = []
     for candidate in sorted(store.entities()):
-        if candidate != key and not candidate.startswith(f"{key}/"):
+        if not covers(key, candidate):
             continue
         for change in diff_effective(
             store, before, after, entity=candidate, attributes=wanted

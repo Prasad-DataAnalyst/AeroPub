@@ -36,9 +36,9 @@ domain detects the publication that never came.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Iterable, Protocol
+from typing import Protocol
 
 from aeropub.airac import AiracCycle, cycle_for
 from aeropub.registry import (

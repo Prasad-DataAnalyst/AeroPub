@@ -26,11 +26,12 @@ knowing which runway it closes, and the two must not read alike.
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Iterable, Iterator
 
+from aeropub.entities import aerodrome_of, covers, normalise
 from aeropub.notam import NotamKind
 from aeropub.provenance import SourceRef
 
@@ -123,11 +124,15 @@ class Subject:
     def __post_init__(self) -> None:
         if not self.entity.strip():
             raise ValueError("Subject.entity must be a non-empty string")
+        # Normalised at construction, so a key stored lower case can never
+        # become an entity that lookups silently miss.
+        object.__setattr__(self, "entity", normalise(self.entity))
 
     @property
-    def aerodrome(self) -> str:
-        """The aerodrome part of the key, or the key itself."""
-        return self.entity.partition("/")[0]
+    def aerodrome(self) -> str | None:
+        """The aerodrome this subject hangs from, or ``None`` if it hangs from
+        none — airspace and routes belong to no aerodrome."""
+        return aerodrome_of(self.entity)
 
     @property
     def is_structural(self) -> bool:
@@ -202,10 +207,7 @@ class RegisteredNotam:
         about a runway must not return a NOTAM about the whole aerodrome, which
         would attribute an apron closure to a runway.
         """
-        wanted = entity.strip()
-        return any(
-            s.entity == wanted or s.entity.startswith(f"{wanted}/") for s in self.subjects
-        )
+        return any(covers(entity, s.entity) for s in self.subjects)
 
     @property
     def entities(self) -> tuple[str, ...]:
@@ -268,8 +270,7 @@ class NotamRegister:
 
     def for_entity(self, entity: str) -> tuple[RegisteredNotam, ...]:
         """Every NOTAM on this entity or beneath it, regardless of window."""
-        wanted = entity.strip()
-        return tuple(n for n in self._notams if n.affects(wanted))
+        return tuple(n for n in self._notams if n.affects(entity))
 
     def at(
         self, entity: str, moment: datetime, *, include_unresolved: bool = True
@@ -312,11 +313,9 @@ class NotamRegister:
     def render(self, entity: str, moment: datetime) -> str:
         """A plain-text briefing for one entity. Absence renders as absence."""
         rows = self.at(entity, moment)
-        header = f"{entity} — {moment:%Y-%m-%d %H:%MZ}"
+        header = f"{normalise(entity)} — {moment:%Y-%m-%d %H:%MZ}"
         if not rows:
-            covered = entity in self._by_entity or any(
-                e.startswith(f"{entity}/") for e in self._by_entity
-            )
+            covered = any(covers(entity, e) for e in self._by_entity)
             note = (
                 "no NOTAM in force"
                 if covered

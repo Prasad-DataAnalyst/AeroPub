@@ -28,6 +28,20 @@ it. Capture strips request headers from fixture metadata so a captured file can 
 publicly. If a credential ever appears in conversation or a file, say so plainly and advise rotating
 it rather than quietly using it.
 
+## The entity key grammar
+
+`entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
+only place the rule may be written. It was previously spelled out at four call sites and they had
+drifted: two normalised case and two did not, so `register.at("8wc")` returned nothing for an
+aerodrome with a live runway NOTAM and `render("8wc")` reported it as a coverage gap. A confident
+"nothing here" about somewhere that has something is the exact failure this project exists to
+avoid. Use `covers`, `aerodrome_of`, `scope_of`, `compose` and `normalise`; never write the
+`startswith` again.
+
+Containment is one-directional: an aerodrome query reaches its runways, a runway query does not
+reach the aerodrome. Only the first separator divides a key, because a runway pair designator
+legitimately contains one (`8WC/RWY02/20`).
+
 ## Conventions
 
 - Python 3.10+, standard library only unless a dependency genuinely earns its place.

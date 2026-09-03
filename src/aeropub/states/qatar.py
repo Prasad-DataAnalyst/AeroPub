@@ -45,6 +45,20 @@ from aeropub.registry import (
 )
 from aeropub.states import StateProfile
 
+__all__ = [
+    "AIM_URL",
+    "DATASETS_URL",
+    "DATASET_MARKER",
+    "EAIP_HOST",
+    "PORTAL_URL",
+    "PROFILE",
+    "eaic_url",
+    "eaip_base",
+    "eaip_pdf_url",
+    "eaip_section_url",
+    "sources_for",
+]
+
 #: The authority's public portal. The eAIP itself is served from the AIM host.
 PORTAL_URL = "https://www.caa.gov.qa/en/aeronautical-information-management"
 

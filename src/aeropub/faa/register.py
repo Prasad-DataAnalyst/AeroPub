@@ -16,7 +16,8 @@ from __future__ import annotations
 from typing import Iterable
 
 from aeropub.archive import ArchiveEntry
-from aeropub.faa.aixm import AffectedFeature, NmsNotam, NotamFeed
+from aeropub.entities import compose, normalise
+from aeropub.faa.aixm import NmsNotam, NotamFeed
 from aeropub.notam_register import NotamRegister, RegisteredNotam, Subject, SubjectKind
 
 __all__ = ["FEATURE_KINDS", "register_feed", "registered", "subjects_of"]
@@ -74,10 +75,10 @@ def _aerodrome_key(notam: NmsNotam) -> str | None:
     """
     for feature in notam.aerodromes():
         if feature.designator:
-            return feature.designator.strip().upper()
+            return normalise(feature.designator)
     for candidate in (notam.icao_location, notam.location):
         if candidate and candidate.strip():
-            return candidate.strip().upper()
+            return normalise(candidate)
     return None
 
 
@@ -86,9 +87,11 @@ def _entity_for(kind: SubjectKind, designator: str, aerodrome: str | None) -> st
         return designator
     prefix = _AT_AERODROME.get(kind)
     if prefix is not None:
-        # A runway with no aerodrome to hang from cannot be keyed: "RWY20" on
-        # its own names a runway at every aerodrome that has one.
-        return f"{aerodrome}/{prefix}{designator}" if aerodrome else None
+        if not aerodrome:
+            # "RWY20" on its own names a runway at every aerodrome that has
+            # one, so there is nothing to key it under.
+            return None
+        return compose(aerodrome, prefix, designator)
     return f"{kind.value.upper()}:{designator}"
 
 

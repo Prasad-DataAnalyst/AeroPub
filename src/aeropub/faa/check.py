@@ -152,6 +152,191 @@ class ConnectionReport:
         return "\n".join(lines)
 
 
+def _configuration(
+    report: ConnectionReport,
+    environment: NmsEnvironment | None,
+    client: NmsClient | None,
+    env_map: Mapping[str, str] | None,
+) -> NmsEnvironment | None:
+    """Resolve where the FAA is. Returns ``None`` having recorded the failure."""
+    try:
+        env = environment or (
+            client.environment if client else load_environment(environ=env_map)
+        )
+    except (KeyError, OSError, ValueError) as exc:
+        report.stages.append(StageResult("configuration", False, str(exc)))
+        report.exit_code = EXIT_PROTOCOL
+        return None
+
+    report.environment = env.name
+    report.host = env.host
+    report.token_url = env.token_url
+    report.api_base = env.base
+    report.is_production = env.is_production
+    report.stages.append(
+        StageResult(
+            "configuration", True,
+            env.description or f"{len(env.endpoints)} endpoints",
+        )
+    )
+    return env
+
+
+def _credentials(
+    report: ConnectionReport,
+    creds: ClientCredentials,
+    env_map: Mapping[str, str] | None,
+) -> bool:
+    """Are both halves installed? Local and instant, so it runs before the wire."""
+    report.credentials = [
+        {
+            "env_var": row.env_var,
+            "label": row.label,
+            "status": row.status.value,
+            "present": row.present,
+            "hint": row.hint,
+        }
+        for row in credential_rows(creds, environ=env_map)
+    ]
+    missing = creds.missing(env_map)
+    if missing:
+        report.stages.append(
+            StageResult(
+                "credentials", False,
+                f"not set: {', '.join(missing)}. The FAA onboarding spreadsheet's "
+                "KEY column is the client id and SECRET is the client secret.",
+            )
+        )
+        report.exit_code = EXIT_CREDENTIALS
+        return False
+    report.stages.append(StageResult("credentials", True, "both halves present"))
+    return True
+
+
+def _network(
+    report: ConnectionReport, env: NmsEnvironment, supplied: Probe | None
+) -> bool:
+    """Can anything reach the FAA at all?
+
+    Credential-free, and deliberately before the token request. An egress proxy
+    refusing the host and the FAA rejecting a key look identical from here, and
+    telling someone to rotate a working credential because their own network
+    blocked the call is the most expensive wrong answer this tool can give.
+    """
+    reach = supplied if supplied is not None else probe(env.url("ping"))
+    report.network = {
+        "host": reach.host,
+        "layer": reach.layer.value,
+        "reachable": reach.reachable,
+        "http_status": reach.http_status,
+        "proxy": reach.proxy,
+        "ca_bundle": reach.ca_bundle,
+        "detail": reach.detail,
+        "remedy": reach.remedy(),
+    }
+    if reach.reachable:
+        report.stages.append(
+            StageResult("network", True, reach.describe(), duration_ms=reach.duration_ms)
+        )
+        return True
+
+    report.stages.append(
+        StageResult(
+            "network", False, f"{reach.describe()} — {reach.remedy()}",
+            duration_ms=reach.duration_ms,
+        )
+    )
+    report.exit_code = (
+        EXIT_NETWORK
+        if reach.layer.is_network_policy or reach.layer.is_ours
+        else EXIT_UNAVAILABLE
+    )
+    return False
+
+
+def _run(report: ConnectionReport, name: str, call, *, on_success) -> bool:
+    """Run one live stage, mapping each failure class to its own exit code.
+
+    The mapping is the point: a rejected key, an unreachable gateway and a
+    response that does not match the contract need three different people to
+    do three different things.
+    """
+    try:
+        outcome = call()
+    except NmsAuthError as exc:
+        report.stages.append(StageResult(name, False, str(exc)))
+        report.exit_code = EXIT_CREDENTIALS
+        return False
+    except (NmsTransportError, NmsUnavailableError) as exc:
+        report.stages.append(StageResult(name, False, str(exc)))
+        report.exit_code = EXIT_UNAVAILABLE
+        return False
+    except NmsError as exc:
+        report.stages.append(StageResult(name, False, str(exc)))
+        report.exit_code = EXIT_UNAVAILABLE if exc.is_retryable else EXIT_PROTOCOL
+        return False
+    return on_success(outcome)
+
+
+def _token(report: ConnectionReport, client: NmsClient) -> bool:
+    def succeeded(token) -> bool:
+        report.token = {
+            "masked": token.masked,
+            "expires_at": token.expires_at.isoformat(),
+            "expires_in": token.response.expires_in,
+            "organization": token.response.organization,
+            "client_id": token.response.client_id,
+            "api_products": list(token.response.api_products),
+            "status": token.response.status,
+            "scope": token.response.scope,
+        }
+        report.stages.append(StageResult("token", True, token.response.describe()))
+        return True
+
+    return _run(report, "token", lambda: client.tokens.token(force=True),
+                on_success=succeeded)
+
+
+def _ping(report: ConnectionReport, client: NmsClient) -> bool:
+    def succeeded(response) -> bool:
+        report.stages.append(
+            StageResult("ping", True, f"HTTP {response.status}",
+                        duration_ms=response.duration_ms)
+        )
+        return True
+
+    return _run(report, "ping", client.ping, on_success=succeeded)
+
+
+def _data(report: ConnectionReport, client: NmsClient) -> bool:
+    """Pull a real load and count what parsed against what the FAA claimed.
+
+    A short read is reported as a failure. Presenting two NOTAM as a successful
+    load of a country is the failure that looks exactly like a quiet day.
+    """
+    from aeropub.faa.aixm import NotamFeed  # local: only needed on this path
+
+    def succeeded(load) -> bool:
+        with load.open() as stream:
+            feed = NotamFeed(stream)
+            count = sum(1 for _ in feed)
+        claimed = feed.header.number_returned if feed.header else None
+        detail = f"{count} NOTAM read"
+        if claimed is not None:
+            detail += f" of {claimed} the FAA reported"
+            if feed.is_complete is False:
+                detail += " — SHORT READ"
+        detail += f"; archived as {load.entry.digest[:12]}"
+        ok = feed.is_complete is not False
+        report.stages.append(StageResult("data", ok, detail))
+        if not ok:
+            report.exit_code = EXIT_PROTOCOL
+        return ok
+
+    return _run(report, "data", lambda: client.fetch_initial_load("DOMESTIC"),
+                on_success=succeeded)
+
+
 def verify(
     environment: NmsEnvironment | None = None,
     *,
@@ -166,7 +351,8 @@ def verify(
     """Run the staged check and return the report.
 
     Stops at the first failure. Asking for NOTAM when the token was refused
-    produces a second, less informative error about the same fault.
+    produces a second, less informative error about the same fault — and sends
+    the reader to the wrong stage.
     """
     moment = now or datetime.now(timezone.utc)
     creds = credentials or ClientCredentials.default()
@@ -181,81 +367,14 @@ def verify(
         overlay_file=(env_map or {}).get(CONFIG_PATH_VAR) if env_map is not None else None,
     )
 
-    # -- stage 1: configuration -----------------------------------------
-    try:
-        env = environment or (client.environment if client else load_environment(environ=env_map))
-    except (KeyError, OSError, ValueError) as exc:
-        report.stages.append(StageResult("configuration", False, str(exc)))
-        report.exit_code = EXIT_PROTOCOL
+    env = _configuration(report, environment, client, env_map)
+    if env is None:
+        return report
+    if not _credentials(report, creds, env_map):
+        return report
+    if not _network(report, env, network_probe):
         return report
 
-    report.environment = env.name
-    report.host = env.host
-    report.token_url = env.token_url
-    report.api_base = env.base
-    report.is_production = env.is_production
-    report.stages.append(
-        StageResult("configuration", True, env.description or f"{len(env.endpoints)} endpoints")
-    )
-
-    # -- stage 2: credentials -------------------------------------------
-    rows = credential_rows(creds, environ=env_map)
-    report.credentials = [
-        {
-            "env_var": row.env_var,
-            "label": row.label,
-            "status": row.status.value,
-            "present": row.present,
-            "hint": row.hint,
-        }
-        for row in rows
-    ]
-    missing = creds.missing(env_map)
-    if missing:
-        report.stages.append(
-            StageResult(
-                "credentials",
-                False,
-                f"not set: {', '.join(missing)}. The FAA onboarding spreadsheet's "
-                "KEY column is the client id and SECRET is the client secret.",
-            )
-        )
-        report.exit_code = EXIT_CREDENTIALS
-        return report
-    report.stages.append(StageResult("credentials", True, "both halves present"))
-
-    # -- stage 3: network -------------------------------------------------
-    # Credential-free, and deliberately before the token request. An egress
-    # proxy refusing the host and the FAA rejecting a key look identical from
-    # here, and telling someone to rotate a working credential because their
-    # own network blocked the call is the most expensive wrong answer this
-    # tool can give.
-    reach = network_probe if network_probe is not None else probe(env.url("ping"))
-    report.network = {
-        "host": reach.host,
-        "layer": reach.layer.value,
-        "reachable": reach.reachable,
-        "http_status": reach.http_status,
-        "proxy": reach.proxy,
-        "ca_bundle": reach.ca_bundle,
-        "detail": reach.detail,
-        "remedy": reach.remedy(),
-    }
-    if not reach.reachable:
-        report.stages.append(
-            StageResult("network", False, f"{reach.describe()} — {reach.remedy()}",
-                        duration_ms=reach.duration_ms)
-        )
-        report.exit_code = (
-            EXIT_NETWORK if reach.layer.is_network_policy or reach.layer.is_ours
-            else EXIT_UNAVAILABLE
-        )
-        return report
-    report.stages.append(
-        StageResult("network", True, reach.describe(), duration_ms=reach.duration_ms)
-    )
-
-    # -- stage 4: token --------------------------------------------------
     active = client or NmsClient(
         env,
         tokens=TokenClient(env, creds, environ=env_map),
@@ -266,84 +385,13 @@ def verify(
         # own two-second host gap had not elapsed since the previous stage.
         wait_for_throttle=True,
     )
-    try:
-        token = active.tokens.token(force=True)
-    except NmsAuthError as exc:
-        report.stages.append(StageResult("token", False, str(exc)))
-        report.exit_code = EXIT_CREDENTIALS
-        return report
-    except (NmsTransportError, NmsUnavailableError) as exc:
-        report.stages.append(StageResult("token", False, str(exc)))
-        report.exit_code = EXIT_UNAVAILABLE
-        return report
-    except NmsError as exc:
-        report.stages.append(StageResult("token", False, str(exc)))
-        report.exit_code = EXIT_PROTOCOL
-        return report
 
-    report.token = {
-        "masked": token.masked,
-        "expires_at": token.expires_at.isoformat(),
-        "expires_in": token.response.expires_in,
-        "organization": token.response.organization,
-        "client_id": token.response.client_id,
-        "api_products": list(token.response.api_products),
-        "status": token.response.status,
-        "scope": token.response.scope,
-    }
-    report.stages.append(StageResult("token", True, token.response.describe()))
-
-    # -- stage 5: ping ---------------------------------------------------
-    try:
-        response = active.ping()
-    except NmsAuthError as exc:
-        report.stages.append(StageResult("ping", False, str(exc)))
-        report.exit_code = EXIT_CREDENTIALS
+    if not _token(report, active):
         return report
-    except (NmsTransportError, NmsUnavailableError) as exc:
-        report.stages.append(StageResult("ping", False, str(exc)))
-        report.exit_code = EXIT_UNAVAILABLE
+    if not _ping(report, active):
         return report
-    except NmsError as exc:
-        report.stages.append(StageResult("ping", False, str(exc)))
-        report.exit_code = EXIT_PROTOCOL
-        return report
-
-    report.stages.append(
-        StageResult(
-            "ping", True, f"HTTP {response.status}", duration_ms=response.duration_ms
-        )
-    )
-
-    # -- stage 6: data ---------------------------------------------------
     if fetch_data:
-        try:
-            load = active.fetch_initial_load("DOMESTIC")
-        except NmsError as exc:
-            report.stages.append(StageResult("data", False, str(exc)))
-            report.exit_code = (
-                EXIT_UNAVAILABLE if exc.is_retryable else EXIT_PROTOCOL
-            )
-            return report
-
-        from aeropub.faa.aixm import NotamFeed  # local: only needed on this path
-
-        with load.open() as stream:
-            feed = NotamFeed(stream)
-            count = sum(1 for _ in feed)
-        claimed = feed.header.number_returned if feed.header else None
-        detail = f"{count} NOTAM read"
-        if claimed is not None:
-            detail += f" of {claimed} the FAA reported"
-            if feed.is_complete is False:
-                detail += " — SHORT READ"
-        detail += f"; archived as {load.entry.digest[:12]}"
-        report.stages.append(
-            StageResult("data", feed.is_complete is not False, detail)
-        )
-        if feed.is_complete is False:
-            report.exit_code = EXIT_PROTOCOL
-
+        _data(report, active)
     return report
 
 
