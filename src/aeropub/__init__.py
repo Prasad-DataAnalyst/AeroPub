@@ -8,7 +8,9 @@ The two questions the platform answers, and where each is assembled:
 - *"How does this State actually publish?"* — :func:`aeropub.quality.assess_quality`
 
 Each of those is one body of evidence. :func:`aeropub.lenses.view` arranges it
-for one of six readers without ever filtering away a coverage gap.
+for one of six readers without ever filtering away a coverage gap, and
+:func:`aeropub.api.document` emits any of them as JSON with the citation
+still attached to every value.
 
 Everything below those is the machinery they stand on: the AIRAC calendar as
 the time spine, :class:`Fact` and :class:`SourceRef` as the attributed core,
@@ -35,6 +37,7 @@ from aeropub.impact import Direction, Impact, assess
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
+from aeropub.api import Licensing, document, dumps, ndjson, to_json
 from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_bulletin
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
 from aeropub.entities import aerodrome_of, covers, scope_of
@@ -67,6 +70,11 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "to_json",
+    "ndjson",
+    "dumps",
+    "document",
+    "Licensing",
     "view",
     "lens_for",
     "LensView",

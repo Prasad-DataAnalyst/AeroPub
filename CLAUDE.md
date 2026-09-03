@@ -91,6 +91,24 @@ section mapped — and content with neither a section nor a domain lands with th
 declare `catches_unclassified`, because a change nobody has classified reaching nobody is the same
 failure the bulletin layer already refuses.
 
+`api.py` builds the payloads, not the server — routing and auth belong to whatever hosts it, and
+keeping them apart is what lets one set of documents serve the API, the offline package, the email
+report and the print output without four of them drifting.
+
+Two of plan section 25's rules are enforced structurally rather than left to whoever writes the next
+endpoint. **Provenance is never omitted**: a test walks every document and fails on any object
+carrying a `value` without a `source_ref`, because a serialised value with no citation is
+indistinguishable from one somebody typed, and over an API nothing downstream can tell. **An
+unrecognised object is refused** rather than falling back to `asdict`, which would emit something
+API-shaped with none of the guarantees.
+
+The licence boundary is the plan's own — *chart analysis is ours; chart images are theirs*. An
+extracted figure is the analysis and travels; reproduced prose is the State's and travels only where
+the licence allows, with `UNKNOWN` withholding because assuming permission is the expensive mistake.
+Withholding is an object saying what and why, never an empty string that reads as missing data. An
+earlier draft withheld the value `3900` while the assessment beside it said "3900 → 3500" —
+protection that leaks through the next field is worse than none.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
