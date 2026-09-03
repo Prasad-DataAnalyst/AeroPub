@@ -5,6 +5,7 @@ The two questions the platform answers, and where each is assembled:
 - *"Tell me everything about this."* — :func:`aeropub.dossier.build`
 - *"Something was published; what does it mean?"* — :func:`aeropub.bulletin.between_cycles`
 - *"What changes next, including what nobody will announce?"* — :func:`aeropub.horizon.horizon`
+- *"How does this State actually publish?"* — :func:`aeropub.quality.assess_quality`
 
 Everything below those is the machinery they stand on: the AIRAC calendar as
 the time spine, :class:`Fact` and :class:`SourceRef` as the attributed core,
@@ -29,6 +30,8 @@ from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
 from aeropub.provenance import Confidence, SourceRef
+from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
+from aeropub.store import SqliteFactStore, open_store
 from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_bulletin
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
 from aeropub.entities import aerodrome_of, covers, scope_of
@@ -60,6 +63,12 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "open_store",
+    "assess_quality",
+    "SqliteFactStore",
+    "QualityReport",
+    "QualityFinding",
+    "FindingKind",
     "open_store",
     "SqliteFactStore",
     "horizon",

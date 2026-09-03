@@ -56,6 +56,23 @@ memory when the question is about one runway.
 Postgres is the later answer, when several airlines share an instance. Nothing above `store.py`
 changes then, because the analysis layers take a fact source rather than a database.
 
+`quality.py` reads publications for their conduct rather than their content. PANS-AIM puts a
+three-month limit on what a NOTAM may carry; past that a condition belongs in a Supplement or an
+Amendment, where the aerodrome study and the payload table will actually pick it up. The finding
+that earns the module is the **serial re-issue**: each message sits comfortably inside the limit
+while the condition has run for eleven months across nine of them, which is invisible to anyone
+reading messages as they arrive — which is everyone.
+
+Two deliberate asymmetries. `permanent_by_notam` reports only messages still in force, because one
+that ended is no longer carrying anything; `serial_reissues` spans expired messages, because there
+the *condition* is measured and the earlier messages are the evidence. And condition matching is
+strict — same objects, same words — because a looser match groups unrelated work and produces a
+finding nobody can check, and a quality harness that cries wolf gets switched off along with its
+real findings.
+
+Nothing here calls a State non-compliant. It reports the duration, cites every message, names the
+standard, and stops. A test asserts the rendered output contains no verdict vocabulary.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
