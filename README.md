@@ -64,6 +64,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Publication conduct — conditions carried on NOTAM past the three-month limit
 - [x] Six output lenses — crew, aerodrome, route, ATS, dispatch and AIS, each stating its own gaps
 - [x] JSON/API payloads — versioned, deterministic, provenance on every value, licence honoured
+- [x] Printable dossier — a controlled document that renders the payload verbatim
 - [x] Durable store — SQLite, append-only enforced by the schema itself
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record

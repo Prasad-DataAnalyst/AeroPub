@@ -109,6 +109,18 @@ Withholding is an object saying what and why, never an empty string that reads a
 earlier draft withheld the value `3900` while the assessment beside it said "3900 → 3500" —
 protection that leaks through the next field is worse than none.
 
+`render.py` prints. Its one rule is that it renders the API payload and nothing else — it does not
+reach back into a fact store, recompute a value, or re-word an assessment. A printed document that
+disagreed with the JSON for the same aerodrome would be the worst artefact this system could
+produce, because the two get compared exactly when something has already gone wrong. A test asserts
+the template contains no assessment vocabulary of its own, and the page carries its own payload so a
+reader can check the printed figure against the delivered one rather than trust it.
+
+The template lives in `templates/` and ships as package data: a renderer that cannot find its
+template is a deployment that looks fine until somebody prints. Data is embedded with `</` escaped,
+because an AIP extract containing one would otherwise end the script element — silently, and only
+for the aerodromes whose text happens to have one.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

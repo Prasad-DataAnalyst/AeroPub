@@ -1,0 +1,531 @@
+<title>OTHH Aerodrome Dossier</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo+Narrow:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&display=swap">
+
+<style>
+  :root{
+    --paper:#F1F3F0; --panel:#FFFFFF; --panel-2:#E7EBE6; --inset:#EDF0EC;
+    --ink:#14181C; --ink-2:#3E464F; --muted:#69727B;
+    --rule:#CFD5CE; --rule-2:#A9B2A8;
+    --accent:#2B3A67; --accent-soft:#E3E7F1; --accent-ink:#FFFFFF;
+    --action:#9E2A24; --action-bg:#F8E7E5; --action-rule:#E0B4AF;
+    --caution:#855206; --caution-bg:#F9EFDC; --caution-rule:#E0C48F;
+    --ok:#2E6B45; --ok-bg:#E4EFE7; --ok-rule:#A8CBB4;
+    --unknown:#6B7480; --unknown-bg:#E6EAE6; --unknown-rule:#C6CDC5;
+    --shadow:0 1px 2px rgba(20,24,28,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --paper:#0E1113; --panel:#171B1E; --panel-2:#1E2327; --inset:#121618;
+      --ink:#E4E8E4; --ink-2:#AFB7B5; --muted:#7C8783;
+      --rule:#282E31; --rule-2:#3A4245;
+      --accent:#8FA6DC; --accent-soft:#182035; --accent-ink:#0E1113;
+      --action:#EE8A82; --action-bg:#2B1715; --action-rule:#563029;
+      --caution:#DFAB58; --caution-bg:#2A2113; --caution-rule:#57432A;
+      --ok:#79C494; --ok-bg:#15271C; --ok-rule:#2C5138;
+      --unknown:#7C8783; --unknown-bg:#1B211F; --unknown-rule:#2E3634;
+      --shadow:0 1px 2px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"]{
+    --paper:#0E1113; --panel:#171B1E; --panel-2:#1E2327; --inset:#121618;
+    --ink:#E4E8E4; --ink-2:#AFB7B5; --muted:#7C8783;
+    --rule:#282E31; --rule-2:#3A4245;
+    --accent:#8FA6DC; --accent-soft:#182035; --accent-ink:#0E1113;
+    --action:#EE8A82; --action-bg:#2B1715; --action-rule:#563029;
+    --caution:#DFAB58; --caution-bg:#2A2113; --caution-rule:#57432A;
+    --ok:#79C494; --ok-bg:#15271C; --ok-rule:#2C5138;
+    --unknown:#7C8783; --unknown-bg:#1B211F; --unknown-rule:#2E3634;
+    --shadow:0 1px 2px rgba(0,0,0,.4);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"Source Serif 4",Georgia,serif; font-size:15.5px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  .sheet{max-width:940px; margin:0 auto; padding:34px 26px 70px}
+
+  /* ---------- document control ---------- */
+  .control{border-top:3px solid var(--accent); background:var(--panel);
+           border:1px solid var(--rule); border-top:3px solid var(--accent);
+           box-shadow:var(--shadow)}
+  .control-head{padding:20px 24px 16px; border-bottom:1px solid var(--rule)}
+  .eyebrow{
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px;
+    letter-spacing:.15em; text-transform:uppercase; color:var(--accent);
+    margin:0 0 8px; font-weight:600;
+  }
+  h1{
+    font-family:"Archivo Narrow",Arial Narrow,sans-serif; font-weight:700;
+    font-size:clamp(28px,4.4vw,42px); line-height:1.02; letter-spacing:-.01em;
+    margin:0; text-wrap:balance;
+  }
+  h1 small{display:block; font-size:.44em; font-weight:500; color:var(--muted);
+           letter-spacing:.02em; margin-top:6px}
+  dl.control-grid{
+    display:grid; grid-template-columns:repeat(3,1fr); gap:1px; margin:0;
+    background:var(--rule); border-top:1px solid var(--rule);
+  }
+  @media (max-width:560px){ dl.control-grid{grid-template-columns:repeat(2,1fr)} }
+  dl.control-grid > div{padding:12px 24px; background:var(--panel)}
+  dl.control-grid dt{
+    font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10px;
+    letter-spacing:.11em; text-transform:uppercase; color:var(--muted); margin-bottom:3px;
+  }
+  dl.control-grid dd{
+    margin:0; font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:14px; font-weight:500; color:var(--ink); font-variant-numeric:tabular-nums;
+  }
+
+  .verdict{display:flex; gap:12px; align-items:flex-start; padding:14px 24px;
+           font-size:14.5px; border-top:1px solid var(--rule)}
+  .verdict.bad{background:var(--action-bg); color:var(--action)}
+  .verdict.good{background:var(--ok-bg); color:var(--ok)}
+  .verdict b{font-weight:600}
+  .verdict .mark{font-family:"IBM Plex Mono",monospace; font-weight:600; flex:none}
+
+  /* ---------- sections ---------- */
+  section{margin-top:34px}
+  h2{
+    font-family:"Archivo Narrow",Arial Narrow,sans-serif; font-weight:700;
+    font-size:21px; letter-spacing:.005em; margin:0 0 4px;
+    padding-bottom:7px; border-bottom:2px solid var(--rule-2);
+    display:flex; justify-content:space-between; align-items:baseline; gap:14px;
+  }
+  h2 .count{
+    font-family:"IBM Plex Mono",monospace; font-size:11.5px; font-weight:500;
+    color:var(--muted); letter-spacing:.05em; text-transform:uppercase;
+  }
+  .lede{margin:10px 0 18px; color:var(--ink-2); max-width:66ch; font-size:15px}
+
+  /* ---------- finding rows ---------- */
+  .band{
+    font-family:"IBM Plex Mono",monospace; font-size:10.5px; font-weight:600;
+    letter-spacing:.12em; text-transform:uppercase; margin:22px 0 10px;
+    padding-bottom:5px; border-bottom:1px solid var(--rule);
+  }
+  .band.action{color:var(--action)} .band.review{color:var(--caution)}
+  .band.opportunity{color:var(--ok)} .band.informational{color:var(--muted)}
+
+  .finding{display:grid; grid-template-columns:76px minmax(0,1fr); gap:0 16px;
+           padding:13px 0; border-bottom:1px solid var(--rule)}
+  .finding:last-child{border-bottom:0}
+  .code{
+    font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+    color:var(--accent); padding-top:2px;
+  }
+  .code i{display:block; font-style:normal; font-size:10px; color:var(--muted);
+          letter-spacing:.06em; text-transform:uppercase; margin-top:3px}
+  .headline{font-family:"IBM Plex Mono",monospace; font-size:13.4px; font-weight:500;
+            color:var(--ink); line-height:1.5}
+  .because{margin:6px 0 0; color:var(--ink-2); font-size:14.5px; max-width:64ch}
+  .cite{
+    margin-top:7px; font-family:"IBM Plex Mono",monospace; font-size:11px;
+    color:var(--muted); line-height:1.7; overflow-wrap:anywhere;
+  }
+  .cite span{display:block}
+  .cite b{color:var(--ink-2); font-weight:500}
+
+  /* ---------- forward view ---------- */
+  .ahead{border:1px solid var(--caution-rule); background:var(--caution-bg);
+         border-radius:2px; padding:16px 18px}
+  .ahead h3{font-family:"Archivo Narrow",sans-serif; font-weight:700; font-size:14px;
+            letter-spacing:.04em; text-transform:uppercase; color:var(--caution); margin:0 0 10px}
+  .ahead .finding{border-color:var(--caution-rule)}
+  .when{font-family:"IBM Plex Mono",monospace; font-size:12px; font-weight:600;
+        color:var(--caution); font-variant-numeric:tabular-nums}
+  .when i{display:block; font-style:normal; font-size:10px; color:var(--muted); margin-top:3px}
+
+  /* ---------- register ---------- */
+  .tablewrap{overflow-x:auto; border:1px solid var(--rule); background:var(--panel)}
+  table{width:100%; border-collapse:collapse; font-size:13.5px}
+  th{
+    text-align:left; font-family:"IBM Plex Mono",monospace; font-weight:500;
+    font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);
+    padding:9px 14px; border-bottom:1px solid var(--rule-2); white-space:nowrap;
+    background:var(--panel-2);
+  }
+  td{padding:8px 14px; border-bottom:1px solid var(--rule); vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  td.sec{font-family:"IBM Plex Mono",monospace; font-size:12.5px; font-weight:600;
+         white-space:nowrap; width:82px}
+  td.ttl{font-family:"Archivo Narrow",sans-serif; font-weight:600; font-size:14px}
+  td.val{font-family:"IBM Plex Mono",monospace; font-size:12.5px; color:var(--ink-2);
+         font-variant-numeric:tabular-nums}
+  tr.gap td{background:var(--action-bg)}
+  tr.absent td{background:var(--unknown-bg)}
+  .pill{
+    display:inline-block; padding:2px 8px; border-radius:2px; white-space:nowrap;
+    font-family:"IBM Plex Mono",monospace; font-size:10px; font-weight:500;
+    letter-spacing:.06em; text-transform:uppercase; border:1px solid;
+  }
+  .p-held{background:var(--ok-bg); color:var(--ok); border-color:var(--ok-rule)}
+  .p-absent{background:var(--unknown-bg); color:var(--unknown); border-color:var(--unknown-rule)}
+  .p-failed{background:var(--action-bg); color:var(--action); border-color:var(--action-rule)}
+  .p-not_checked{background:var(--caution-bg); color:var(--caution); border-color:var(--caution-rule)}
+
+  /* ---------- lens strip ---------- */
+  .lenses{display:grid; grid-template-columns:repeat(3,1fr); gap:1px;
+          background:var(--rule); border:1px solid var(--rule)}
+  @media (max-width:760px){ .lenses{grid-template-columns:repeat(2,1fr)} }
+  @media (max-width:460px){ .lenses{grid-template-columns:1fr} }
+  .lens{background:var(--panel); padding:13px 15px}
+  .lens h4{font-family:"Archivo Narrow",sans-serif; font-weight:700; font-size:14.5px;
+           margin:0 0 2px}
+  .lens .who{font-family:"IBM Plex Mono",monospace; font-size:10.5px; color:var(--muted);
+             letter-spacing:.05em; text-transform:uppercase}
+  .lens .state{margin-top:9px; display:flex; align-items:center; gap:7px; font-size:12.5px;
+               font-family:"IBM Plex Mono",monospace}
+  .lens .dot{width:8px; height:8px; border-radius:50%; flex:none}
+  .lens.sound .dot{background:var(--ok)} .lens.sound .state{color:var(--ok)}
+  .lens.unsound .dot{background:var(--action)} .lens.unsound .state{color:var(--action)}
+  .lens .missing{margin-top:5px; font-size:11.5px; color:var(--muted);
+                 font-family:"IBM Plex Mono",monospace}
+
+  /* ---------- conduct ---------- */
+  .conduct{border-left:3px solid var(--caution); background:var(--panel);
+           border:1px solid var(--rule); border-left:3px solid var(--caution);
+           padding:14px 18px; margin-bottom:12px}
+  .conduct .headline{font-size:13.4px}
+  .msgs{margin-top:6px; font-family:"IBM Plex Mono",monospace; font-size:11px; color:var(--muted)}
+
+  /* ---------- payload ---------- */
+  details.payload{margin-top:14px; border:1px solid var(--rule); background:var(--inset)}
+  details.payload summary{
+    cursor:pointer; padding:9px 14px; font-family:"IBM Plex Mono",monospace;
+    font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--accent);
+  }
+  details.payload summary:hover{background:var(--accent-soft)}
+  details.payload pre{
+    margin:0; padding:0 14px 14px; overflow-x:auto; font-family:"IBM Plex Mono",monospace;
+    font-size:11.5px; line-height:1.65; color:var(--ink-2);
+  }
+
+  footer{
+    margin-top:40px; padding-top:18px; border-top:2px solid var(--rule-2);
+    color:var(--muted); font-size:13px;
+  }
+  footer p{margin:0 0 9px; max-width:72ch}
+  footer b{color:var(--ink-2); font-weight:600}
+  .mono{font-family:"IBM Plex Mono",monospace; font-size:12.2px}
+
+  a{color:var(--accent)}
+  :focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+  @media print{
+    :root{--paper:#fff; --panel:#fff; --panel-2:#f4f4f2; --inset:#f7f7f5;
+          --ink:#000; --ink-2:#222; --muted:#555; --rule:#bbb; --rule-2:#888; --shadow:none}
+    body{font-size:10.5pt}
+    .sheet{max-width:none; padding:0}
+    section{break-inside:avoid-page}
+    .finding, .conduct, tr{break-inside:avoid}
+    details.payload{display:none}
+    h2{break-after:avoid}
+  }
+</style>
+
+<div class="sheet">
+  <article class="control">
+    <div class="control-head">
+      <p class="eyebrow">AeroPub · Controlled document · Aerodrome study</p>
+      <h1 id="adTitle">OTHH<small id="adName">—</small></h1>
+    </div>
+    <dl class="control-grid" id="controlGrid"></dl>
+    <div class="verdict" id="verdict"></div>
+  </article>
+
+  <section>
+    <h2>What changed <span class="count" id="changeCount"></span></h2>
+    <p class="lede" id="changeLede"></p>
+    <div id="changes"></div>
+    <details class="payload"><summary>Machine-readable — change bulletin</summary>
+      <pre id="jsonBulletin"></pre></details>
+  </section>
+
+  <section>
+    <h2>What changes next <span class="count" id="aheadCount"></span></h2>
+    <p class="lede">A supplement expiring publishes nothing. A NOTAM lapsing publishes nothing.
+      The layer beneath resurfaces, the operationally true value changes, and no message is
+      issued. This is computed from the publications already held — exact about those, silent
+      about any not yet issued.</p>
+    <div id="ahead"></div>
+  </section>
+
+  <section>
+    <h2>Who can rely on this <span class="count">Six readers</span></h2>
+    <p class="lede">Each document names the AD 2 sections its reader depends on. A lens filters
+      findings; it never filters gaps. The same missing obstacle section leaves a threat brief
+      unsound and a dispatch digest sound — two correct and different answers.</p>
+    <div class="lenses" id="lenses"></div>
+  </section>
+
+  <section>
+    <h2>AIP AD 2 register <span class="count" id="registerCount"></span></h2>
+    <p class="lede">All 25 sections, held or not. A section nobody read is printed as plainly as
+      one read this morning: a report listing only what we hold is indistinguishable from a
+      complete one.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Section</th><th>Title</th><th>Holding</th><th>Effective values</th></tr></thead>
+      <tbody id="register"></tbody>
+    </table></div>
+    <details class="payload"><summary>Machine-readable — aerodrome dossier</summary>
+      <pre id="jsonDossier"></pre></details>
+  </section>
+
+  <section>
+    <h2>NOTAM in force <span class="count" id="notamCount"></span></h2>
+    <div id="notams"></div>
+  </section>
+
+  <section>
+    <h2>How this is being published <span class="count" id="conductCount"></span></h2>
+    <p class="lede">ICAO PANS-AIM: information expected to persist beyond three months belongs
+      in an AIP Supplement or Amendment, not a NOTAM. These are measurements against that
+      standard, not a compliance judgement.</p>
+    <div id="conduct"></div>
+  </section>
+
+  <footer>
+    <p><b>Every value on this page carries its citation</b> — the document, the locator inside it,
+      when it was read, the parser and version that read it, and the SHA-256 of the archived bytes.
+      A value without one would be indistinguishable from one somebody typed.</p>
+    <p><b>Coverage gaps are printed, not omitted.</b> AD 2.10 failed to parse and AD 2.16 is
+      genuinely not published by the State. Those are different facts and are never shown alike.</p>
+    <p class="mono" id="stamp"></p>
+  </footer>
+</div>
+
+<script id="aeropub-data" type="application/json">__DATA__</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("aeropub-data").textContent);
+  var dossier = D.dossier.data, bulletin = D.bulletin.data,
+      ahead = D.horizon.data, conduct = D.conduct.data, lenses = D.lenses;
+
+  var $ = function (id) { return document.getElementById(id); };
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text !== undefined) n.textContent = text;
+    return n;
+  }
+  function citation(ref, label) {
+    var s = el("span");
+    s.appendChild(el("b", null, label + ": "));
+    s.appendChild(document.createTextNode(
+      ref.document + " · " + ref.locator + " · read " +
+      ref.retrieved_at.slice(0, 16).replace("T", " ") + "Z · " +
+      ref.parser_id + " " + ref.parser_version + " · " + ref.content_hash.slice(0, 12)
+    ));
+    return s;
+  }
+
+  // -- document control ------------------------------------------------
+  $("adName").textContent = valueOf("aerodrome_name") || "Aerodrome";
+  function valueOf(attribute) {
+    for (var i = 0; i < dossier.sections.length; i++) {
+      var vals = dossier.sections[i].values;
+      for (var j = 0; j < vals.length; j++) {
+        if (vals[j].attribute === attribute && typeof vals[j].value !== "object") {
+          return vals[j].value;
+        }
+      }
+    }
+    return null;
+  }
+
+  var s = dossier.summary;
+  [["AIRAC cycle", dossier.cycle || "—"],
+   ["Effective state", dossier.on],
+   ["As at", dossier.as_at.slice(0, 16).replace("T", " ") + "Z"],
+   ["Sections held", s.held + " of " + s.sections],
+   ["Coverage gaps", String(s.gaps)],
+   ["NOTAM in force", String(s.notams)]
+  ].forEach(function (row) {
+    var wrap = el("div");
+    wrap.appendChild(el("dt", null, row[0]));
+    wrap.appendChild(el("dd", null, row[1]));
+    $("controlGrid").appendChild(wrap);
+  });
+
+  var v = $("verdict");
+  if (dossier.complete) {
+    v.className = "verdict good";
+    v.appendChild(el("span", "mark", "OK"));
+    v.appendChild(el("span", null,
+      "Every AD 2 section is accounted for. This dossier can carry a categorisation."));
+  } else {
+    v.className = "verdict bad";
+    v.appendChild(el("span", "mark", "!!"));
+    var t = el("span");
+    t.appendChild(el("b", null, "Not complete. "));
+    t.appendChild(document.createTextNode(
+      dossier.coverage_gaps.length + " section" +
+      (dossier.coverage_gaps.length === 1 ? " was" : "s were") +
+      " not read: " + dossier.coverage_gaps.join(", ") +
+      ". Do not treat their absence below as an all-clear."));
+    v.appendChild(t);
+  }
+
+  // -- changes ---------------------------------------------------------
+  var bs = bulletin.summary;
+  $("changeCount").textContent = bs.changes + " changes · " + bs.action + " action";
+  $("changeLede").textContent = bulletin.coverage_statement;
+
+  var BANDS = [["action", "Action — something got worse"],
+               ["review", "Needs a human — no rule covers these, and they may be either"],
+               ["opportunity", "Opportunity — a constraint lifted"],
+               ["informational", "Informational — changed, with no direction attached"]];
+  BANDS.forEach(function (band) {
+    var items = bulletin.changes.filter(function (c) { return c.attention === band[0]; });
+    if (!items.length) return;
+    $("changes").appendChild(el("div", "band " + band[0], band[1]));
+    items.forEach(function (c) {
+      var row = el("div", "finding");
+      var code = el("div", "code", c.section || "unplaced");
+      code.appendChild(el("i", null, c.kind));
+      row.appendChild(code);
+      var body = el("div");
+      body.appendChild(el("div", "headline", c.summary));
+      body.appendChild(el("p", "because", c.consequence));
+      var cites = el("div", "cite");
+      if (c.before) cites.appendChild(citation(c.before.source_ref, "was"));
+      if (c.after) cites.appendChild(citation(c.after.source_ref, "now"));
+      body.appendChild(cites);
+      row.appendChild(body);
+      $("changes").appendChild(row);
+    });
+  });
+
+  // -- forward view ----------------------------------------------------
+  var hs = ahead.summary;
+  $("aheadCount").textContent = hs.transitions + " dated · " + hs.unannounced + " unannounced";
+  function transitionRow(t) {
+    var row = el("div", "finding");
+    var when = el("div", "when", t.on);
+    when.appendChild(el("i", null, "T+" + t.days_away));
+    row.appendChild(when);
+    var body = el("div");
+    body.appendChild(el("div", "headline", (t.section ? t.section + "  " : "") + t.summary));
+    body.appendChild(el("p", "because", t.why));
+    body.appendChild(el("p", "because", t.consequence));
+    if (t.before) {
+      var cites = el("div", "cite");
+      cites.appendChild(citation(t.before.source_ref, "expiring"));
+      body.appendChild(cites);
+    }
+    row.appendChild(body);
+    return row;
+  }
+  if (ahead.unannounced.length) {
+    var box = el("div", "ahead");
+    box.appendChild(el("h3", null, "Nothing will be published to tell you about these"));
+    ahead.unannounced.forEach(function (t) { box.appendChild(transitionRow(t)); });
+    $("ahead").appendChild(box);
+  }
+  var announced = ahead.transitions.filter(function (t) { return t.announced; });
+  if (announced.length) {
+    $("ahead").appendChild(el("div", "band informational",
+      "Published — these arrive through the normal channels"));
+    announced.forEach(function (t) { $("ahead").appendChild(transitionRow(t)); });
+  }
+
+  // -- lenses ----------------------------------------------------------
+  // Plan section 21's order: the audiences as the design document lists them.
+  ["flight_crew", "aerodrome_study", "route_study", "ats", "dispatch", "ais"]
+    .filter(function (key) { return lenses[key]; })
+    .forEach(function (key) {
+    var L = lenses[key].data;
+    var card = el("div", "lens " + (L.sound ? "sound" : "unsound"));
+    card.appendChild(el("h4", null, L.title));
+    card.appendChild(el("div", "who", L.reader));
+    var state = el("div", "state");
+    state.appendChild(el("span", "dot"));
+    state.appendChild(document.createTextNode(L.sound ? "sound" : "NOT SOUND"));
+    card.appendChild(state);
+    if (L.blocking_gaps.length) {
+      card.appendChild(el("div", "missing", "missing " +
+        L.blocking_gaps.map(function (g) { return g.code; }).join(", ")));
+    }
+    if (L.not_yet_connected.length) {
+      card.appendChild(el("div", "missing", "partial: needs " +
+        L.not_yet_connected.join(", ")));
+    }
+    $("lenses").appendChild(card);
+  });
+
+  // -- register --------------------------------------------------------
+  $("registerCount").textContent = s.held + " held · " + s.absent + " not published · " +
+    s.gaps + " unaccounted for";
+  dossier.sections.forEach(function (sec) {
+    var tr = el("tr", sec.holding === "held" ? "" :
+      (sec.holding === "absent" ? "absent" : "gap"));
+    tr.appendChild(el("td", "sec", sec.code));
+    tr.appendChild(el("td", "ttl", sec.title));
+    var td = el("td");
+    td.appendChild(el("span", "pill p-" + sec.holding, sec.holding.replace("_", " ")));
+    if (sec.detail) { td.appendChild(el("div", "missing", sec.detail)); }
+    tr.appendChild(td);
+    var values = sec.values.map(function (val) {
+      var shown = (val.value && typeof val.value === "object") ? "[withheld]" : val.value;
+      return val.scope + " · " + val.attribute + " = " + shown +
+             " [" + val.precedence.toUpperCase() + "]";
+    }).join("\n");
+    var vt = el("td", "val");
+    values.split("\n").forEach(function (line) {
+      if (line) vt.appendChild(el("div", null, line));
+    });
+    tr.appendChild(vt);
+    $("register").appendChild(tr);
+  });
+
+  // -- notams ----------------------------------------------------------
+  $("notamCount").textContent = dossier.notams.length + " indexed";
+  if (!dossier.notams.length) {
+    $("notams").appendChild(el("p", "lede",
+      "None indexed for this aerodrome — a coverage gap, not a quiet aerodrome."));
+  }
+  dossier.notams.forEach(function (n) {
+    var row = el("div", "finding");
+    var code = el("div", "code", n.identifier);
+    code.appendChild(el("i", null, n.state));
+    row.appendChild(code);
+    var body = el("div");
+    body.appendChild(el("div", "headline",
+      typeof n.text === "object" ? "[text withheld — redistribution not permitted]" : n.text));
+    body.appendChild(el("p", "because", "Affects " + n.entities.join(", ") +
+      ". In force " + String(n.effective_start).slice(0, 10) +
+      " to " + String(n.effective_end).slice(0, 10) + "."));
+    var cites = el("div", "cite");
+    cites.appendChild(citation(n.source_ref, "source"));
+    body.appendChild(cites);
+    row.appendChild(body);
+    $("notams").appendChild(row);
+  });
+
+  // -- conduct ---------------------------------------------------------
+  $("conductCount").textContent = conduct.findings.length + " findings";
+  conduct.findings.forEach(function (f) {
+    var box = el("div", "conduct");
+    box.appendChild(el("div", "headline", f.entity + " — " + f.summary +
+      (f.days !== null ? "  (" + f.days + " days)" : "")));
+    box.appendChild(el("p", "because", f.consequence));
+    if (f.messages.length) {
+      box.appendChild(el("div", "msgs", "messages: " + f.messages.join(", ")));
+    }
+    $("conduct").appendChild(box);
+  });
+
+  // -- payloads and stamp ----------------------------------------------
+  $("jsonBulletin").textContent = JSON.stringify(D.bulletin, null, 2);
+  $("jsonDossier").textContent = JSON.stringify(D.dossier, null, 2);
+  $("stamp").textContent = "AeroPub " + D.dossier.aeropub.version +
+    " · generated " + D.dossier.aeropub.generated_at +
+    " · this page renders the API payload verbatim, nothing is re-typed for display.";
+}());
+</script>

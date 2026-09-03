@@ -17,6 +17,11 @@ dev = ["pytest>=8.0"]
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# The print template ships with the package: a renderer that cannot find
+# its template is a deployment that looks fine until somebody prints.
+aeropub = ["templates/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

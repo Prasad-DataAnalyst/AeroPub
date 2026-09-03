@@ -53,6 +53,7 @@ from aeropub.notam_register import (
     SubjectKind,
 )
 from aeropub.validation import Finding, Severity, validate
+from aeropub.render import render_dossier
 from aeropub.registry import (
     CheckOutcome,
     CredentialRef,
@@ -70,6 +71,7 @@ from aeropub.registry import (
 )
 
 __all__ = [
+    "render_dossier",
     "to_json",
     "ndjson",
     "dumps",
