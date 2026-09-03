@@ -27,6 +27,7 @@ import pytest
 from aeropub.aircraft import (
     CODE_LETTERS,
     CODE_NUMBERS,
+    RFFS_CATEGORIES,
     AircraftType,
     Characteristic,
     Origin,
@@ -37,6 +38,7 @@ from aeropub.aircraft import (
     code_number,
     compare_pavement,
     reference_code,
+    rffs_category,
 )
 from aeropub.provenance import SourceRef
 
@@ -285,6 +287,73 @@ class TestAccommodates:
 
 
 # --------------------------------------------------------------------------
+# ICAO Annex 14 Volume I, Table 9-1 and 9.2.2
+# --------------------------------------------------------------------------
+
+
+class TestRffsCategory:
+    @pytest.mark.parametrize(
+        "length_m,expected",
+        [
+            (0.0, 1), (8.9, 1),
+            (9.0, 2), (11.9, 2),
+            (12.0, 3), (17.9, 3),
+            (18.0, 4), (23.9, 4),
+            (24.0, 5), (27.9, 5),
+            (28.0, 6), (38.9, 6),
+            (39.0, 7), (48.9, 7),
+            (49.0, 8), (60.9, 8),
+            (61.0, 9), (75.9, 9),
+            (76.0, 10), (89.9, 10),
+        ],
+    )
+    def test_every_length_boundary(self, length_m, expected):
+        assert rffs_category(overall_length_m=length_m) == expected
+
+    def test_the_length_bands_are_contiguous(self):
+        for lower, upper in zip(RFFS_CATEGORIES, RFFS_CATEGORIES[1:]):
+            assert lower.length_to_m == upper.length_from_m
+            assert upper.category == lower.category + 1
+
+    def test_an_aeroplane_beyond_the_table_gets_no_category(self):
+        # Annex 14 stops at 90 m. Beyond it the State determines the category,
+        # and inventing a row would be a confident answer about an aeroplane
+        # the standard does not cover.
+        assert rffs_category(overall_length_m=90.0) is None
+        assert rffs_category(overall_length_m=None) is None
+
+
+class TestTheFuselageWidthBump:
+    """Annex 14 9.2.2 — length selects, then width can promote."""
+
+    def test_a_width_within_the_band_leaves_the_category_alone(self):
+        assert rffs_category(overall_length_m=70.0, fuselage_width_m=6.2) == 9
+
+    def test_a_width_above_the_band_promotes_one_category(self):
+        # The half people forget. Same length, one category apart.
+        assert rffs_category(overall_length_m=70.0, fuselage_width_m=7.2) == 10
+
+    def test_a_width_exactly_at_the_maximum_does_not_promote(self):
+        # The provision reads "greater than", not "at least".
+        assert rffs_category(overall_length_m=70.0, fuselage_width_m=7.0) == 9
+
+    def test_the_promotion_is_one_step_not_a_reclassification(self):
+        # A short, very wide aeroplane goes up exactly one category — it is not
+        # reclassified by width as though width were the primary criterion.
+        assert rffs_category(overall_length_m=30.0, fuselage_width_m=9.0) == 7
+
+    def test_the_table_stops_at_ten(self):
+        # There is no category 11. An aeroplane already in the last row has
+        # nowhere to be promoted to, and 10 is the most the table can say.
+        assert rffs_category(overall_length_m=80.0, fuselage_width_m=9.0) == 10
+
+    def test_without_a_width_the_answer_is_a_floor(self):
+        # Documented as a floor, not an answer: 9.2.2 may still apply.
+        assert rffs_category(overall_length_m=70.0) == 9
+        assert rffs_category(overall_length_m=70.0, fuselage_width_m=7.2) == 10
+
+
+# --------------------------------------------------------------------------
 # Pavement
 # --------------------------------------------------------------------------
 
@@ -495,19 +564,31 @@ class TestNoFiguresAreShipped:
             if isinstance(node, ast.Constant) and isinstance(node.value, (int, float))
             and not isinstance(node.value, bool)
         }
+        # Every number in the module must come from one of the Annex 14 tables
+        # it encodes. Those tables are the published standard; anything else is
+        # an aircraft figure, and aircraft figures belong in cited
+        # Characteristics rather than in source.
         permitted = {
-            band for row in CODE_LETTERS
+            band
+            for row in CODE_LETTERS
             for band in (
                 row.wingspan_from_m, row.wingspan_to_m, row.omgws_from_m, row.omgws_to_m
             )
             if band is not None
         }
-        permitted |= {float(n) for _, lower, upper in CODE_NUMBERS
-                      for n in (lower,) if n is not None}
+        permitted |= {float(lower) for _, lower, _ in CODE_NUMBERS}
         permitted |= {float(number) for number, _, _ in CODE_NUMBERS}
-        permitted |= {0.0, 1.0}  # indices and the negative-length guard
+        permitted |= {
+            figure
+            for row in RFFS_CATEGORIES
+            for figure in (
+                float(row.category), row.length_from_m, row.length_to_m,
+                row.max_fuselage_width_m,
+            )
+        }
+        permitted |= {0.0, 1.0}  # indices, and the negative-length guard
         assert numbers <= permitted, (
-            "a numeric literal outside Annex 14 Table 1-1 appeared in aircraft.py: "
-            f"{sorted(numbers - permitted)}. Aircraft figures belong in cited "
-            "Characteristics, not in source."
+            "a numeric literal outside the Annex 14 tables appeared in "
+            f"aircraft.py: {sorted(numbers - permitted)}. Aircraft figures belong "
+            "in cited Characteristics, not in source."
         )

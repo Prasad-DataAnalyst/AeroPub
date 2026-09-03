@@ -63,6 +63,8 @@ __all__ = [
     "Characteristic",
     "CodeLetterBand",
     "Origin",
+    "RFFS_CATEGORIES",
+    "RffsCategory",
     "PavementCheck",
     "PavementVerdict",
     "Pcn",
@@ -71,6 +73,7 @@ __all__ = [
     "code_number",
     "compare_pavement",
     "reference_code",
+    "rffs_category",
 ]
 
 
@@ -263,6 +266,82 @@ def accommodates(aerodrome_letter: str, aircraft_letter: str) -> bool:
         raise ValueError(
             f"code letters are A to F; got {aerodrome_letter!r} and {aircraft_letter!r}"
         ) from None
+
+
+# --------------------------------------------------------------------------
+# Rescue and fire fighting — Annex 14 Volume I, Table 9-1
+# --------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class RffsCategory:
+    """One row of Table 9-1. The length band is closed below, open above."""
+
+    category: int
+    length_from_m: float
+    length_to_m: float
+    max_fuselage_width_m: float
+
+
+#: Annex 14 Volume I, Table 9-1 — the aerodrome category an aeroplane requires.
+#: Two dimensions, read in order: overall length selects the row, and then 9.2.2
+#: applies. This is the aerodrome category the *aeroplane* needs, which is not
+#: the same question as what the aerodrome provides; AD 2.6 answers that, and a
+#: State may also reduce the published category during periods of lower traffic.
+RFFS_CATEGORIES: tuple[RffsCategory, ...] = (
+    RffsCategory(1, 0.0, 9.0, 2.0),
+    RffsCategory(2, 9.0, 12.0, 2.0),
+    RffsCategory(3, 12.0, 18.0, 3.0),
+    RffsCategory(4, 18.0, 24.0, 4.0),
+    RffsCategory(5, 24.0, 28.0, 4.0),
+    RffsCategory(6, 28.0, 39.0, 5.0),
+    RffsCategory(7, 39.0, 49.0, 5.0),
+    RffsCategory(8, 49.0, 61.0, 7.0),
+    RffsCategory(9, 61.0, 76.0, 7.0),
+    RffsCategory(10, 76.0, 90.0, 8.0),
+)
+
+
+def rffs_category(
+    *, overall_length_m: float | None, fuselage_width_m: float | None = None
+) -> int | None:
+    """The aerodrome fire category this aeroplane requires, per Table 9-1.
+
+    Annex 14 9.2.2 is explicit about the order, and it is the half people
+    forget: **overall length selects the category, and then, if the fuselage
+    width exceeds the maximum in column 3 for that category, the category is
+    one higher.** Length alone under-reports for wide aeroplanes — the case the
+    rule exists for is a fuselage that is short for its girth.
+
+    Without the fuselage width this returns the length-only category and cannot
+    know whether the bump applies. That is a floor, not an answer, and callers
+    must present it as one: an aerodrome that meets the floor may still be one
+    category short.
+
+    Returns ``None`` where the length is not held or falls outside the table.
+    Annex 14 stops at 90 m; beyond it the State determines the category, and
+    inventing a row would be a confident answer about an aeroplane the standard
+    does not cover.
+    """
+    if overall_length_m is None:
+        return None
+    row = next(
+        (
+            r
+            for r in RFFS_CATEGORIES
+            if overall_length_m >= r.length_from_m and overall_length_m < r.length_to_m
+        ),
+        None,
+    )
+    if row is None:
+        return None
+    if fuselage_width_m is not None and fuselage_width_m > row.max_fuselage_width_m:
+        # 9.2.2. Table 9-1 stops at category 10, so an aeroplane already in the
+        # last row has nowhere to be promoted to; the State determines what it
+        # needs, and reporting 10 is the most the table can say.
+        return min(row.category + 1, RFFS_CATEGORIES[-1].category)
+    return row.category
+
 
 
 # --------------------------------------------------------------------------

@@ -32,7 +32,9 @@ from aeropub.dossier import build
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.horizon import horizon
 from aeropub.lenses import Audience, view
+from aeropub.aircraft import AircraftType, Characteristic, Origin
 from aeropub.provenance import SourceRef
+from aeropub.suitability import assess_suitability
 from aeropub.quality import assess_quality
 from aeropub.registry import Redistribution
 
@@ -65,6 +67,15 @@ def store():
     facts.add(fact_of("OTHH/RWY34L", "lda_m", 3500, N2.effective_date,
                       document_name="AIP AMDT 10/26"))
     facts.add(fact_of("OTHH", "rffs_category", 9, date(2026, 1, 1), locator="AD 2.6"))
+    # A supplement that expires inside the forward window. Without it the
+    # horizon fixture was empty and the provenance walk over `forward_view`
+    # proved nothing — every assertion passed over a document with no values
+    # in it. It also makes the fixture exercise the case the module exists
+    # for: when this expires, the AIP figure beneath it resurfaces and nobody
+    # publishes a word about it.
+    facts.add(fact_of("OTHH/RWY34L", "lda_m", 2900, date(2026, 10, 3),
+                      date(2026, 11, 15), precedence=Precedence.SUP,
+                      document_name="AIP SUP 14/26"))
     return facts
 
 
@@ -90,6 +101,22 @@ def documents(store, coverage):
         "publication_conduct": assess_quality(as_at=NOW),
         "lens_view": view(Audience.DISPATCH, "OTHH", as_at=NOW,
                           dossier=dossier, bulletin=bulletin, ahead=ahead),
+        "aerodrome_suitability": assess_suitability(
+            dossier,
+            AircraftType(designator="TEST").with_characteristics(
+                [
+                    Characteristic(attribute=a, value=v, source=ref("ACAP", a),
+                                   origin=Origin.ACAP)
+                    for a, v in (
+                        ("wingspan_m", 60.0),
+                        ("omgws_m", 12.0),
+                        ("reference_field_length_m", 3100.0),
+                        ("overall_length_m", 70.0),
+                        ("fuselage_width_m", 6.2),
+                    )
+                ]
+            ),
+        ),
     }
 
 
@@ -109,6 +136,7 @@ class TestProvenanceIsNeverOmitted:
 
     @pytest.mark.parametrize("kind", [
         "aerodrome_dossier", "change_bulletin", "forward_view", "lens_view",
+        "aerodrome_suitability",
     ])
     def test_every_value_travels_with_its_citation(self, documents, kind):
         payload = document(documents[kind])
@@ -118,6 +146,11 @@ class TestProvenanceIsNeverOmitted:
             if "value" in node and "source_ref" not in node and not node.get("withheld")
         ]
         assert offenders == []
+        # And the walk must actually have reached values, or it proves nothing.
+        assert any("value" in node for _, node in _walk(payload)), (
+            f"the {kind} payload carries no values at all; this test would pass "
+            "vacuously for a document that had lost them"
+        )
 
     def test_every_citation_is_complete(self, documents):
         # An abbreviated citation is not a citation: without the hash there is

@@ -164,6 +164,33 @@ is not a prohibition — Annex 14 provides for overload operations — but it ne
 procedures and its consent, never a dispatch decision alone, and a `U` rating says what the pavement
 has been seen to carry rather than what it was calculated to carry.
 
+`suitability.py` is where the aircraft module earns its place: one aeroplane against one aerodrome
+dossier, every check either made on cited data or listed as unmade. It reads the reference code
+(Table 1-1), the pavement (ACN/PCN), the runway width (Table 3-1) and the fire category (Table 9-1),
+and it does not compute performance — declared distances appear as a `Note`, never a `Check`, so no
+verdict can be drawn from a reference field length that is a sea-level ISA classification figure.
+
+Three rules hold it up. **Unknown never becomes suitable** — an unmade check ranks above every pass
+in `overall`, and an empty assessment is `UNKNOWN`, not `SUITABLE`. **Every verdict carries both
+sides of its evidence**, the aerodrome value and the aircraft characteristic, each with its own
+`SourceRef`. And **NOTAM are surfaced, not interpreted**: `overtaken` names the checks resting on
+values a NOTAM in force may have overtaken, using the same one-directional containment as
+everywhere else, and it makes `is_conclusive` false. That last one came out of reading the worked
+example: every check passed, the verdict read RESTRICTED, and the runway those checks were about
+was closed by NOTAM. The caveat now sits beside the verdict rather than at the foot of the page.
+
+`Note` deliberately has no `assessment` field and the JSON emits no `assessment` key for one. An
+integrator reading these into a table must not be able to treat a note as a verdict by reading a
+field that happens to be there; the absence of the key is the guarantee. Filing declared distances
+as `UNKNOWN` checks — the first draft — would have made every assessment permanently inconclusive,
+and a flag that is always on tells a reader nothing.
+
+The Annex 14 tables are read into code, not fetched and archived. Table 1-1 and Table 9-1 were
+confirmed against published sources; Table 3-1 was confirmed only in part. Confirm all three against
+the current edition before anything operational depends on them, and treat a Table 3-1 shortfall as
+`RESTRICTED` rather than a prohibition — it is a design standard, and States approve narrower
+runways.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
@@ -194,8 +221,8 @@ board, per-State profiles, the fixture capture tool, the publication watcher, th
 HTTP transport, the universal change record, the generic impact layer, the validation harness, the
 NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier,
 the change bulletin, the change horizon, SQLite persistence, AIS quality intelligence, the six
-output lenses, the JSON surface, the printable dossier and the aircraft reference code and pavement
-checks. Next: a captured
+output lenses, the JSON surface, the printable dossier, the aircraft reference code and pavement
+checks, and the aerodrome suitability assessment. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 

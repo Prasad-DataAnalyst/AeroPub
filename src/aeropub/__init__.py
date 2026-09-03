@@ -32,16 +32,17 @@ from aeropub.aip import (
 )
 from aeropub.aircraft import (
     AircraftType,
+    Pcn,
+    PavementCheck,
     Characteristic,
     Origin,
-    PavementCheck,
     PavementVerdict,
-    Pcn,
     accommodates,
     code_letter,
     code_number,
     compare_pavement,
     reference_code,
+    rffs_category,
 )
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
@@ -50,6 +51,14 @@ from aeropub.impact import Direction, Impact, assess
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
+from aeropub.suitability import (
+    Assessment,
+    Check,
+    Note,
+    Suitability,
+    assess_suitability,
+    minimum_runway_width_m,
+)
 from aeropub.api import Licensing, document, dumps, ndjson, to_json
 from aeropub.bulletin import Attention, ChangeBulletin, between_cycles, compile_bulletin
 from aeropub.dossier import AerodromeDossier, SectionEntry, build_dossier
@@ -92,6 +101,8 @@ __all__ = [
     "AircraftType",
     "assess",
     "assess_quality",
+    "assess_suitability",
+    "Assessment",
     "Attention",
     "Audience",
     "between_cycles",
@@ -100,6 +111,7 @@ __all__ = [
     "ChangeBulletin",
     "ChangeKind",
     "Characteristic",
+    "Check",
     "CheckOutcome",
     "code_letter",
     "code_number",
@@ -133,10 +145,12 @@ __all__ = [
     "LENSES",
     "LensView",
     "Licensing",
+    "minimum_runway_width_m",
     "ndjson",
     "Notam",
     "NotamKind",
     "NotamRegister",
+    "Note",
     "open_store",
     "Origin",
     "PavementCheck",
@@ -151,6 +165,7 @@ __all__ = [
     "RegisteredNotam",
     "render_board",
     "render_dossier",
+    "rffs_category",
     "scope_of",
     "section",
     "Section",
@@ -167,6 +182,7 @@ __all__ = [
     "StatusRow",
     "Subject",
     "SubjectKind",
+    "Suitability",
     "to_json",
     "Transition",
     "Trigger",

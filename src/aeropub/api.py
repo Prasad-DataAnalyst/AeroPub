@@ -45,6 +45,7 @@ from datetime import date, datetime, timezone
 from enum import Enum
 from typing import Any, Callable, Iterable, Iterator, Mapping
 
+from aeropub.aircraft import Characteristic
 from aeropub.bulletin import ChangeBulletin, ReportedChange
 from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
@@ -53,6 +54,7 @@ from aeropub.lenses import LensView
 from aeropub.provenance import SourceRef
 from aeropub.quality import QualityFinding, QualityReport
 from aeropub.registry import Redistribution
+from aeropub.suitability import Check, Note, Suitability
 
 __all__ = [
     "API_VERSION",
@@ -60,6 +62,7 @@ __all__ = [
     "VERBATIM_THRESHOLD",
     "document",
     "dumps",
+    "suitability",
     "ndjson",
     "to_json",
 ]
@@ -363,12 +366,103 @@ def lens_view(item: LensView, *, licensing: Licensing = _PERMISSIVE) -> dict[str
     }
 
 
+def _check(item: Check, licensing: Licensing) -> dict[str, Any]:
+    return {
+        "name": item.name,
+        "assessment": item.assessment.value,
+        "conclusive": item.is_known,
+        "blocks": item.blocks,
+        "scope": item.scope,
+        "section": item.section or None,
+        "detail": item.detail,
+        "aerodrome_basis": [_value_line(v, licensing) for v in item.aerodrome_basis],
+        "aircraft_basis": [_characteristic(c) for c in item.aircraft_basis],
+    }
+
+
+def _note(item: Note, licensing: Licensing) -> dict[str, Any]:
+    """A note is emitted without an ``assessment`` key, deliberately.
+
+    An integrator reading these into a table must not be able to treat one as
+    a verdict by reading a field that happens to be there. The absence of the
+    key is the guarantee.
+    """
+    return {
+        "name": item.name,
+        "scope": item.scope,
+        "section": item.section or None,
+        "detail": item.detail,
+        "aerodrome_basis": [_value_line(v, licensing) for v in item.aerodrome_basis],
+        "aircraft_basis": [_characteristic(c) for c in item.aircraft_basis],
+    }
+
+
+def _characteristic(item: Characteristic) -> dict[str, Any]:
+    """One aircraft figure with its citation.
+
+    Operator-supplied figures are not filtered out here — a payload built for
+    the tenant that supplied them may carry them. What must not happen is the
+    origin being lost, so a caller redistributing a payload can tell which
+    values are theirs to pass on. ``redistributable`` is that flag, stated
+    rather than left to be inferred from ``origin``.
+    """
+    return {
+        "attribute": item.attribute,
+        "value": item.value,
+        "unit": item.unit,
+        "variant": item.variant,
+        "origin": item.origin.value,
+        "redistributable": item.origin.is_redistributable,
+        "source_ref": source_ref(item.source),
+    }
+
+
+def suitability(
+    item: Suitability, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """One aeroplane against one aerodrome, with everything it could not check.
+
+    ``conclusive`` and ``overtaken`` are first-class fields rather than
+    something an integrator has to derive. A consumer that reads only
+    ``overall`` would get "suitable" for an assessment computed over a runway
+    a NOTAM has closed, and the payload must make that impossible to miss.
+    """
+    return {
+        "aerodrome": item.aerodrome,
+        "designator": item.designator,
+        "as_at": _moment(item.as_at),
+        "overall": item.overall.value,
+        "conclusive": item.is_conclusive,
+        "checks": [_check(c, licensing) for c in item.checks],
+        "notes": [_note(n, licensing) for n in item.notes],
+        "unknown": [c.name for c in item.unknown],
+        "blocking": [c.name for c in item.blocking],
+        "overtaken": [
+            {"name": c.name, "scope": c.scope} for c in item.overtaken
+        ],
+        "notams": [
+            {
+                "identifier": n.identifier,
+                "state": s.value,
+                "entities": list(n.entities),
+                "source_ref": source_ref(n.source),
+            }
+            for n, s in item.notams
+        ],
+        "disclaimer": (
+            "A fit assessment against published aerodrome data. Not a "
+            "performance calculation and not a dispatch decision."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
     (Horizon, "forward_view", horizon),
     (QualityReport, "publication_conduct", quality),
     (LensView, "lens_view", lens_view),
+    (Suitability, "aerodrome_suitability", suitability),
     (Fact, "fact", fact),
 )
 

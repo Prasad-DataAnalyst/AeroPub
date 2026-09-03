@@ -67,6 +67,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] JSON/API payloads — versioned, deterministic, provenance on every value, licence honoured
 - [x] Printable dossier — a controlled document that renders the payload verbatim
 - [x] Aircraft reference code and pavement — Annex 14 Table 1-1, ACN against PCN, no figures shipped
+- [x] Aerodrome suitability — code, pavement, width and fire category, with every unmade check named
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
 
