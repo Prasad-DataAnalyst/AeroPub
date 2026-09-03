@@ -42,7 +42,8 @@ it rather than quietly using it.
 Plan section 30. Done: AIRAC calendar, the bitemporal fact model, the source registry and status
 board, per-State profiles, the fixture capture tool, the publication watcher, the archive and the
 HTTP transport, the universal change record, the generic impact layer, the validation harness, the
-NOTAM parser, the FAA NMS-API connector, the NOTAM register and the AIP index. Next: a captured
+NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index and the aerodrome
+dossier. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 
@@ -58,6 +59,14 @@ checklist, because absence is a claim about the State and not about our search),
 `NOT_CHECKED`. The last two are our gaps; the first two are not. A coverage report prints every
 expected section whether held or not, so an aerodrome nobody looked at cannot read like one with
 nothing to report.
+
+`dossier.py` composes those four — index, coverage, CES, NOTAM register — into one attributed
+document. It assembles; it does not decide. Values are filed under the section ICAO publishes them
+in (`aip.ATTRIBUTE_SECTIONS`), and an attribute with no mapping is printed under "held, but not
+attributed to a section" rather than guessed into a plausible one, because a value under the wrong
+heading reads as though that section said it. NOTAM are shown against the objects they name, never
+routed into an AD 2 section by reading their text. A dossier built with nothing still prints all 25
+sections: an omission that is invisible is the failure this project exists to avoid.
 
 `src/aeropub/faa/` is the reference shape for every connector that follows: where the service lives
 is data an operator can correct from a JSON overlay while the service runs (`AEROPUB_FAA_NMS_CONFIG`),

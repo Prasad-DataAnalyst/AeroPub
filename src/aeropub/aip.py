@@ -43,6 +43,7 @@ from aeropub.provenance import SourceRef
 
 __all__ = [
     "DOMAINS",
+    "ATTRIBUTE_SECTIONS",
     "SECTIONS",
     "AipCoverage",
     "HoldingState",
@@ -54,6 +55,7 @@ __all__ = [
     "currency_sections",
     "heliport_sections",
     "section",
+    "section_for_attribute",
     "sections_for",
 ]
 
@@ -430,6 +432,52 @@ SECTIONS: tuple[Section, ...] = _GEN + _ENR + _AD
 _BY_CODE: dict[str, Section] = {s.code: s for s in SECTIONS}
 if len(_BY_CODE) != len(SECTIONS):  # pragma: no cover - a construction error
     raise RuntimeError("duplicate section codes in the AIP index")
+
+
+#: Where each modelled attribute is published. ICAO decides this, not us:
+#: declared distances are AD 2.13 wherever you are, so a fact and the section
+#: it came from can be shown together without a per-State lookup.
+#:
+#: A test asserts every attribute :mod:`aeropub.impact` models appears here. An
+#: attribute with no AIP home would be assessed for impact and then never
+#: appear in a dossier, which is a worse failure than not modelling it at all.
+ATTRIBUTE_SECTIONS: dict[str, str] = {
+    # AD 2.2 — geographical and administrative data
+    "elevation_ft": "AD 2.2",
+    "magnetic_variation": "AD 2.2",
+    "latitude": "AD 2.2",
+    "longitude": "AD 2.2",
+    "aerodrome_name": "AD 2.1",
+    # AD 2.6 — rescue and fire fighting
+    "rffs_category": "AD 2.6",
+    # AD 2.12 — runway physical characteristics
+    "runway_width_m": "AD 2.12",
+    "runway_length_m": "AD 2.12",
+    "pcn": "AD 2.12",
+    "pcr": "AD 2.12",
+    "surface": "AD 2.12",
+    "displaced_threshold_m": "AD 2.12",
+    # AD 2.13 — declared distances
+    "tora_m": "AD 2.13",
+    "toda_m": "AD 2.13",
+    "asda_m": "AD 2.13",
+    "lda_m": "AD 2.13",
+    # AD 2.14 — approach and runway lighting
+    "papi_angle": "AD 2.14",
+    "approach_lighting": "AD 2.14",
+}
+
+
+def section_for_attribute(attribute: str) -> Section | None:
+    """Which AIP section publishes this attribute, or ``None``.
+
+    ``None`` is a real answer and must be rendered as one. An attribute we
+    have not placed is shown under "not attributed to a section" rather than
+    filed under a plausible guess, because a value in the wrong section reads
+    as though the section said it.
+    """
+    code = ATTRIBUTE_SECTIONS.get(attribute)
+    return section(code) if code else None
 
 
 def section(code: str) -> Section:
