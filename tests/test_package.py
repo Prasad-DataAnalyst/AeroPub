@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import importlib
 import pkgutil
+from pathlib import Path
 
 import aeropub
 
@@ -68,3 +69,82 @@ class TestEveryModuleImports:
             text = handle.read()
         assert "from aeropub.faa" not in text
         assert "import aeropub.faa" not in text
+
+
+class TestNoNameIsDefinedTwice:
+    """A second definition silently replaces the first, and nothing complains.
+
+    This was not hypothetical. ``airac.cycles_between`` enumerated the cycles
+    covering a span of dates; a second function of the same name was appended
+    to count the gap between two cycles, and it shadowed the original. The
+    tests for the original caught it — but only because they existed, and the
+    next such collision might land somewhere thinner.
+    """
+
+    def module_files(self):
+        import aeropub
+
+        root = Path(aeropub.__path__[0])
+        return sorted(root.rglob("*.py"))
+
+    def test_no_module_defines_the_same_top_level_name_twice(self):
+        import ast
+
+        collisions = []
+        for path in self.module_files():
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            seen: dict[str, int] = {}
+            for node in tree.body:
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    names = [node.name]
+                elif isinstance(node, ast.Assign):
+                    names = [
+                        t.id for t in node.targets if isinstance(t, ast.Name)
+                    ]
+                elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+                    names = [node.target.id]
+                else:
+                    continue
+                for name in names:
+                    # A bare annotation re-stating a type is not a redefinition,
+                    # and neither is the conventional `x = x` re-export.
+                    if name in seen:
+                        collisions.append(f"{path.name}:{node.lineno} {name} "
+                                          f"(first at line {seen[name]})")
+                    seen[name] = node.lineno
+        assert collisions == [], (
+            "these names are defined twice at module level; the second "
+            "silently replaces the first:\n  " + "\n  ".join(collisions)
+        )
+
+    def test_no_exported_name_is_served_by_two_modules(self):
+        # Two modules exporting the same name into the package means whichever
+        # import runs last wins, and which one that is depends on line order.
+        import importlib
+        import pkgutil
+
+        import aeropub
+
+        providers: dict[str, list[str]] = {}
+        for info in pkgutil.walk_packages(aeropub.__path__, prefix="aeropub."):
+            module = importlib.import_module(info.name)
+            for name in getattr(module, "__all__", ()):
+                if name in aeropub.__all__:
+                    providers.setdefault(name, []).append(info.name)
+        shared = {
+            name: sorted(where)
+            for name, where in providers.items()
+            if len(where) > 1
+        }
+        # A name re-exported by a module that imported it is fine; a name two
+        # modules each *define* is not.
+        genuine = {
+            name: where
+            for name, where in shared.items()
+            if len({
+                getattr(importlib.import_module(m), name).__module__
+                for m in where
+                if hasattr(getattr(importlib.import_module(m), name), "__module__")
+            }) > 1
+        }
+        assert genuine == {}, f"defined in more than one module: {genuine}"

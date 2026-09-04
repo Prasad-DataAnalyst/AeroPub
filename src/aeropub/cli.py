@@ -35,8 +35,10 @@ from pathlib import Path
 from aeropub.acap import ManifestError, load_aircraft, merge, template
 from aeropub.aip import AipCoverage
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
+from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
 from aeropub.bulletin import between_cycles
+from aeropub.currency import Currency, assess_currency
 from aeropub.dossier import build
 from aeropub.horizon import DEFAULT_DAYS, horizon
 from aeropub.ingest import load_facts
@@ -58,6 +60,10 @@ DEFAULT_STORE = "aeropub.db"
 OK = 0
 ADVERSE = 1
 CANNOT_RUN = 2
+
+
+def current_cycle_for(day: date) -> str:
+    return AiracCycle.containing(day).identifier
 
 
 def _store_path(args: argparse.Namespace) -> Path:
@@ -326,6 +332,60 @@ def _cmd_sweep(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_currency(args: argparse.Namespace) -> int:
+    """How old everything in the store is, worst first.
+
+    Reads the aerodromes actually held rather than a watchlist, because the
+    question this answers is about what we have, not what we meant to have.
+    Coverage against an intended list is the registry's job.
+    """
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        moment = _moment(args)
+        day = _day(args.on, moment.date())
+        aerodromes = sorted({aerodrome_of(e) or e for e in store.entities()})
+        if not aerodromes:
+            print(f"STORE — {path}")
+            print(
+                "\n  Empty. Nothing has been read for any aerodrome, so there "
+                "is nothing whose age\n  could be reported."
+            )
+            return OK
+
+        held = [assess_currency(store, a, as_of=day) for a in aerodromes]
+        order = {
+            Currency.NEVER_READ: 0, Currency.STALE: 1,
+            Currency.AGEING: 2, Currency.CURRENT: 3,
+        }
+        held.sort(key=lambda c: (order[c.state], -c.cycles_behind, c.entity))
+        counts = {state: sum(1 for c in held if c.state is state) for state in Currency}
+
+        print(f"DATA CURRENCY — {path}")
+        print(f"as at {day}  ·  AIRAC {current_cycle_for(day)}")
+        print()
+        print(
+            f"{counts[Currency.CURRENT]} current  ·  "
+            f"{counts[Currency.AGEING]} ageing  ·  "
+            f"{counts[Currency.STALE]} stale"
+        )
+        print()
+        for entry in held:
+            if args.stale_only and entry.is_usable:
+                continue
+            print(f"  {entry.describe()}")
+        if counts[Currency.STALE]:
+            print()
+            print(
+                "Staleness is counted in AIRAC cycles, not days: an amendment "
+                "could have landed\nin each one and nobody went back for it. A "
+                "clear verdict on stale data is a claim\nabout the past."
+            )
+        return ADVERSE if counts[Currency.STALE] else OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -487,6 +547,13 @@ def _parser() -> argparse.ArgumentParser:
                          help="how far ahead to look for exposure that worsens")
     network.add_argument("--on", default=None)
     network.set_defaults(handler=_cmd_sweep)
+
+    age = add("currency", "how old the held data is, against the AIRAC calendar",
+              aerodrome=False)
+    age.add_argument("--on", default=None)
+    age.add_argument("--stale-only", action="store_true",
+                     help="list only what is too old to stand on")
+    age.set_defaults(handler=_cmd_currency)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

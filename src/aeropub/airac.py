@@ -45,6 +45,8 @@ __all__ = [
     "MAJOR_CHANGE_LEAD_DAYS",
     "RECIPIENT_LEAD_DAYS",
     "cycle_for",
+    "cycles_apart",
+    "cycles_between",
     "cycles_in_year",
     "cycles_between",
     "current_cycle",
@@ -235,3 +237,17 @@ def cycles_between(start: date, end: date) -> Iterator[AiracCycle]:
     while cycle.effective_date <= end:
         yield cycle
         cycle = cycle.next
+
+
+def cycles_apart(earlier: "AiracCycle", later: "AiracCycle") -> int:
+    """How many AIRAC cycles separate two, negative where ``later`` precedes.
+
+    Distinct from :func:`cycles_between`, which enumerates the cycles covering
+    a span of dates. This counts the gap between two cycles and returns a
+    number.
+
+    Cycle identifiers restart each year and a year holds thirteen cycles or
+    fourteen, so subtracting ordinals is wrong across a year boundary. The
+    effective dates are on a fixed 28-day grid, which is not.
+    """
+    return (later.effective_date - earlier.effective_date).days // CYCLE_DAYS

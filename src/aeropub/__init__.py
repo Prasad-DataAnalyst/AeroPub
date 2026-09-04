@@ -46,8 +46,15 @@ from aeropub.aircraft import (
     reference_code,
     rffs_category,
 )
-from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
+from aeropub.airac import (
+    AiracCycle,
+    current_cycle,
+    cycle_for,
+    cycles_apart,
+    cycles_in_year,
+)
 from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
+from aeropub.currency import Currency, DataCurrency, assess_currency
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
 from aeropub.ingest import load_facts
@@ -55,7 +62,12 @@ from aeropub.manifest import ManifestError, sha256_of
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
-from aeropub.sweep import AerodromeExposure, NetworkSweep, sweep
+from aeropub.sweep import (
+    AerodromeExposure,
+    GroupRedundancy,
+    NetworkSweep,
+    sweep,
+)
 from aeropub.suitability import (
     Assessment,
     Check,
@@ -119,6 +131,7 @@ __all__ = [
     "AiracCycle",
     "AircraftType",
     "assess",
+    "assess_currency",
     "assess_operator",
     "assess_quality",
     "assess_suitability",
@@ -141,9 +154,12 @@ __all__ = [
     "covers",
     "CredentialRef",
     "CredentialStatus",
+    "Currency",
     "current_cycle",
     "cycle_for",
+    "cycles_apart",
     "cycles_in_year",
+    "DataCurrency",
     "DetectionTier",
     "diff_cycles",
     "diff_effective",
@@ -159,6 +175,7 @@ __all__ = [
     "Fleet",
     "ForceState",
     "Freshness",
+    "GroupRedundancy",
     "HoldingState",
     "Horizon",
     "horizon",

@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 
 from aeropub.aip import AipCoverage
+from aeropub.currency import Currency, DataCurrency, assess_currency
 from aeropub.dossier import build
 from aeropub.entities import covers
 from aeropub.horizon import DEFAULT_DAYS, Horizon, Transition, horizon
@@ -52,7 +53,7 @@ from aeropub.operator import (
     worst_exposure,
 )
 
-__all__ = ["AerodromeExposure", "NetworkSweep", "sweep"]
+__all__ = ["AerodromeExposure", "GroupRedundancy", "NetworkSweep", "sweep"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,17 @@ class AerodromeExposure:
     """How many attributed values we hold for this aerodrome and everything on
     it. Zero is the number that matters: it means every check below rests on
     nothing, and the aerodrome must never be presented as clear."""
+
+    currency: DataCurrency | None = None
+    """How old the reading behind every check here is.
+
+    A clear verdict computed from a page read fourteen cycles ago is a claim
+    about the past wearing the clothes of a claim about the present. Until this
+    was carried through, the sweep could produce one and it looked identical to
+    a reading taken this morning."""
+
+    groups: tuple[str, ...] = ()
+    """Redundancy groups this aerodrome belongs to, if the operator named any."""
 
     ahead: Horizon | None = None
 
@@ -116,6 +128,29 @@ class AerodromeExposure:
         return self.facts_held > 0
 
     @property
+    def is_current(self) -> bool:
+        """Whether the reading behind this is recent enough to stand on.
+
+        ``False`` for stale data and for never having read it. A verdict on
+        stale data is reported with the staleness attached, never on its own.
+        """
+        return self.currency is not None and self.currency.is_usable
+
+    @property
+    def is_dependable(self) -> bool:
+        """Clear, checked, and checked recently enough to mean it.
+
+        The three have to hold together. Clear on data nobody has refreshed in
+        five cycles is not a state anything should be planned against, and this
+        is the property the redundancy count uses rather than exposure alone.
+        """
+        return (
+            self.is_covered
+            and self.is_current
+            and self.exposure in (Exposure.NONE, Exposure.LOW)
+        )
+
+    @property
     def changes_ahead(self) -> tuple[Transition, ...]:
         return self.ahead.transitions if self.ahead else ()
 
@@ -136,6 +171,13 @@ class AerodromeExposure:
     def describe(self) -> str:
         only = " · sole suitable" if self.sole_suitable else ""
         coverage = "" if self.is_covered else "  [NOTHING HELD]"
+        age = (
+            f"  [{self.currency.state.value.upper()}, "
+            f"{self.currency.cycles_behind} cycles behind]"
+            if self.currency is not None
+            and self.currency.state is Currency.STALE
+            else ""
+        )
         ahead = (
             f"  ·  {len(self.changes_ahead)} ahead"
             + (f", {len(self.unannounced_ahead)} unannounced" if self.unannounced_ahead else "")
@@ -150,8 +192,127 @@ class AerodromeExposure:
         )
         return (
             f"{self.exposure.value:9} {self.aerodrome:8} "
-            f"({self.role.value}{only}){coverage}{ahead}{worsening}"
+            f"({self.role.value}{only}){coverage}{age}{ahead}{worsening}"
         )
+
+
+@dataclass(frozen=True, slots=True)
+class GroupRedundancy:
+    """A set of aerodromes serving one purpose, and how many are left.
+
+    This is the finding no per-aerodrome assessment can produce. Three
+    alternates for a region, two of which degrade in the same cycle, reads as
+    two unrelated medium findings — and it is not. It is a region down to one,
+    which is a different fact about the operation and a worse one.
+
+    "Left" is deliberately strict. An aerodrome counts toward redundancy only
+    when it is read, read recently enough to stand on, and clear. Counting a
+    stale clear verdict would make the group look healthier the longer nobody
+    looked at it, which is precisely backwards.
+    """
+
+    name: str
+    members: tuple[AerodromeExposure, ...]
+
+    @property
+    def dependable(self) -> tuple[AerodromeExposure, ...]:
+        return tuple(e for e in self.members if e.is_dependable)
+
+    @property
+    def degraded(self) -> tuple[AerodromeExposure, ...]:
+        """Read, current, and carrying exposure."""
+        return tuple(
+            e for e in self.members if e.is_covered and e.is_current and not e.is_dependable
+        )
+
+    @property
+    def unreliable(self) -> tuple[AerodromeExposure, ...]:
+        """Never read, or too stale to count on. Not the same as degraded.
+
+        A degraded aerodrome is a known problem. An unreliable one is an
+        unknown, and the fix is different: go and read it.
+        """
+        return tuple(e for e in self.members if not (e.is_covered and e.is_current))
+
+    @property
+    def remaining(self) -> int:
+        return len(self.dependable)
+
+    @property
+    def is_exhausted(self) -> bool:
+        """Nothing in this group can currently be counted on."""
+        return self.remaining == 0
+
+    @property
+    def is_single_threaded(self) -> bool:
+        """One left. The operator may not know — they declared none sole-suitable."""
+        return self.remaining == 1
+
+    @property
+    def exposure(self) -> Exposure:
+        """The group's own exposure, which is not the worst of its members.
+
+        A group with three healthy alternates and one critical member is fine;
+        the critical one is a finding about that aerodrome, not about the
+        region. A group with one member left is a finding about the region
+        even when that member is perfectly clear.
+        """
+        if not self.members:
+            return Exposure.UNKNOWN
+        if self.is_exhausted:
+            return Exposure.CRITICAL
+        if self.is_single_threaded:
+            return Exposure.HIGH
+        if self.unreliable:
+            # Enough are dependable, but the count rests on not having looked
+            # at the rest. That is a medium, not a pass.
+            return Exposure.MEDIUM
+        return Exposure.NONE
+
+    def remaining_on(self, when: date) -> int:
+        """How many would be dependable on a future date.
+
+        Reads each member's re-assessment for that date. Currency is held
+        constant — this asks what the published data does, not what somebody
+        might read in the meantime.
+        """
+        total = 0
+        for member in self.members:
+            if not (member.is_covered and member.is_current):
+                continue
+            future = {day: assessment for day, assessment in member.future}
+            applicable = [d for d in future if d <= when]
+            level = (
+                future[max(applicable)].overall if applicable else member.exposure
+            )
+            if level in (Exposure.NONE, Exposure.LOW):
+                total += 1
+        return total
+
+    @property
+    def thins_on(self) -> date | None:
+        """The first date the dependable count falls, if it does."""
+        dates = sorted({d for m in self.members for d, _ in m.future})
+        for when in dates:
+            if self.remaining_on(when) < self.remaining:
+                return when
+        return None
+
+    def describe(self) -> str:
+        state = (
+            "exhausted"
+            if self.is_exhausted
+            else "one left" if self.is_single_threaded else f"{self.remaining} left"
+        )
+        parts = [f"{self.name}: {state} of {len(self.members)}"]
+        if self.degraded:
+            parts.append(f"{len(self.degraded)} degraded")
+        if self.unreliable:
+            parts.append(f"{len(self.unreliable)} unread or stale")
+        thinning = self.thins_on
+        if thinning is not None:
+            parts.append(f"falls to {self.remaining_on(thinning)} on {thinning}")
+        return "  ·  ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +323,7 @@ class NetworkSweep:
     as_at: datetime
     on: date
     entries: tuple[AerodromeExposure, ...] = ()
+    groups: tuple[GroupRedundancy, ...] = ()
     days_ahead: int = DEFAULT_DAYS
 
     @property
@@ -195,7 +357,32 @@ class NetworkSweep:
 
     @property
     def overall(self) -> Exposure:
-        return worst_exposure(e.exposure for e in self.entries)
+        """The worst of every aerodrome *and* every redundancy group.
+
+        A group is not covered by its members: three alternates each at
+        ``NONE`` where two are stale is a region at ``MEDIUM``, and no
+        aerodrome in it carries that finding.
+        """
+        return worst_exposure(
+            [e.exposure for e in self.entries] + [g.exposure for g in self.groups]
+        )
+
+    @property
+    def stale(self) -> tuple[AerodromeExposure, ...]:
+        """Read once, and not recently enough to stand on now."""
+        return tuple(
+            e for e in self.ranked if e.is_covered and not e.is_current
+        )
+
+    @property
+    def at_risk_groups(self) -> tuple[GroupRedundancy, ...]:
+        """Groups carrying exposure of their own, worst first."""
+        return tuple(
+            sorted(
+                (g for g in self.groups if g.exposure is not Exposure.NONE),
+                key=lambda g: (g.exposure.rank, g.remaining, g.name),
+            )
+        )
 
     @property
     def is_conclusive(self) -> bool:
@@ -206,7 +393,8 @@ class NetworkSweep:
         rest of it looks.
         """
         return bool(self.entries) and all(
-            e.is_covered and e.assessment.is_conclusive for e in self.entries
+            e.is_covered and e.is_current and e.assessment.is_conclusive
+            for e in self.entries
         )
 
     @property
@@ -252,6 +440,16 @@ class NetworkSweep:
             "clear": sum(
                 1 for e in covered if e.exposure in (Exposure.NONE, Exposure.LOW)
             ),
+            # Counted separately from `clear` on purpose: a clear verdict on
+            # stale data is still clear, and is still not something to plan
+            # against without knowing how old it is.
+            "stale": sum(1 for e in covered if not e.is_current),
+            "dependable": sum(1 for e in self.entries if e.is_dependable),
+            "groups": len(self.groups),
+            "groups_at_risk": len(self.at_risk_groups),
+            "groups_single_threaded": sum(
+                1 for g in self.groups if g.is_single_threaded
+            ),
             "changes_ahead": sum(len(e.changes_ahead) for e in self.entries),
             "unannounced_ahead": sum(len(e.unannounced_ahead) for e in self.entries),
             "deteriorating": len(self.deteriorating),
@@ -276,6 +474,8 @@ class NetworkSweep:
             f"{counts['critical']} critical  ·  {counts['high']} high  ·  "
             f"{counts['medium']} medium  ·  {counts['unknown']} unknown  ·  "
             f"{counts['clear']} clear",
+            f"{counts['dependable']} dependable — read, current and clear "
+            f"({counts['stale']} read but stale)",
             "",
         ]
         if not self.entries:
@@ -293,6 +493,34 @@ class NetworkSweep:
                 "separately for that reason.",
                 "",
             ]
+
+        if self.at_risk_groups:
+            lines.append(
+                "REDUNDANCY — findings about a region, which no single "
+                "aerodrome carries"
+            )
+            for group in self.at_risk_groups:
+                lines.append(f"  [{group.exposure.value}] {group.describe()}")
+                for member in group.members:
+                    mark = (
+                        "dependable" if member.is_dependable
+                        else "not read" if not member.is_covered
+                        else "stale" if not member.is_current
+                        else member.exposure.value
+                    )
+                    lines.append(f"      {member.aerodrome:8} {mark}")
+            lines.append("")
+
+        if self.stale:
+            lines.append(
+                "STALE — read once, and not since. A clear verdict here is a "
+                "claim about the past."
+            )
+            lines += [
+                f"  {e.aerodrome:8} {e.currency.describe() if e.currency else ''}"
+                for e in self.stale
+            ]
+            lines.append("")
 
         if self.actionable:
             lines.append("NEEDS ACTION")
@@ -436,15 +664,31 @@ def sweep(
                 sole_suitable=profile.network.is_sole_suitable(aerodrome),
                 assessment=assess_operator(dossier, profile),
                 facts_held=_facts_held(store, aerodrome),
+                currency=assess_currency(store, aerodrome, as_of=day),
+                groups=profile.network.groups_of(aerodrome),
                 ahead=forward,
                 future=tuple(future),
             )
         )
+
+    by_aerodrome = {e.aerodrome: e for e in entries}
+    groups = tuple(
+        GroupRedundancy(
+            name=name,
+            members=tuple(
+                by_aerodrome[a]
+                for a in profile.network.group_members(name)
+                if a in by_aerodrome
+            ),
+        )
+        for name in profile.network.groups
+    )
 
     return NetworkSweep(
         operator=profile.name,
         as_at=moment,
         on=day,
         entries=tuple(entries),
+        groups=groups,
         days_ahead=days,
     )

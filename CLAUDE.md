@@ -329,6 +329,53 @@ this module ranks and counts. A test builds the single-aerodrome report independ
 sweep's findings are identical — a number here that disagrees with the report for the same aerodrome
 is a defect in this module, not a different opinion.
 
+## Data currency — the defect that was inside the project
+
+`currency.py` closes a hole the platform had until it existed: a confident all-clear computed from an
+AIP page read fourteen cycles ago, printed identically to one read this morning. The suitability
+layer refuses to assess what it does not hold. Nothing refused to assess what it held *from a year
+ago*, and that is the exact failure this whole project is built against.
+
+**Staleness is counted in AIRAC cycles, not days.** Thirty days is not a meaningful age for
+aeronautical data; one missed cycle is. States publish on the 28-day grid, so what matters is how
+many effective dates have passed since the reading — each one an amendment that could have landed
+and nobody went back for. `CURRENT` / `AGEING` / `STALE`, with `NEVER_READ` deliberately in the same
+enum rather than modelled as an absence: an aerodrome nobody read and one read this morning must
+never fall into the same branch of an `if`.
+
+`spread_cycles` catches the subtler trap. An aerodrome can read as current because AD 2.12 was
+refreshed yesterday while AD 2.6 is six cycles old. Current in parts is not current, and the
+description says "assembled across 6 cycles".
+
+The measure reads each value's own `SourceRef.retrieved_at` rather than any separate bookkeeping, so
+it cannot drift from what the citations say — a fact has a reading date because it cannot exist
+without a citation.
+
+`STALE_AFTER_CYCLES` is a threshold, not a law, and it is exported so an operator can raise it for a
+State that publishes rarely.
+
+## Redundancy — the finding no aerodrome carries
+
+`GroupRedundancy` in `sweep.py` is the capability that goes past the original plan. The plan had
+`sole_suitable` as an operator declaration; this **derives** the same condition and catches the case
+they have not noticed.
+
+Three alternates for a region, two degrading in one cycle, is not two unrelated medium findings. It
+is a region down to one — a different fact about the operation, and a worse one. `NetworkEntry.group`
+names the shared purpose and is the single most useful optional field an operator can add.
+
+Two rules make it honest. **A group's exposure is not the worst of its members**: three healthy
+alternates plus one critical member is fine, and the critical one is a finding about that aerodrome;
+one member left is a finding about the region even when that member is perfectly clear. And
+**`remaining` counts only aerodromes that are read, current and clear** — counting a stale clear
+verdict would make a region look healthier the longer nobody looked at it, which is precisely
+backwards. `degraded` and `unreliable` are kept apart for the same reason: a degraded aerodrome is a
+known problem, an unreliable one is an unknown, and the fix is different.
+
+The sweep's `overall` therefore takes the worst of the aerodromes **and** the groups. A region whose
+three alternates are each individually clear, two of them on stale data, is at `HIGH` — and no
+aerodrome in it carries that.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
@@ -361,7 +408,8 @@ NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the 
 the change bulletin, the change horizon, SQLite persistence, AIS quality intelligence, the six
 output lenses, the JSON surface, the printable dossier, the aircraft reference code and pavement
 checks, the aerodrome suitability assessment, the citation manifests, the command line,
-layer three and the network sweep. Next: a captured
+layer three, the network sweep, data currency and
+redundancy analysis. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 

@@ -56,7 +56,8 @@ from aeropub.quality import QualityFinding, QualityReport
 from aeropub.operator import ExposureFinding, OperatorAssessment
 from aeropub.registry import Redistribution
 from aeropub.suitability import Check, Note, Suitability
-from aeropub.sweep import AerodromeExposure, NetworkSweep
+from aeropub.currency import DataCurrency
+from aeropub.sweep import AerodromeExposure, GroupRedundancy, NetworkSweep
 
 __all__ = [
     "API_VERSION",
@@ -515,6 +516,43 @@ def operator_assessment(
     }
 
 
+def _currency(item: DataCurrency | None) -> dict[str, Any] | None:
+    if item is None:
+        return None
+    return {
+        "state": item.state.value,
+        "usable": item.is_usable,
+        "cycles_behind": item.cycles_behind,
+        "spread_cycles": item.spread_cycles,
+        "newest": _moment(item.newest),
+        "oldest": _moment(item.oldest),
+        "facts": item.facts,
+    }
+
+
+def _group_redundancy(item: GroupRedundancy) -> dict[str, Any]:
+    """A region's own health, which no member aerodrome carries.
+
+    ``remaining`` counts only members that are read, current and clear. A stale
+    clear verdict is excluded deliberately: counting it would make a region look
+    healthier the longer nobody looked at it.
+    """
+    thinning = item.thins_on
+    return {
+        "name": item.name,
+        "exposure": item.exposure.value,
+        "members": [e.aerodrome for e in item.members],
+        "remaining": item.remaining,
+        "dependable": [e.aerodrome for e in item.dependable],
+        "degraded": [e.aerodrome for e in item.degraded],
+        "unreliable": [e.aerodrome for e in item.unreliable],
+        "single_threaded": item.is_single_threaded,
+        "exhausted": item.is_exhausted,
+        "thins_on": _day(thinning),
+        "remaining_after": item.remaining_on(thinning) if thinning else None,
+    }
+
+
 def _aerodrome_exposure(
     item: AerodromeExposure, licensing: Licensing
 ) -> dict[str, Any]:
@@ -530,7 +568,11 @@ def _aerodrome_exposure(
         # reading only `exposure` would paint an aerodrome nobody has read the
         # same colour as one that was read and came back clear.
         "covered": item.is_covered,
+        "current": item.is_current,
+        "dependable": item.is_dependable,
         "facts_held": item.facts_held,
+        "currency": _currency(item.currency),
+        "groups": list(item.groups),
         "changes_ahead": [_transition(t, licensing) for t in item.changes_ahead],
         "unannounced_ahead": [
             _transition(t, licensing) for t in item.unannounced_ahead
@@ -559,6 +601,9 @@ def network_sweep(
         "summary": item.summary(),
         "aerodromes": [_aerodrome_exposure(e, licensing) for e in item.ranked],
         "uncovered": [e.aerodrome for e in item.uncovered],
+        "stale": [e.aerodrome for e in item.stale],
+        "groups": [_group_redundancy(g) for g in item.groups],
+        "groups_at_risk": [_group_redundancy(g) for g in item.at_risk_groups],
         "deteriorating": [
             {
                 "aerodrome": e.aerodrome,
@@ -572,7 +617,10 @@ def network_sweep(
         "note": (
             "Aerodromes with nothing held are counted in `uncovered` and in no "
             "severity bucket. They are not clear; nothing has been checked at "
-            "them."
+            "them. `clear` counts a verdict of no exposure however old the "
+            "reading behind it is; `dependable` counts only those read recently "
+            "enough to stand on. A group's exposure is not the worst of its "
+            "members and is not covered by them."
         ),
     }
 

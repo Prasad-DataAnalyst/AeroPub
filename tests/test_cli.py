@@ -395,3 +395,47 @@ class TestSweep:
         summary = payload["data"]["summary"]
         assert summary["covered"] + summary["uncovered"] == summary["aerodromes"]
         assert payload["data"]["uncovered"] == ["ZZZZ"]
+
+
+class TestCurrency:
+    def test_an_empty_store_has_nothing_whose_age_could_be_reported(self, capsys, workspace):
+        code, out, _ = run(capsys, "--store", str(workspace / "s.db"), "currency")
+        assert code == OK
+        assert "nothing whose age" in out
+
+    def test_data_read_inside_the_current_cycle_is_current(self, capsys, workspace):
+        # The manifest fixture records its reading at 2026-09-01, which falls
+        # in AIRAC 2608 (effective 2026-08-06, running to 2026-09-02).
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(capsys, "--store", store, "currency", "--on", "2026-09-02")
+        assert code == OK
+        assert "1 current" in out
+
+    def test_one_cycle_later_the_same_data_is_ageing(self, capsys, workspace):
+        # 2026-09-03 begins AIRAC 2609. Nothing about the data changed; the
+        # calendar moved, and an amendment could have landed in the gap.
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(capsys, "--store", store, "currency", "--on", "2026-09-10")
+        assert code == OK
+        assert "1 ageing" in out
+
+    def test_stale_data_exits_adverse_and_says_why(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(capsys, "--store", store, "currency", "--on", "2027-02-01")
+        assert code == ADVERSE
+        assert "stale" in out
+        assert "counted in AIRAC cycles, not days" in out
+
+    def test_stale_only_narrows_the_listing(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        _, out, _ = run(capsys, "--store", store, "currency",
+                        "--on", "2026-09-02", "--stale-only")
+        assert "XXXX:" not in out

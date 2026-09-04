@@ -222,7 +222,21 @@ class NetworkEntry:
     Recorded, never inferred: only the operator knows what else is within
     reach, what their approvals cover and what their handling arrangements
     allow. It is the difference between "choose another alternate" and "there
-    is no other alternate"."""
+    is no other alternate".
+
+    Where a :attr:`group` is given, the platform can *derive* the same
+    condition and catch the case the operator has not noticed — the group that
+    quietly thinned to one. This flag stays the operator's own statement, and
+    the derived one never overwrites it."""
+
+    group: str = ""
+    """What purpose this aerodrome shares with others — "North Atlantic
+    alternates", "OTHH alternates". Optional, and the single most useful thing
+    an operator can add.
+
+    Without it every aerodrome is assessed alone, and a region losing two of
+    its three alternates in one cycle reads as two separate medium findings.
+    With it, that is what it actually is: a group down to one."""
 
     note: str = ""
 
@@ -264,6 +278,22 @@ class Network:
 
     def is_sole_suitable(self, aerodrome: str) -> bool:
         return any(e.sole_suitable for e in self.entries_for(aerodrome))
+
+    @property
+    def groups(self) -> tuple[str, ...]:
+        """Every redundancy group named, in a stable order."""
+        return tuple(sorted({e.group for e in self.entries if e.group}))
+
+    def group_members(self, group: str) -> tuple[str, ...]:
+        """The aerodromes serving one purpose, deduplicated."""
+        return tuple(
+            sorted({e.aerodrome for e in self.entries if e.group == group})
+        )
+
+    def groups_of(self, aerodrome: str) -> tuple[str, ...]:
+        return tuple(
+            sorted({e.group for e in self.entries_for(aerodrome) if e.group})
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -654,6 +684,7 @@ def load_profile(path: Path | str) -> OperatorProfile:
                 aerodrome=aerodrome,
                 role=role,
                 sole_suitable=bool(row.get("sole_suitable", False)),
+                group=str(row.get("group", "")).strip(),
                 note=str(row.get("note", "")),
             )
         )
@@ -665,7 +696,13 @@ _PROFILE_TEMPLATE = {
     "name": "",
     "fleet": [],
     "network": [
-        {"aerodrome": "", "role": "destination", "sole_suitable": False, "note": ""}
+        {
+            "aerodrome": "",
+            "role": "destination",
+            "sole_suitable": False,
+            "group": "",
+            "note": "",
+        }
     ],
 }
 
@@ -675,5 +712,9 @@ def profile_template() -> str:
 
     ``fleet`` takes paths to aircraft manifests; ``sole_suitable`` is the
     operator's own judgement about their region and nothing else can supply it.
+    ``group`` names a shared purpose — "North Atlantic alternates" — and is the
+    single most useful optional field: without it every aerodrome is assessed
+    alone, and a region losing two of its three alternates in one cycle reads
+    as two unrelated findings.
     """
     return json.dumps(_PROFILE_TEMPLATE, indent=2)

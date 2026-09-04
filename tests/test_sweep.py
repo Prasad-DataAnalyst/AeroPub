@@ -366,3 +366,198 @@ class TestNoActionMeansNoAction:
         ).render()
         assert "No action" in printed
         assert "BBBB" in printed[printed.index("No action"):]
+
+
+# --------------------------------------------------------------------------
+# Redundancy — the finding no single aerodrome carries
+# --------------------------------------------------------------------------
+
+REGION = "North Atlantic alternates"
+STALE_READ = datetime(2026, 5, 2, tzinfo=timezone.utc)
+
+
+def fact_read_at(entity, attribute, value, when) -> Fact:
+    return Fact(
+        entity=entity, attribute=attribute, value=value,
+        valid_from=date(2026, 1, 1), precedence=Precedence.AIP,
+        source=SourceRef(
+            source_id="TEST", document="AIP AD 2", locator=attribute,
+            retrieved_at=when, content_hash="e" * 64,
+            parser_id="aip-manifest", parser_version="1",
+        ),
+    )
+
+
+def held(aerodrome: str, rffs: int = 9, *, when=NOW) -> list[Fact]:
+    return [
+        fact_read_at(aerodrome, "aerodrome_reference_code", "4E", when),
+        fact_read_at(aerodrome, "rffs_category", rffs, when),
+        fact_read_at(f"{aerodrome}/RWY34L", "pcn", "80/F/A/W/T", when),
+        fact_read_at(f"{aerodrome}/RWY34L", "runway_width_m", 60.0, when),
+    ]
+
+
+def region(*aerodromes: str) -> tuple[NetworkEntry, ...]:
+    return tuple(
+        NetworkEntry(a, Role.EDTO_ALTERNATE, group=REGION) for a in aerodromes
+    )
+
+
+class TestRedundancyIsNotTheWorstMember:
+    def test_three_healthy_alternates_carry_no_group_finding(self):
+        result = run(
+            held("ALFA") + held("BRVO") + held("CHLI"), *region("ALFA", "BRVO", "CHLI")
+        )
+        group = result.groups[0]
+        assert group.remaining == 3
+        assert group.exposure is Exposure.NONE
+        assert result.at_risk_groups == ()
+
+    def test_one_critical_member_among_three_is_not_a_group_finding(self):
+        # The critical one is a finding about that aerodrome, not the region.
+        result = run(
+            held("ALFA") + held("BRVO", rffs=7) + held("CHLI"),
+            *region("ALFA", "BRVO", "CHLI"),
+        )
+        assert result.groups[0].remaining == 2
+        assert result.groups[0].exposure is Exposure.NONE
+
+    def test_two_degrading_in_one_cycle_leaves_the_region_single_threaded(self):
+        # The failure this exists for. Two unrelated medium findings is what
+        # the per-aerodrome view produces; a region down to one is what it is.
+        result = run(
+            held("ALFA") + held("BRVO", rffs=7) + held("CHLI", rffs=7),
+            *region("ALFA", "BRVO", "CHLI"),
+        )
+        group = result.groups[0]
+        assert group.is_single_threaded
+        assert group.exposure is Exposure.HIGH
+        assert "one left of 3" in group.describe()
+
+    def test_the_operator_declared_none_of_them_sole_suitable(self):
+        # And that is the point: this is derived, and catches the case they
+        # have not noticed.
+        result = run(
+            held("ALFA") + held("BRVO", rffs=7) + held("CHLI", rffs=7),
+            *region("ALFA", "BRVO", "CHLI"),
+        )
+        assert not any(e.sole_suitable for e in result.entries)
+        assert result.groups[0].is_single_threaded
+
+    def test_a_region_with_nothing_left_is_critical(self):
+        result = run(
+            held("ALFA", rffs=7) + held("BRVO", rffs=7), *region("ALFA", "BRVO")
+        )
+        group = result.groups[0]
+        assert group.is_exhausted
+        assert group.exposure is Exposure.CRITICAL
+        assert "exhausted" in group.describe()
+
+    def test_a_group_finding_reaches_the_sweep_overall(self):
+        # No aerodrome in this region carries the group's exposure, so an
+        # overall taken from members alone would miss it entirely.
+        result = run(
+            held("ALFA") + held("BRVO", when=STALE_READ) + held("CHLI", when=STALE_READ),
+            *region("ALFA", "BRVO", "CHLI"),
+        )
+        assert all(e.exposure is Exposure.NONE for e in result.entries)
+        assert result.groups[0].exposure is Exposure.HIGH
+        assert result.overall is Exposure.HIGH
+
+
+class TestStaleDataCannotPropUpARegion:
+    def test_a_stale_clear_verdict_does_not_count_toward_redundancy(self):
+        # Counting it would make the group look healthier the longer nobody
+        # looked at it, which is precisely backwards.
+        result = run(
+            held("ALFA") + held("BRVO", when=STALE_READ), *region("ALFA", "BRVO")
+        )
+        group = result.groups[0]
+        assert group.remaining == 1
+        assert [e.aerodrome for e in group.unreliable] == ["BRVO"]
+
+    def test_unreliable_is_not_the_same_as_degraded(self):
+        # A degraded aerodrome is a known problem; an unreliable one is an
+        # unknown, and the fix is different — go and read it.
+        result = run(
+            held("ALFA") + held("BRVO", rffs=7) + held("CHLI", when=STALE_READ),
+            *region("ALFA", "BRVO", "CHLI"),
+        )
+        group = result.groups[0]
+        assert [e.aerodrome for e in group.degraded] == ["BRVO"]
+        assert [e.aerodrome for e in group.unreliable] == ["CHLI"]
+
+    def test_an_unread_member_counts_as_unreliable_too(self):
+        result = run(held("ALFA") + held("BRVO"), *region("ALFA", "BRVO", "DDDD"))
+        group = result.groups[0]
+        assert [e.aerodrome for e in group.unreliable] == ["DDDD"]
+        assert group.exposure is Exposure.MEDIUM
+
+    def test_stale_data_makes_the_sweep_inconclusive(self):
+        result = run(held("ALFA", when=STALE_READ), NetworkEntry("ALFA", Role.DESTINATION))
+        assert result.entries[0].is_covered
+        assert not result.entries[0].is_current
+        assert not result.entries[0].is_dependable
+        assert not result.is_conclusive
+
+    def test_the_summary_separates_clear_from_dependable(self):
+        # Two clear, one of them stale. "2 clear" is true and "2 dependable"
+        # would not be.
+        result = run(
+            held("ALFA") + held("BRVO", when=STALE_READ),
+            NetworkEntry("ALFA", Role.DESTINATION),
+            NetworkEntry("BRVO", Role.DESTINATION),
+        )
+        counts = result.summary()
+        assert counts["clear"] == 2
+        assert counts["dependable"] == 1
+        assert counts["stale"] == 1
+
+    def test_stale_aerodromes_get_their_own_section(self):
+        printed = run(
+            held("ALFA", when=STALE_READ), NetworkEntry("ALFA", Role.DESTINATION)
+        ).render()
+        assert "STALE" in printed
+        assert "a claim about the past" in printed
+        assert "cycles behind" in printed
+
+
+class TestRedundancyAhead:
+    def test_a_region_that_thins_on_a_known_date_says_when(self):
+        result = run(
+            held("ALFA") + lapsing_supplement("CCCC"),
+            NetworkEntry("ALFA", Role.EDTO_ALTERNATE, group=REGION),
+            NetworkEntry("CCCC", Role.EDTO_ALTERNATE, group=REGION),
+        )
+        group = result.groups[0]
+        assert group.remaining == 2
+        assert group.thins_on == date(2026, 11, 21)
+        assert group.remaining_on(date(2026, 11, 21)) == 1
+        assert "falls to 1 on 2026-11-21" in group.describe()
+
+    def test_a_region_that_stays_whole_reports_no_thinning(self):
+        result = run(held("ALFA") + held("BRVO"), *region("ALFA", "BRVO"))
+        assert result.groups[0].thins_on is None
+
+
+class TestGroupsAreOptional:
+    def test_a_network_with_no_groups_has_none(self):
+        result = run(held("ALFA"), NetworkEntry("ALFA", Role.DESTINATION))
+        assert result.groups == ()
+        assert result.at_risk_groups == ()
+        assert result.summary()["groups"] == 0
+
+    def test_an_aerodrome_records_the_groups_it_belongs_to(self):
+        result = run(held("ALFA"), NetworkEntry("ALFA", Role.EDTO_ALTERNATE, group=REGION))
+        assert result.entries[0].groups == (REGION,)
+
+    def test_the_render_names_each_member_and_its_state(self):
+        printed = run(
+            held("ALFA") + held("BRVO", rffs=7) + held("CHLI", when=STALE_READ),
+            *region("ALFA", "BRVO", "CHLI"),
+        ).render()
+        assert "REDUNDANCY" in printed
+        assert "which no single aerodrome carries" in printed
+        block = printed[printed.index("REDUNDANCY"):]
+        assert "ALFA     dependable" in block
+        assert "CHLI     stale" in block
