@@ -52,6 +52,16 @@ from datetime import date, datetime, timezone
 from typing import Iterable
 
 from aeropub.aip import AipCoverage
+from aeropub.ats import (
+    AtsStructure,
+    FiledRoute,
+    LevelFinding,
+    RouteExpansion,
+    expand,
+    notams_on_route,
+    parse_route_string,
+    screen_levels,
+)
 from aeropub.currency import Currency, DataCurrency, assess_currency
 from aeropub.entities import named, normalise
 from aeropub.notam_register import NotamRegister
@@ -157,6 +167,19 @@ class Route:
     crosses: tuple[Jurisdiction, ...] = ()
     designator: str = ""
     reference: str = ""
+    filed: FiledRoute | None = None
+    """The route as Item 15 states it, where the operator gave one.
+
+    Optional, and the difference it makes is the difference between a city
+    pair and a route. Without it the dossier can speak about both ends and the
+    regions named; with it, it can say which airway, at what minimum level, in
+    which direction and under which navigation specification."""
+
+    planned_level_ft: float | None = None
+    holds: tuple[str, ...] = ()
+    """Navigation specifications the operator holds, in the codes the AIP
+    prints. Empty means we do not know what they hold — which is reported as
+    not knowing, never as not holding."""
 
     def __post_init__(self) -> None:
         for field in ("departure", "destination", "takeoff_alternate"):
@@ -166,6 +189,11 @@ class Route:
                 self, field, tuple(normalise(a) for a in getattr(self, field))
             )
         object.__setattr__(self, "designator", normalise(self.designator))
+        object.__setattr__(
+            self, "holds", tuple(normalise(h) for h in self.holds if str(h).strip())
+        )
+        if self.filed is not None and not isinstance(self.filed, FiledRoute):
+            raise TypeError("Route.filed must be a FiledRoute")
         if not self.departure:
             raise ValueError("Route.departure must be a non-empty string")
         if not self.destination:
@@ -438,17 +466,35 @@ class RouteDossier:
     altimetry: Altimetry = Altimetry()
     open_items: tuple[OpenItem, ...] = ()
     not_addressed: tuple[str, ...] = NOT_YET_ADDRESSED
+    expansion: RouteExpansion | None = None
+    """The filed route resolved against the published ATS structure, where
+    both were supplied. ``None`` means no route string was given — which is a
+    smaller question than a route string nobody could resolve, and the two
+    print differently."""
+
+    levels: tuple[LevelFinding, ...] = ()
+    enroute_notams: tuple[tuple[str, object, object], ...] = ()
+    """NOTAM in force against anything on the filed route, each with the
+    entity it was found against so a briefing can say where on the route it
+    bites."""
 
     @property
     def places(self) -> int:
-        """Every aerodrome and region this sector depends on."""
-        return len(self.route.aerodromes) + len(self.jurisdictions)
+        """Everything this sector depends on: aerodromes, regions, route legs.
+
+        Route legs count because they are exactly as capable of being unread
+        as an aerodrome is, and a headline that omitted them would improve the
+        moment a filed route was supplied.
+        """
+        legs = self.expansion.checkable if self.expansion else 0
+        return len(self.route.aerodromes) + len(self.jurisdictions) + legs
 
     @property
     def spoken_for(self) -> int:
         """How many of those the platform has actually read."""
         read = sum(1 for e in self.sweep.entries if e.facts_held)
-        return read + sum(1 for j in self.jurisdictions if j.is_covered)
+        read += sum(1 for j in self.jurisdictions if j.is_covered)
+        return read + (self.expansion.resolved if self.expansion else 0)
 
     @property
     def coverage(self) -> tuple[int, int]:
@@ -462,8 +508,8 @@ class RouteDossier:
         finding cannot be outranked into invisibility by an aerodrome that is
         merely fine.
         """
-        levels = [self.sweep.overall] + [item.severity for item in self.open_items]
-        return worst_exposure(levels)
+        found = [self.sweep.overall] + [item.severity for item in self.open_items]
+        return worst_exposure(found)
 
     @property
     def is_conclusive(self) -> bool:
@@ -474,6 +520,10 @@ class RouteDossier:
         covered the two ends and none of the middle would otherwise print its
         conclusions with the same confidence as one that covered everything.
         """
+        if self.expansion is not None and not self.expansion.route.is_parsed:
+            # An element nobody could read may have been an airway, and a
+            # route missing a leg it never knew about screens clean.
+            return False
         return (
             self.spoken_for == self.places
             and self.places > 0
@@ -533,6 +583,60 @@ class RouteDossier:
                 "the route, not a",
                 "quiet route.",
             ]
+
+        if self.expansion is not None:
+            resolved, checkable = self.expansion.coverage
+            lines += [
+                "",
+                f"FILED ROUTE — {self.expansion.route.text or '(empty)'}",
+                f"  {resolved} of {checkable} airway legs resolved  ·  "
+                f"{len(self.expansion.direct)} flown direct",
+            ]
+            if self.expansion.highest_mea_ft is not None:
+                lines.append(
+                    f"  highest published minimum on the route: "
+                    f"{self.expansion.highest_mea_ft:.0f} ft"
+                )
+            if self.expansion.distance_nm is not None:
+                lines.append(
+                    f"  published distance: {self.expansion.distance_nm:.0f} NM"
+                )
+            elif self.expansion.airway_distance_nm is not None:
+                lines.append(
+                    f"  published distance on the airways: "
+                    f"{self.expansion.airway_distance_nm:.0f} NM "
+                    "(the direct legs are unmeasured, so this is not the "
+                    "route length)"
+                )
+            if self.expansion.navigation_specs:
+                lines.append(
+                    "  navigation specifications required: "
+                    + ", ".join(self.expansion.navigation_specs)
+                )
+            for unparsed in self.expansion.route.unparsed:
+                lines.append(
+                    f"  !! {unparsed!r} could not be read. It may have been an "
+                    "airway, so this route is not fully screened."
+                )
+            for leg in self.expansion.unresolved:
+                lines.append(f"  !! {leg.describe()}")
+            for leg in self.expansion.direct:
+                lines.append(f"   · {leg.leg.describe()} — flown direct")
+
+        if self.levels:
+            lines += ["", "LEVELS — the planned level against what is published"]
+            for finding in self.levels:
+                lines.append(f"  {finding.describe()}")
+
+        if self.enroute_notams:
+            lines += [
+                "",
+                f"NOTAM ON THE ROUTE — {len(self.enroute_notams)} in force "
+                "against something on it",
+            ]
+            for entity, notam, state in self.enroute_notams:
+                mark = "" if state.value == "in_force" else f"  [{state.value}]"
+                lines.append(f"  {entity}: {notam.identifier}{mark}")
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -601,7 +705,12 @@ def _read_jurisdiction(store, jurisdiction: Jurisdiction, on: date) -> Jurisdict
 
 
 def _open_items(
-    sweep_result: NetworkSweep, jurisdictions: Iterable[JurisdictionCover]
+    route: Route,
+    sweep_result: NetworkSweep,
+    jurisdictions: Iterable[JurisdictionCover],
+    expansion: RouteExpansion | None = None,
+    levels: Iterable[LevelFinding] = (),
+    enroute_notams: Iterable[tuple] = (),
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -613,7 +722,10 @@ def _open_items(
                     where=entry.aerodrome,
                     what="never read",
                     severity=Exposure.UNKNOWN,
-                    why=f"{entry.role.value} on this sector, and nothing is held for it",
+                    why=(
+                        f"{route.position_of(entry.aerodrome)} on this sector, "
+                        "and nothing is held for it"
+                    ),
                 )
             )
             continue
@@ -669,6 +781,54 @@ def _open_items(
                 )
             )
 
+    if expansion is not None:
+        for unparsed in expansion.route.unparsed:
+            items.append(
+                OpenItem(
+                    where="filed route",
+                    what=f"{unparsed!r} could not be read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "it may have been an airway, so part of the route was "
+                        "never screened"
+                    ),
+                )
+            )
+        for leg in expansion.unresolved:
+            items.append(
+                OpenItem(
+                    where=leg.leg.describe(),
+                    what="not in the published structure",
+                    severity=Exposure.UNKNOWN,
+                    why=leg.reason,
+                )
+            )
+
+    for finding in levels:
+        items.append(
+            OpenItem(
+                where=f"{finding.segment.route} "
+                f"{finding.segment.start}-{finding.segment.end}",
+                what="planned level",
+                # A level below a published minimum is not a question, it is a
+                # route that cannot be flown as filed. A navigation
+                # specification we cannot confirm is a question.
+                severity=Exposure.CRITICAL if finding.blocking else Exposure.MEDIUM,
+                why=finding.reason,
+            )
+        )
+
+    for entity, notam, state in enroute_notams:
+        items.append(
+            OpenItem(
+                where=entity,
+                what=f"NOTAM {notam.identifier}",
+                severity=Exposure.MEDIUM,
+                why=(notam.text or "").strip()[:160]
+                or f"in force against this ({state.value})",
+            )
+        )
+
     rank = {
         Exposure.CRITICAL: 0,
         Exposure.HIGH: 1,
@@ -691,6 +851,7 @@ def build_route_dossier(
     register: NotamRegister | None = None,
     coverage: AipCoverage | None = None,
     not_addressed: tuple[str, ...] = NOT_YET_ADDRESSED,
+    structure: AtsStructure | None = None,
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
 
@@ -718,6 +879,25 @@ def build_route_dossier(
     jurisdictions = tuple(
         _read_jurisdiction(store, j, day) for j in route.crosses
     )
+
+    expansion: RouteExpansion | None = None
+    levels: tuple[LevelFinding, ...] = ()
+    enroute: tuple = ()
+    if route.filed is not None:
+        # No structure means the route is read and not resolved. That is a
+        # coverage answer — an expansion with every leg unresolved — and not a
+        # reason to skip the section, because skipping it would make a route
+        # nobody could check indistinguishable from one with nothing wrong.
+        expansion = expand(route.filed, structure or AtsStructure())
+        if route.planned_level_ft is not None:
+            levels = screen_levels(
+                expansion, planned_ft=route.planned_level_ft, holds=route.holds
+            )
+        if register is not None:
+            enroute = notams_on_route(
+                register, expansion, moment, structure=structure
+            )
+
     return RouteDossier(
         route=route,
         as_at=moment,
@@ -725,6 +905,11 @@ def build_route_dossier(
         sweep=swept,
         jurisdictions=jurisdictions,
         altimetry=Altimetry(covers=jurisdictions),
-        open_items=_open_items(swept, jurisdictions),
+        open_items=_open_items(
+            route, swept, jurisdictions, expansion, levels, enroute
+        ),
         not_addressed=tuple(not_addressed),
+        expansion=expansion,
+        levels=levels,
+        enroute_notams=enroute,
     )

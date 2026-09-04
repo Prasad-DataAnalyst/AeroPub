@@ -469,3 +469,155 @@ class TestAgreement:
     def test_as_at_must_be_timezone_aware(self):
         with pytest.raises(ValueError, match="timezone-aware"):
             dossier(route(), as_at=datetime(2026, 10, 5, 6, 0))
+
+
+# --------------------------------------------------------------------------
+# The en-route half
+# --------------------------------------------------------------------------
+
+
+class TestFiledRoute:
+    """The city pair becomes a route only when Item 15 is supplied.
+
+    Everything here is about the join staying honest: a route string parses
+    perfectly whether or not a single fact is held about the airspace it
+    crosses, so supplying one must be able to make the headline *worse*.
+    """
+
+    @staticmethod
+    def structure():
+        from aeropub.ats import AtsStructure, CruisingLevels, RouteSegment
+
+        return AtsStructure(
+            segments=(
+                RouteSegment(
+                    route="UM688", start="ALSEM", end="MIDLE", source=ref(),
+                    mea_ft=15000, distance_nm=120, direction=CruisingLevels.ODD,
+                    navigation_spec="RNAV 5",
+                ),
+                RouteSegment(
+                    route="UM688", start="MIDLE", end="BAYAN", source=ref(),
+                    mea_ft=24000, distance_nm=80, direction=CruisingLevels.ODD,
+                    navigation_spec="RNAV 5",
+                ),
+            )
+        )
+
+    @staticmethod
+    def filed(text: str, **overrides):
+        from aeropub.ats import parse_route_string
+
+        return parse_route_string(text, departure="XXXX", destination="YYYY")
+
+    def built(self, text: str, *facts, structure=None, **route_kwargs):
+        sector = route(filed=self.filed(text), crosses=(), **route_kwargs)
+        return dossier(sector, *facts, structure=structure)
+
+    def test_a_route_with_no_structure_resolves_nothing_and_says_so(self):
+        """Not a reason to skip the section.
+
+        Skipping it would make a route nobody could check indistinguishable
+        from one with nothing wrong.
+        """
+        built = self.built("ALSEM UM688 BAYAN")
+        assert built.expansion is not None
+        assert built.expansion.coverage == (0, 1)
+        assert "not in the held structure" in built.render()
+
+    def test_supplying_a_route_can_make_the_headline_worse(self):
+        """The legs are as capable of being unread as an aerodrome is.
+
+        A headline that omitted them would improve the moment a filed route
+        was supplied, which is exactly backwards.
+        """
+        without = dossier(route(crosses=()))
+        with_route = self.built("ALSEM UM688 BAYAN")
+        assert with_route.places > without.places
+        assert with_route.spoken_for == without.spoken_for
+
+    def test_a_resolved_route_carries_the_binding_minimum(self):
+        built = self.built("ALSEM UM688 BAYAN", structure=self.structure())
+        assert built.expansion.highest_mea_ft == 24000
+        assert built.expansion.coverage == (1, 1)
+
+    def test_a_level_below_a_published_minimum_is_critical(self):
+        """Not a question. A route that cannot be flown as filed."""
+        built = self.built(
+            "ALSEM UM688 BAYAN", structure=self.structure(), planned_level_ft=21000
+        )
+        blocking = [i for i in built.open_items if i.severity is Exposure.CRITICAL]
+        assert any("below the minimum" in i.why for i in blocking)
+
+    def test_a_capability_we_cannot_confirm_is_a_question_not_a_blocker(self):
+        built = self.built(
+            "ALSEM UM688 BAYAN", structure=self.structure(), planned_level_ft=35000
+        )
+        found = [i for i in built.open_items if "RNAV 5" in i.why]
+        assert found
+        assert all(i.severity is Exposure.MEDIUM for i in found)
+
+    def test_holding_the_specification_removes_the_question(self):
+        built = self.built(
+            "ALSEM UM688 BAYAN",
+            structure=self.structure(),
+            planned_level_ft=35000,
+            holds=("RNAV 5",),
+        )
+        assert built.levels == ()
+
+    def test_an_unreadable_element_makes_the_dossier_inconclusive(self):
+        """It may have been an airway, and a route missing a leg screens clean."""
+        built = self.built("ALSEM ?!?! BAYAN", structure=self.structure())
+        assert not built.is_conclusive
+        assert any("could not be read" in i.what for i in built.open_items)
+
+    def test_direct_legs_are_shown_but_not_counted_against_coverage(self):
+        built = self.built("ALSEM UM688 BAYAN", structure=self.structure())
+        assert len(built.expansion.direct) == 2
+        assert built.expansion.is_complete
+
+    def test_the_airway_distance_is_never_offered_as_the_route_length(self):
+        built = self.built("ALSEM UM688 BAYAN", structure=self.structure())
+        assert built.expansion.distance_nm is None
+        assert built.expansion.airway_distance_nm == 200
+        assert "not the route length" in built.render()
+
+    def test_a_notam_on_the_route_reaches_the_open_items(self):
+        from datetime import timedelta
+
+        from aeropub.ats import ATS_ROUTE
+        from aeropub.notam_register import (
+            NotamRegister, RegisteredNotam, Subject, SubjectKind,
+        )
+
+        register = NotamRegister(
+            [
+                RegisteredNotam(
+                    identifier="A0009/26",
+                    subjects=(
+                        Subject(kind=SubjectKind.ROUTE, entity=named(ATS_ROUTE, "UM688")),
+                    ),
+                    effective_start=NOW - timedelta(days=1),
+                    effective_end=NOW + timedelta(days=1),
+                    source=ref(),
+                    text="UM688 unavailable",
+                )
+            ]
+        )
+        sector = route(filed=self.filed("ALSEM UM688 BAYAN"), crosses=())
+        built = build_route_dossier(
+            store(),
+            sector,
+            fleet=NARR,
+            as_at=NOW,
+            on=ON,
+            register=register,
+            coverage=AipCoverage(),
+            structure=self.structure(),
+        )
+        assert any(i.what == "NOTAM A0009/26" for i in built.open_items)
+        assert "NOTAM ON THE ROUTE" in built.render()
+
+    def test_no_filed_route_is_a_smaller_question_than_an_unresolved_one(self):
+        """They print differently, and must."""
+        assert dossier(route(crosses=())).expansion is None

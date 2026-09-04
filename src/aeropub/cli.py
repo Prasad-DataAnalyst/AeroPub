@@ -60,6 +60,12 @@ from aeropub.operator import profile_template
 from aeropub.quality import assess_quality
 from aeropub.render import render_dossier
 from aeropub.retrospect import blind_spots, retrospect
+from aeropub.ats import (
+    AtsStructure,
+    load_ats_structure,
+    parse_route_string,
+    structure_template,
+)
 from aeropub.route import Jurisdiction, Route, build_route_dossier
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
@@ -708,9 +714,28 @@ def _cmd_route(args: argparse.Namespace) -> int:
     them — and the headline is how much of the route we can speak for, not a
     risk score.
     """
+    if args.structure_template:
+        print(structure_template())
+        return OK
+
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
         Jurisdiction(designator=name) for name in (args.crosses or ())
+    )
+    structure = None
+    if args.structure:
+        loaded = [load_ats_structure(path) for path in args.structure]
+        structure = AtsStructure(
+            segments=tuple(s for held in loaded for s in held.segments),
+            points=tuple(p for held in loaded for p in held.points),
+            procedures=tuple(p for held in loaded for p in held.procedures),
+        )
+    filed = (
+        parse_route_string(
+            args.route, departure=args.departure, destination=args.destination
+        )
+        if args.route
+        else None
     )
     sector = Route(
         departure=args.departure,
@@ -721,6 +746,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
         crosses=crosses,
         designator=aircraft.designator,
         reference=args.reference or "",
+        filed=filed,
+        planned_level_ft=args.level,
+        holds=tuple(args.holds or ()),
     )
 
     path = _store_path(args)
@@ -735,6 +763,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             on=_day(args.on, moment.date()),
             register=NotamRegister(),
             coverage=AipCoverage(),
+            structure=structure,
         )
         _emit(document, args, document.render() + _emptiness_note(store, path))
         # Adverse on anything above medium, or on a route we cannot speak for.
@@ -1057,6 +1086,34 @@ def _parser() -> argparse.ArgumentParser:
             "overflight, repeatable. Regions not named are not checked, and "
             "the dossier says so."
         ),
+    )
+    sector.add_argument(
+        "--route", default=None, metavar="ITEM15",
+        help=(
+            "the route as Item 15 of the flight plan states it, e.g. "
+            "\"N0450F350 ALSEM UM688 BAYAN DCT KIA\". Without one the dossier "
+            "speaks about both ends and the regions named, and nothing between"
+        ),
+    )
+    sector.add_argument(
+        "--structure", action="append", metavar="FILE",
+        help="path to an ENR 3 extract, repeatable — one per State on the route",
+    )
+    sector.add_argument(
+        "--level", type=float, default=None, metavar="FEET",
+        help="planned cruising level in feet, screened against every segment",
+    )
+    sector.add_argument(
+        "--holds", action="append", metavar="SPEC",
+        help=(
+            "a navigation specification the operator holds, in the codes the "
+            "AIP prints, repeatable. Omitted means we do not know what they "
+            "hold, which is reported as not knowing"
+        ),
+    )
+    sector.add_argument(
+        "--structure-template", dest="structure_template", action="store_true",
+        help="print a blank ENR 3 extract to fill in from a State's route table",
     )
     sector.add_argument("--reference", default=None, help="your own name for this sector")
     sector.add_argument("--on", default=None)

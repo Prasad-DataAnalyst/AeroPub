@@ -1307,6 +1307,67 @@ def route_dossier(
             }
             for i in item.open_items
         ],
+        "filed_route": (
+            {
+                "text": item.expansion.route.text,
+                "parsed": item.expansion.route.is_parsed,
+                "unparsed": list(item.expansion.route.unparsed),
+                "resolved": item.expansion.resolved,
+                "checkable": item.expansion.checkable,
+                "direct_legs": len(item.expansion.direct),
+                "highest_mea_ft": item.expansion.highest_mea_ft,
+                "distance_nm": item.expansion.distance_nm,
+                "airway_distance_nm": item.expansion.airway_distance_nm,
+                "navigation_specs": list(item.expansion.navigation_specs),
+                "legs": [
+                    {
+                        "start": leg.leg.start,
+                        "via": leg.leg.via,
+                        "end": leg.leg.end,
+                        "resolution": leg.resolution.value,
+                        "reason": leg.reason,
+                        "segments": [
+                            {
+                                "route": s.route,
+                                "start": s.start,
+                                "end": s.end,
+                                "mea_ft": s.mea_ft,
+                                "moca_ft": s.moca_ft,
+                                "maa_ft": s.maa_ft,
+                                "direction": s.direction.value,
+                                "navigation_spec": s.navigation_spec,
+                                "distance_nm": s.distance_nm,
+                                "source_ref": source_ref(s.source),
+                            }
+                            for s in leg.segments
+                        ],
+                    }
+                    for leg in item.expansion.legs
+                ],
+            }
+            if item.expansion is not None
+            else None
+        ),
+        "levels": [
+            {
+                "route": f.segment.route,
+                "start": f.segment.start,
+                "end": f.segment.end,
+                "planned_ft": f.planned_ft,
+                "reason": f.reason,
+                "blocking": f.blocking,
+            }
+            for f in item.levels
+        ],
+        "enroute_notams": [
+            {
+                "entity": entity,
+                "identifier": notam.identifier,
+                "state": state.value,
+                "source_ref": source_ref(notam.source),
+            }
+            for entity, notam, state in item.enroute_notams
+        ],
         "not_addressed": list(item.not_addressed),
         "disclaimer": (
             "An assembly of what is held about one sector. Not a flight plan, "

@@ -39,7 +39,7 @@ from aeropub.fleet import (
     Holding,
     OperatorRecord,
     Registration,
-    Segment,
+    OperatorSegment,
     TypeCoverage,
     TypeReference,
     fleet_of,
@@ -364,12 +364,12 @@ class TestRanking:
     def test_segments_are_selectable(self):
         mixed = FleetLibrary(
             operators=(
-                operator("AAA", segment=Segment.COMMERCIAL),
-                operator("BBB", segment=Segment.BUSINESS),
-                operator("CCC", segment=Segment.PRIVATE),
+                operator("AAA", segment=OperatorSegment.COMMERCIAL),
+                operator("BBB", segment=OperatorSegment.BUSINESS),
+                operator("CCC", segment=OperatorSegment.PRIVATE),
             ),
         )
-        assert [o.icao for o in mixed.segment(Segment.BUSINESS)] == ["BBB"]
+        assert [o.icao for o in mixed.segment(OperatorSegment.BUSINESS)] == ["BBB"]
 
     def test_only_scheduled_operations_have_a_discoverable_network(self):
         """The reason business aviation needs a stated city pair.
@@ -378,10 +378,10 @@ class TestRanking:
         sectors as a network produces a profile that is wrong the first time
         the customer files a plan.
         """
-        assert Segment.COMMERCIAL.has_discoverable_network
-        assert Segment.CARGO.has_discoverable_network
-        assert not Segment.BUSINESS.has_discoverable_network
-        assert not Segment.PRIVATE.has_discoverable_network
+        assert OperatorSegment.COMMERCIAL.has_discoverable_network
+        assert OperatorSegment.CARGO.has_discoverable_network
+        assert not OperatorSegment.BUSINESS.has_discoverable_network
+        assert not OperatorSegment.PRIVATE.has_discoverable_network
 
 
 # --------------------------------------------------------------------------

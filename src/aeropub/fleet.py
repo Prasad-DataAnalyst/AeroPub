@@ -98,7 +98,7 @@ __all__ = [
     "Registration",
     "route_profile",
     "screen",
-    "Segment",
+    "OperatorSegment",
     "TypeCoverage",
     "TypeGap",
     "TypeReference",
@@ -163,7 +163,7 @@ class Basis(str, Enum):
         return self is Basis.ATTESTED
 
 
-class Segment(str, Enum):
+class OperatorSegment(str, Enum):
     """What kind of operation this is. Changes how the profile is built."""
 
     COMMERCIAL = "commercial"
@@ -191,7 +191,7 @@ class Segment(str, Enum):
         as a network would produce a profile that is out of date the first time
         the customer files a plan.
         """
-        return self in (Segment.COMMERCIAL, Segment.CARGO)
+        return self in (OperatorSegment.COMMERCIAL, OperatorSegment.CARGO)
 
 
 class TypeCoverage(str, Enum):
@@ -310,7 +310,7 @@ class OperatorRecord:
     icao: str
     name: str
     iata: str = ""
-    segment: Segment = Segment.COMMERCIAL
+    segment: OperatorSegment = OperatorSegment.COMMERCIAL
     holdings: tuple[Holding, ...] = ()
     bases: tuple[str, ...] = ()
 
@@ -322,8 +322,8 @@ class OperatorRecord:
             raise ValueError("OperatorRecord.icao must be a non-empty string")
         if not self.name.strip():
             raise ValueError("OperatorRecord.name must be a non-empty string")
-        if not isinstance(self.segment, Segment):
-            raise TypeError("OperatorRecord.segment must be a Segment")
+        if not isinstance(self.segment, OperatorSegment):
+            raise TypeError("OperatorRecord.segment must be a OperatorSegment")
         marks = [h.mark for h in self.holdings]
         duplicated = {m for m in marks if marks.count(m) > 1}
         if duplicated:
@@ -610,7 +610,7 @@ class FleetLibrary:
         )
         return tuple(ordered if limit is None else ordered[:limit])
 
-    def segment(self, segment: Segment) -> tuple[OperatorRecord, ...]:
+    def segment(self, segment: OperatorSegment) -> tuple[OperatorRecord, ...]:
         return tuple(
             sorted(
                 (o for o in self.operators if o.segment is segment),
@@ -710,13 +710,13 @@ def _basis(value: object, *, where: str) -> Basis:
         ) from None
 
 
-def _segment(value: object, *, where: str) -> Segment:
+def _segment(value: object, *, where: str) -> OperatorSegment:
     try:
-        return Segment(str(value).strip().lower())
+        return OperatorSegment(str(value).strip().lower())
     except ValueError:
         raise ManifestError(
             f"{where}: segment must be one of "
-            f"{', '.join(s.value for s in Segment)}"
+            f"{', '.join(s.value for s in OperatorSegment)}"
         ) from None
 
 
@@ -820,7 +820,7 @@ def load_library(path: Path | str) -> FleetLibrary:
         name = str(row.get("name", "")).strip()
         if not name:
             raise ManifestError(f"{where}: {icao} needs a name")
-        segment = _segment(row.get("segment", Segment.COMMERCIAL.value), where=where)
+        segment = _segment(row.get("segment", OperatorSegment.COMMERCIAL.value), where=where)
         listed = row.get("holdings", [])
         if not isinstance(listed, list):
             raise ManifestError(f"{where}: holdings must be a list of tails")
