@@ -60,6 +60,16 @@ from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
 from aeropub.ingest import load_facts
 from aeropub.manifest import ManifestError, sha256_of
+from aeropub.obstacles import (
+    Obstacle,
+    ObstacleChange,
+    ObstacleReview,
+    Penetration,
+    compare_cycles,
+    penetrates_ois,
+    required_gradient,
+    review_runway,
+)
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
@@ -159,6 +169,7 @@ __all__ = [
     "CheckOutcome",
     "code_letter",
     "code_number",
+    "compare_cycles",
     "compare_pavement",
     "compile_bulletin",
     "Confidence",
@@ -189,8 +200,8 @@ __all__ = [
     "Freshness",
     "GroupRedundancy",
     "HoldingState",
-    "Horizon",
     "horizon",
+    "Horizon",
     "Impact",
     "LateArrival",
     "Lens",
@@ -213,6 +224,9 @@ __all__ = [
     "NotamKind",
     "NotamRegister",
     "Note",
+    "Obstacle",
+    "ObstacleChange",
+    "ObstacleReview",
     "open_store",
     "OperatorAssessment",
     "OperatorProfile",
@@ -220,6 +234,8 @@ __all__ = [
     "PavementCheck",
     "PavementRating",
     "PavementVerdict",
+    "penetrates_ois",
+    "Penetration",
     "Precedence",
     "QLine",
     "QualityFinding",
@@ -230,14 +246,16 @@ __all__ = [
     "RegisteredNotam",
     "render_board",
     "render_dossier",
-    "Retrospect",
+    "required_gradient",
     "retrospect",
+    "Retrospect",
+    "review_runway",
     "Revision",
     "rffs_category",
     "Role",
     "scope_of",
-    "section",
     "Section",
+    "section",
     "SectionEntry",
     "SectionHolding",
     "Severity",

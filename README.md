@@ -78,6 +78,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] eAIP reader — layout as configuration, with a prober that drafts it from a real page
 - [x] Time machine — what was knowable at a past moment, beside what is held now
 - [x] Collection blindness — how long a change was in force before we held it
+- [x] Obstacles — required climb gradient, OIS penetration, cycle delta, crane tracking
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it

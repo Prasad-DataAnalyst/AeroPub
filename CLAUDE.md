@@ -521,6 +521,45 @@ pretended.
 denominator: "4 of 5 read the same" implies four were examined and matched, when four had no value in
 force that day at all. `compared` is the honest denominator and `not_in_force` is reported separately.
 
+## Obstacles: the arithmetic that is exact, the geometry that is refused
+
+The plan calls the obstacle alert the highest-value single alert in the platform. `obstacles.py`
+computes the decisive part of it and declines the rest, and the line between them is the design.
+
+**What is exact.** The climb gradient required to clear an obstacle is arithmetic on two published
+figures, against criteria that agree between ICAO PANS-OPS and FAA TERPS: the obstacle
+identification surface rises at **2.5%** (40:1, 152 ft/NM), the minimum obstacle clearance is **0.8%**
+of the distance flown from the DER, and the standard procedure design gradient is **3.3%** — which is
+exactly the sum. `STANDARD_PDG_PERCENT` is defined as `OIS_PERCENT + MOC_PERCENT` rather than as
+`3.3`, because that is the construction and three independent constants would drift.
+
+The subtlety worth knowing: the plan's own worked example, 412 ft at 2.1 NM, is **196 ft/NM** — just
+*under* the 200 ft/NM standard — and still requires **4.03%**, steeper than standard, because the
+standard already contains the clearance. An implementation that compared the obstacle's own gradient
+against 3.3% would clear it.
+
+**What is refused.** Whether an obstacle lies inside the protected departure area needs the full
+PANS-OPS construction — splay rates, area widths at distance, turning geometry. Approximating that
+would be a confident answer about whether an obstacle matters *at all*, which is the worst thing to
+be approximately right about. So distance and bearing from the DER are reported and sector
+membership is left to a procedure designer. The JSON emits `sector_membership: {decided: false}`
+explicitly, because an absent field reads as an answer of "no". The EOSID net flight path is refused
+for the same reason and the plan agrees — it assigns that to an engineer.
+
+`penetrates_ois` defaults its surface origin to **0 m** (TERPS) rather than ICAO's 5 m. The lower
+surface reports more obstacles as penetrating, and conservative is the right default for a check
+whose false negative is an aeroplane climbing into something.
+
+Fleet exposure needs a climb gradient the aeroplane can achieve, which is certified performance and
+stays with the operator under plan decision D. Supplied as a `climb_gradient_pct` characteristic
+marked `Origin.OPERATOR`, it never leaves that tenant — and a type with none held is reported
+`unassessed`, never folded in with `capable`.
+
+Cycle comparison keys on the **State's own identifier**. Matching on position would be a guess about
+whether two readings describe one obstacle, and a wrong guess reads as a removal plus an appearance —
+exactly the alert somebody would act on. `extended` catches the crane whose end date moved: four
+extensions are one works programme, not four unrelated messages.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

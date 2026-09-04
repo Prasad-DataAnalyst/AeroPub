@@ -51,6 +51,7 @@ from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
 from aeropub.horizon import Horizon, Transition
 from aeropub.lenses import LensView
+from aeropub.obstacles import Obstacle, ObstacleChange, ObstacleReview
 from aeropub.provenance import SourceRef
 from aeropub.quality import QualityFinding, QualityReport
 from aeropub.operator import ExposureFinding, OperatorAssessment
@@ -69,6 +70,7 @@ __all__ = [
     "operator_assessment",
     "suitability",
     "network_sweep",
+    "obstacle_review",
     "retrospect_document",
     "ndjson",
     "to_json",
@@ -696,6 +698,90 @@ def retrospect_document(
     }
 
 
+def _obstacle(item: Obstacle) -> dict[str, Any]:
+    from aeropub.obstacles import penetrates_ois, required_gradient
+
+    return {
+        "identifier": item.identifier,
+        "kind": item.kind or None,
+        "height_above_der_m": item.height_above_der_m,
+        "height_ft": item.height_ft,
+        "distance_from_der_m": item.distance_from_der_m,
+        "distance_nm": item.distance_nm,
+        "bearing_from_der_deg": item.bearing_from_der_deg,
+        "lighted": item.lighted,
+        "marked": item.marked,
+        "valid_from": _day(item.valid_from),
+        "valid_to": _day(item.valid_to),
+        "temporary": item.is_temporary,
+        "measurable": item.is_measurable,
+        "required_gradient_percent": required_gradient(item),
+        "penetration": penetrates_ois(item).value,
+        "source_ref": source_ref(item.source),
+    }
+
+
+def _obstacle_change(item: ObstacleChange) -> dict[str, Any]:
+    return {
+        "identifier": item.identifier,
+        "changed": item.changed,
+        "appeared": item.appeared,
+        "removed": item.removed,
+        "raised": item.raised,
+        "extended": item.extended,
+        "before": _obstacle(item.before) if item.before else None,
+        "after": _obstacle(item.after) if item.after else None,
+    }
+
+
+def obstacle_review(
+    item: ObstacleReview, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """Obstacles for one runway end, and the gradient they require.
+
+    ``sector_membership`` is emitted as an explicit refusal rather than left
+    out. A consumer must be able to see that whether an obstacle lies inside
+    the protected departure area has not been decided — an absent field reads
+    as an answer of "no".
+    """
+    from aeropub.obstacles import OIS_PERCENT, STANDARD_PDG_PERCENT
+
+    exposed = item.exposure()
+    return {
+        "runway": item.runway,
+        "required_gradient_percent": item.required_percent,
+        "standard_gradient_percent": STANDARD_PDG_PERCENT,
+        "exceeds_standard": item.exceeds_standard,
+        "ois_percent": OIS_PERCENT,
+        "governing": _obstacle(item.governing) if item.governing else None,
+        "obstacles": [_obstacle(o) for o in item.obstacles],
+        "penetrating": [o.identifier for o in item.penetrating],
+        "unmeasured": [o.identifier for o in item.unmeasured],
+        "changes": [_obstacle_change(c) for c in item.changes if c.changed],
+        "fleet_exposure": (
+            {
+                "required_percent": exposed.required_percent,
+                "capable": list(exposed.capable),
+                "incapable": list(exposed.incapable),
+                "unassessed": list(exposed.unassessed),
+                "conclusive": exposed.is_conclusive,
+            }
+            if exposed is not None
+            else None
+        ),
+        "sector_membership": {
+            "decided": False,
+            "reason": (
+                "Whether an obstacle lies inside the protected departure area "
+                "needs the full PANS-OPS construction. Approximating it would "
+                "be a confident answer about whether an obstacle matters at "
+                "all. Distances and bearings are given so a procedure designer "
+                "can decide."
+            ),
+        },
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -706,6 +792,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (OperatorAssessment, "operator_exposure", operator_assessment),
     (NetworkSweep, "network_sweep", network_sweep),
     (Retrospect, "retrospect", retrospect_document),
+    (ObstacleReview, "obstacle_review", obstacle_review),
     (Fact, "fact", fact),
 )
 
