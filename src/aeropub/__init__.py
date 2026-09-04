@@ -55,6 +55,7 @@ from aeropub.manifest import ManifestError, sha256_of
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
+from aeropub.sweep import AerodromeExposure, NetworkSweep, sweep
 from aeropub.suitability import (
     Assessment,
     Check,
@@ -81,6 +82,7 @@ from aeropub.operator import (
     Role,
     assess_operator,
     load_profile,
+    worst_exposure,
 )
 from aeropub.notam_register import (
     ForceState,
@@ -112,6 +114,7 @@ __all__ = [
     "aerodrome_of",
     "aerodrome_sections",
     "AerodromeDossier",
+    "AerodromeExposure",
     "AipCoverage",
     "AiracCycle",
     "AircraftType",
@@ -174,6 +177,7 @@ __all__ = [
     "ndjson",
     "Network",
     "NetworkEntry",
+    "NetworkSweep",
     "Notam",
     "NotamKind",
     "NotamRegister",
@@ -215,9 +219,11 @@ __all__ = [
     "Subject",
     "SubjectKind",
     "Suitability",
+    "sweep",
     "to_json",
     "Transition",
     "Trigger",
     "validate",
     "view",
+    "worst_exposure",
 ]

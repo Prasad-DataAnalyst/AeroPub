@@ -337,3 +337,61 @@ class TestExposure:
         payload = json.loads(out)
         assert payload["aeropub"]["kind"] == "operator_exposure"
         assert payload["data"]["suitability"]
+
+
+class TestSweep:
+    def network_profile(self, workspace: Path) -> str:
+        plane = aircraft_manifest(
+            workspace,
+            ("overall_length_m", 70.0, {}),
+            ("fuselage_width_m", 6.2, {}),
+        )
+        return write(workspace / "network.json", {
+            "name": "Example Airways",
+            "fleet": [plane],
+            "network": [
+                {"aerodrome": "XXXX", "role": "edto_alternate", "sole_suitable": True},
+                {"aerodrome": "ZZZZ", "role": "destination"},
+            ],
+        })
+
+    def test_an_unread_aerodrome_is_counted_apart_from_the_clear_ones(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(
+            capsys, "--store", store, "sweep",
+            "--profile", self.network_profile(workspace),
+        )
+        # Adverse, and correctly so: the pavement and width checks could not be
+        # made at a sole-suitable EDTO alternate, which grades HIGH rather than
+        # UNKNOWN. The coverage arithmetic is what this test is about.
+        assert code == ADVERSE
+        assert "1 never read" in out
+        assert "NOTHING HELD" in out
+        assert "ZZZZ" in out
+
+    def test_an_adverse_network_exits_one(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 7)]))
+        code, out, _ = run(
+            capsys, "--store", store, "sweep",
+            "--profile", self.network_profile(workspace),
+        )
+        assert code == ADVERSE
+        assert "CRITICAL" in out
+
+    def test_the_payload_keeps_coverage_beside_every_severity_count(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        _, out, _ = run(
+            capsys, "--store", store, "sweep",
+            "--profile", self.network_profile(workspace), "--json",
+        )
+        payload = json.loads(out)
+        assert payload["aeropub"]["kind"] == "network_sweep"
+        summary = payload["data"]["summary"]
+        assert summary["covered"] + summary["uncovered"] == summary["aerodromes"]
+        assert payload["data"]["uncovered"] == ["ZZZZ"]

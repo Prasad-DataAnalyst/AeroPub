@@ -48,6 +48,7 @@ from aeropub.operator import profile_template
 from aeropub.quality import assess_quality
 from aeropub.render import render_dossier
 from aeropub.store import open_store
+from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
 
 __all__ = ["DEFAULT_STORE", "main"]
@@ -307,6 +308,24 @@ def _cmd_exposure(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_sweep(args: argparse.Namespace) -> int:
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        profile = load_profile(args.profile)
+        moment = _moment(args)
+        document = sweep_network(
+            store, profile, as_at=moment, on=_day(args.on, moment.date()),
+            days=args.days,
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        return ADVERSE if document.overall in (
+            Exposure.CRITICAL, Exposure.HIGH
+        ) else OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -457,6 +476,17 @@ def _parser() -> argparse.ArgumentParser:
                           help="print a blank operator profile")
     exposure.add_argument("--on", default=None)
     exposure.set_defaults(handler=_cmd_exposure)
+
+    network = add(
+        "sweep",
+        "every aerodrome in the network, ranked, with coverage stated",
+        aerodrome=False,
+    )
+    network.add_argument("--profile", required=True, metavar="PROFILE")
+    network.add_argument("--days", type=int, default=DEFAULT_DAYS,
+                         help="how far ahead to look for exposure that worsens")
+    network.add_argument("--on", default=None)
+    network.set_defaults(handler=_cmd_sweep)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

@@ -72,6 +72,7 @@ __all__ = [
     "Role",
     "assess_operator",
     "load_profile",
+    "worst_exposure",
     "profile_template",
 ]
 
@@ -170,6 +171,13 @@ class Exposure(str, Enum):
     def is_conclusive(self) -> bool:
         return self is not Exposure.UNKNOWN
 
+    @property
+    def rank(self) -> int:
+        """Reading order, worst first. Public because every view that ranks
+        findings must rank them the same way — a second ordering somewhere
+        else is a second opinion about severity."""
+        return _EXPOSURE_RANK[self]
+
 
 #: Worst first. ``UNKNOWN`` sits above every pass because the check that was
 #: not made is the one that could still turn out to be the failure — the same
@@ -185,11 +193,16 @@ _EXPOSURE_ORDER = (
 _EXPOSURE_RANK = {level: index for index, level in enumerate(_EXPOSURE_ORDER)}
 
 
-def _worst(levels: Iterable[Exposure]) -> Exposure:
+def worst_exposure(levels: Iterable[Exposure]) -> Exposure:
+    """The least favourable of several, or ``UNKNOWN`` for none at all.
+
+    Never an average, and never ``NONE`` for an empty input: an assessment
+    with nothing in it is the absence of evidence, not a pass.
+    """
     found = list(levels)
     if not found:
         return Exposure.UNKNOWN
-    return min(found, key=lambda level: _EXPOSURE_RANK[level])
+    return min(found, key=lambda level: level.rank)
 
 
 # --------------------------------------------------------------------------
@@ -436,7 +449,7 @@ class OperatorAssessment:
         An operator whose 777 cannot use an aerodrome is not "medium" because
         their A320 can.
         """
-        return _worst(f.exposure for f in self.findings)
+        return worst_exposure(f.exposure for f in self.findings)
 
     @property
     def is_conclusive(self) -> bool:
@@ -457,7 +470,7 @@ class OperatorAssessment:
             sorted(
                 (f for f in self.findings if f.needs_action),
                 key=lambda f: (
-                    _EXPOSURE_RANK[f.exposure], f.designator, f.check.name, f.check.scope
+                    f.exposure.rank, f.designator, f.check.name, f.check.scope
                 ),
             )
         )
@@ -475,7 +488,7 @@ class OperatorAssessment:
         by_type: dict[str, list[Exposure]] = {}
         for finding in self.findings:
             by_type.setdefault(finding.designator, []).append(finding.exposure)
-        return {name: _worst(levels) for name, levels in by_type.items()}
+        return {name: worst_exposure(levels) for name, levels in by_type.items()}
 
     def render(self) -> str:
         only = "  ·  SOLE SUITABLE" if self.sole_suitable else ""

@@ -56,6 +56,7 @@ from aeropub.quality import QualityFinding, QualityReport
 from aeropub.operator import ExposureFinding, OperatorAssessment
 from aeropub.registry import Redistribution
 from aeropub.suitability import Check, Note, Suitability
+from aeropub.sweep import AerodromeExposure, NetworkSweep
 
 __all__ = [
     "API_VERSION",
@@ -65,6 +66,7 @@ __all__ = [
     "dumps",
     "operator_assessment",
     "suitability",
+    "network_sweep",
     "ndjson",
     "to_json",
 ]
@@ -513,6 +515,68 @@ def operator_assessment(
     }
 
 
+def _aerodrome_exposure(
+    item: AerodromeExposure, licensing: Licensing
+) -> dict[str, Any]:
+    return {
+        "aerodrome": item.aerodrome,
+        "role": item.role.value,
+        "sole_suitable": item.sole_suitable,
+        "exposure": item.exposure.value,
+        "worst_ahead": item.worst_ahead.value,
+        "worsens_on": _day(item.worsens_on),
+        "deteriorates_unannounced": item.deteriorates_unannounced,
+        # Emitted rather than derivable from the exposure alone. A consumer
+        # reading only `exposure` would paint an aerodrome nobody has read the
+        # same colour as one that was read and came back clear.
+        "covered": item.is_covered,
+        "facts_held": item.facts_held,
+        "changes_ahead": [_transition(t, licensing) for t in item.changes_ahead],
+        "unannounced_ahead": [
+            _transition(t, licensing) for t in item.unannounced_ahead
+        ],
+        "assessment": operator_assessment(item.assessment, licensing=licensing),
+    }
+
+
+def network_sweep(
+    item: NetworkSweep, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """Every aerodrome an operator uses, ranked, with coverage stated.
+
+    ``summary`` carries ``covered`` and ``uncovered`` beside every severity
+    count, deliberately, so no integrator can render a single percentage
+    without the coverage figure being right there. An aerodrome nobody has read
+    appears in ``uncovered`` and in no severity bucket at all.
+    """
+    return {
+        "operator": item.operator,
+        "as_at": _moment(item.as_at),
+        "on": _day(item.on),
+        "days_ahead": item.days_ahead,
+        "overall": item.overall.value,
+        "conclusive": item.is_conclusive,
+        "summary": item.summary(),
+        "aerodromes": [_aerodrome_exposure(e, licensing) for e in item.ranked],
+        "uncovered": [e.aerodrome for e in item.uncovered],
+        "deteriorating": [
+            {
+                "aerodrome": e.aerodrome,
+                "on": _day(e.worsens_on),
+                "from": e.exposure.value,
+                "to": e.worst_ahead.value,
+                "unannounced": e.deteriorates_unannounced,
+            }
+            for e in item.deteriorating
+        ],
+        "note": (
+            "Aerodromes with nothing held are counted in `uncovered` and in no "
+            "severity bucket. They are not clear; nothing has been checked at "
+            "them."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -521,6 +585,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (LensView, "lens_view", lens_view),
     (Suitability, "aerodrome_suitability", suitability),
     (OperatorAssessment, "operator_exposure", operator_assessment),
+    (NetworkSweep, "network_sweep", network_sweep),
     (Fact, "fact", fact),
 )
 

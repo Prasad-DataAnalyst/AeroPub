@@ -295,6 +295,40 @@ disagree about pavement type or subgrade, that is flagged as changeover inconsis
 silently resolved: the same pavement cannot be both, one of them is stale, and only the State can
 say which.
 
+## The whole network, and the aerodromes nobody has read
+
+`sweep.py` answers the question an airline with two hundred destinations actually opens each
+morning: across everything I fly to, what needs attention today, and what will need it before I next
+look.
+
+**The artefact this module exists to avoid** is a network dashboard showing 197 green and 3 red where
+150 of the greens are aerodromes nobody has ever read. That is worse than no dashboard, because it
+converts absence of data into a green tile and puts a number on it somebody will quote in a safety
+meeting. So coverage is a first-class column, not a footnote: an unread aerodrome is never counted
+among the clear ones, it appears in its own section, it makes the sweep inconclusive, and `summary()`
+reports `covered` and `uncovered` beside every severity count so no single percentage can be quoted
+without both. A test asserts `covered + uncovered == aerodromes` and that the severity buckets sum to
+`covered` alone.
+
+**The forward half is the differentiator.** Running the horizon over the whole network is
+interesting; re-running layer three on each date a change takes effect is the answer. That is what
+`future` does — the same assessment on each transition date — and it yields lines like *"on 21
+November your sole-suitable EDTO alternate goes invalid, and nothing will be published about it"*.
+Forty-seven days of notice on something no State will announce. `deteriorates_unannounced` is the
+flag that matters: a worsening on an AIRAC date arrives with a publication somebody reads; a
+worsening when a supplement quietly lapses arrives with nothing at all.
+
+Two things came from reading the output rather than the code. An aerodrome that deteriorates ahead is
+excluded from the "No action" list — it already has its own section, and listing it twice lets a
+reader who scans headings stop at the wrong one. And unread aerodromes sort *above* read ones at the
+same exposure: an unknown where nobody looked is a different problem from an unknown where somebody
+looked and came up short.
+
+Nothing here is computed. Exposure comes from `operator.py`, the forward view from `horizon.py`, and
+this module ranks and counts. A test builds the single-aerodrome report independently and asserts the
+sweep's findings are identical — a number here that disagrees with the report for the same aerodrome
+is a defect in this module, not a different opinion.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
@@ -326,8 +360,8 @@ HTTP transport, the universal change record, the generic impact layer, the valid
 NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier,
 the change bulletin, the change horizon, SQLite persistence, AIS quality intelligence, the six
 output lenses, the JSON surface, the printable dossier, the aircraft reference code and pavement
-checks, the aerodrome suitability assessment, the citation manifests, the command line and
-layer three. Next: a captured
+checks, the aerodrome suitability assessment, the citation manifests, the command line,
+layer three and the network sweep. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 
