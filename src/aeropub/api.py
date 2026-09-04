@@ -49,6 +49,7 @@ from aeropub.aircraft import Characteristic
 from aeropub.bulletin import ChangeBulletin, ReportedChange
 from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
+from aeropub.fleet import FleetScreen, OperatorFleet
 from aeropub.gate import GateLog, Release
 from aeropub.horizon import Horizon, Transition
 from aeropub.lenses import LensView
@@ -954,6 +955,114 @@ def gate_log(item: GateLog, *, licensing: Licensing = _PERMISSIVE) -> dict[str, 
     }
 
 
+def operator_fleet(
+    item: OperatorFleet, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """What the library holds for one operator, gaps included.
+
+    ``complete`` is a first-class field because the omission it guards against
+    is invisible: a fleet payload listing three types reads identically whether
+    the operator flies three or whether two more had no figures behind them.
+    """
+    record = item.operator
+    return {
+        "operator": {
+            "icao": record.icao,
+            "iata": record.iata,
+            "name": record.name,
+            "segment": record.segment.value,
+            "bases": list(record.bases),
+            "fleet_size": record.fleet_size,
+        },
+        "complete": item.is_complete,
+        "types": [
+            {
+                "designator": aircraft.designator,
+                "manufacturer": aircraft.manufacturer,
+                "model": aircraft.model,
+                "code_letter": aircraft.code_letter(),
+                "characteristics": [
+                    _characteristic(c) for c in aircraft.characteristics
+                ],
+            }
+            for aircraft in item.fleet
+        ],
+        "gaps": [
+            {
+                "designator": gap.designator,
+                "coverage": gap.coverage.value,
+                "actionable": gap.is_actionable,
+                "marks": list(gap.marks),
+                "references": [
+                    {
+                        "publisher": reference.publisher,
+                        "document": reference.document,
+                        "revision": reference.revision,
+                        "locator": reference.locator,
+                        "url": reference.url,
+                    }
+                    for reference in gap.references
+                ],
+            }
+            for gap in item.gaps
+        ],
+        "unidentified": list(item.unidentified),
+        "note": (
+            "A bibliography entry is not provenance. A type listed under gaps "
+            "with references names the document that holds its figures; nobody "
+            "has read it, and no value here rests on it."
+        ),
+    }
+
+
+def fleet_screen(
+    item: FleetScreen, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """Which of an operator's types can use one aerodrome.
+
+    ``unchecked`` deliberately merges types that reached no conclusion with
+    types the library could not describe. To a planner the two are one answer
+    — not yet — and splitting them in the payload invites a consumer to count
+    only the first.
+    """
+    return {
+        "aerodrome": item.aerodrome,
+        "operator": {
+            "icao": item.operator.icao,
+            "name": item.operator.name,
+            "segment": item.operator.segment.value,
+        },
+        "complete": item.is_complete,
+        "suitable": list(item.suitable),
+        "restricted": list(item.restricted),
+        "not_suitable": list(item.not_suitable),
+        "unchecked": list(item.unchecked),
+        "screened": [
+            {
+                "designator": entry.designator,
+                "marks": list(entry.marks),
+                "assessment": entry.assessment.value,
+                "conclusive": entry.is_conclusive,
+                "suitability": suitability(entry.suitability, licensing=licensing),
+            }
+            for entry in item.screened
+        ],
+        "not_screened": [
+            {
+                "designator": gap.designator,
+                "coverage": gap.coverage.value,
+                "marks": list(gap.marks),
+            }
+            for gap in item.gaps
+        ],
+        "unidentified": list(item.unidentified),
+        "disclaimer": (
+            "A fit assessment against published aerodrome data, run across a "
+            "fleet. Not a performance calculation and not a dispatch decision."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -967,6 +1076,8 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (ObstacleReview, "obstacle_review", obstacle_review),
     (TripAssessment, "trip_assessment", trip_assessment),
     (GateLog, "gate_log", gate_log),
+    (OperatorFleet, "operator_fleet", operator_fleet),
+    (FleetScreen, "fleet_screen", fleet_screen),
     (Fact, "fact", fact),
 )
 

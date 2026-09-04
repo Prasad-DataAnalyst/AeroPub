@@ -192,6 +192,7 @@ arrive.
 | **FAA — NOTAM API & SWIM** | US NOTAM, real-time push | Official State source. Free |
 | **FAA — AIP, chart supplement, d-TPP** | Full US AIP, complete chart set with per-cycle change list, obstacle data | Official State source. Free, structured |
 | **FAA Aircraft Registry** | N-number → type, serial, model, owner | Official registry. Free, bulk download |
+| **Other national civil aircraft registers** | Registration → type, serial, model, owner, registration date — the non-US half of the §20 library | Official State registers. Access ranges from open bulk data to paid extract to none |
 | **State AIPs** | GEN, ENR, AD — eAIP XML/HTML, PDF, text, or scanned image | Official State source. Free; terms vary |
 | **OEM airport planning manuals** | Payload-range envelopes, ACR/ACN tables, dimensions, turning radii, pavement and jet-blast data | Published openly by manufacturers. Free — basis for §19 |
 | OpenSky / ADS-B Exchange | Position and movement data | Community. **Supplement only, never authoritative** |
@@ -604,7 +605,77 @@ tables — held under *their* licence, in *their* tenant — the platform comput
 payload deltas and closes the loop on the critical-fuel scenario. We never hold OEM AFM data; the
 capability arrives with the customer.
 
-## 20. Route dossiers
+## 20. The fleet library — operators, registrations and types
+
+The system already knows how to assess an aerodrome *for a given fleet* (§12) and how to read an OEM
+planning manual *for a given type* (§19). What it does not have is **the base**: a standing library of
+who operates what, so that an operator's first session is a lookup rather than a data-entry exercise.
+
+**Scope — the top 50 commercial operators, and the business-aviation fleet alongside them.** Two
+populations with different data shapes, both worth holding:
+
+| Population | Identity | What the library holds |
+|---|---|---|
+| **Top 50 commercial operators by fleet size** | ICAO three-letter designator, IATA code | Type designators operated, count per type, registration blocks, principal bases, network shape |
+| **Business, executive, luxury and private aviation** | Operator or management company — often the registered owner alone | Type designators, individual registrations, home base, typical mission radius |
+
+Business aviation is not an afterthought here. A Global 7500 or a G700 reaches aerodromes no airliner
+uses, at RFFS categories that are frequently the binding constraint rather than runway length (§19),
+and its operator has no route network to discover from — **the fleet is the profile**. Private and
+executive tails are also the population where ownership changes hands most often, so every
+registration entry carries the date it was recorded, not merely a current owner.
+
+### What the library is, and what it is not
+
+**A catalogue with citations, not figures in source code.** Every entry — this operator holds this
+registration, this registration is this type, this type's ACR on rigid pavement is this number — is a
+fact with a `SourceRef`, loaded from data, exactly as §8 requires. A type designator may appear in
+source as a *key*; the moment a number attaches to it, it needs a citation.
+
+**Three layers, three different authorities, never merged:**
+
+| Layer | Content | Authority |
+|---|---|---|
+| **Type characteristics** | Reference code, wingspan, OMGWS, ACR/ACN, approach category, RFFS category, wake category, MTOW/MLW/MZFW, payload-range | OEM airport planning manual, cited by document, revision and table (§19) |
+| **Registration → type** | Tail, serial, model, registered owner, registration date | National civil aircraft register. The FAA's is a free bulk download; other States range from open data to paid extract to nothing |
+| **Operator → registrations** | Which tails an operator holds, and in what role | Operator attestation, or observed operation via AeroAPI (§12) — each entry marked with which |
+
+The separation is deliberate. A State register says a tail is a GL7T; it does not say who operates it
+today. AeroAPI says a tail flew a sector; it does not say the operator holds it on their AOC. **The
+library records which of the three said so, and never flattens them into an unattributed whole.**
+
+### The bibliography ships before the figures do
+
+Parsing two hundred planning manuals is not a prerequisite for being useful, and egress to OEM and
+register sites is not something the platform can assume. So the library arrives in two stages:
+
+1. **The bibliography** — for each ICAO type designator in scope, *which* document holds its figures,
+   at which revision, and which table. Shippable immediately, contains no aeronautical figure, and
+   turns "we do not hold the A350 ACR" from a silent gap into a citation someone can act on. It is
+   what makes the coverage states of §6 — registered, verified, absent — meaningful at type level.
+2. **The figures** — ingested per document through the existing ACAP manifest path (§11), one
+   document at a time, each characteristic carrying that manifest's `SourceRef`. Ingest order follows
+   the customer's own fleet, never the alphabet.
+
+### What it unlocks
+
+- **Onboarding by code.** Enter an operator's ICAO designator and get a fleet, not a blank form.
+  Enter a tail and get a type, an owner and the characteristics that drive every check in §15.
+- **Fleet-wide aerodrome screening.** "Which of my types can use this aerodrome" is answerable the
+  moment the fleet is known — the reference code, RFFS and pavement checks of §15 run across the
+  whole fleet at once instead of one aircraft at a time.
+- **Departure to destination, for the pairing the customer actually flies.** A route dossier (§21)
+  needs a departure, a destination and an aircraft; two of the three come from the library, so the
+  user supplies one city pair and gets a full assessment of both ends and the route between.
+- **Cross-fleet comparison.** Where one operator's type is constrained at an aerodrome and another's
+  is not, the difference is visible and attributable rather than asserted.
+
+**The failure mode to avoid.** A library assembled from secondary sources — enthusiast databases,
+aggregator sites, a model's recollection — would be fast to build, plausible on screen, and precisely
+what §7 exists to forbid. A wrong wingspan is a wrong stand allocation; a wrong ACR is a wrong
+pavement verdict. **Absent is a usable answer here. Approximately right is not.**
+
+## 21. Route dossiers
 
 | Element | Content |
 |---|---|
@@ -624,18 +695,18 @@ time, overflight and landing permits with lead times, PPR and slot requirements,
 hours, fuel availability and payment method, noise curfews, crew duty and rest logistics, ground
 transport, and published charges (GEN 4).
 
-## 21. Six output lenses
+## 22. Six output lenses
 
 | Lens | Audience | Content | Format |
 |---|---|---|---|
 | **Threat brief** | Flight crew | Consolidated threat matrix: runway in use, expected approach and minima, terrain and obstacles, hot spots, energy traps on arrival, non-standard phraseology, WIP, LVP status, bird activity, RFFS | 1–2 pages, EFB-ready |
 | **Aerodrome study** | Ops engineering | The §15 dossier following §14 Phase 2: all AD 2 sections, suitability matrix, obstacle and pavement analysis, risk register, categorisation justification | Controlled document |
-| **Route study** | Network & ops eng | The §20 dossier following §14 Phases 1 and 3: terrain and driftdown, airspace, PBN and RAIM audit, EDTO adequacy, altimetry, payload drivers, route risk | Study document with terrain profiles |
+| **Route study** | Network & ops eng | The §21 dossier following §14 Phases 1 and 3: terrain and driftdown, airspace, PBN and RAIM audit, EDTO adequacy, altimetry, payload drivers, route risk | Study document with terrain profiles |
 | **Airspace & flight plan** | ATS / ATM | Route availability and level restrictions, RAD and CDR changes, ATFM exposure, radar minimum altitudes, transition levels — and whether the filed plan will validate | Change list + FPL validity flags |
 | **Operational digest** | Dispatch / OCC | Time-bounded and per-flight: suitability today, fleet-filtered NOTAM digest, alternate selection, curfew and slot exposure, closures affecting this rotation, payload impact | Live view + per-flight package |
 | **Cycle worklist** | AIS / AIM team | Watcher dashboard: who published what and when, checklist reconciliation, coverage, overdue publications, full diff, supersession register, data-quality conflicts, attestation queue | Live status board + audit trail |
 
-## 22. Content boundaries
+## 23. Content boundaries
 
 Commercial chart content (Jeppesen, Lido, NAVBLUE) cannot be redistributed. For those sources the
 platform tracks inventory, revision state and extracted parameters, and deep-links into the customer's
@@ -644,7 +715,7 @@ Where the State publishes charts freely — the FAA above all — the charts tra
 same principle governs AIP text and commercial flight data: AeroAPI content drives the analysis rather
 than being republished.
 
-## 23. Output design principles
+## 24. Output design principles
 
 | Principle | In the output |
 |---|---|
@@ -658,7 +729,7 @@ than being republished.
 | **What-if** | "If RWY 34L closes, can I still dispatch?" |
 | **Machine-readable alongside** | Every report also emitted as JSON/XML, provenance included |
 
-## 24. Deployment and output channels
+## 25. Deployment and output channels
 
 Two independent axes. Where the system runs is one decision; how the analysis reaches a person or
 another system is a different one.
@@ -678,7 +749,7 @@ another system is a different one.
 | **In-application** | Interactive dossier browser, change-record explorer, watcher status board, attestation queue, search across every fact | AIS/AIM team, ops engineering |
 | **Print & document** | Controlled PDF with a real document-control block, built for signing and filing | Document control, compliance, auditors, crews |
 | **Email** | Scheduled cycle bulletins and immediate severity alerts, routed per role | Dispatch, OCC, management — people who will not log in daily |
-| **API & webhooks** | JSON over REST, plus push events — §25 | The operator's own systems |
+| **API & webhooks** | JSON over REST, plus push events — §26 | The operator's own systems |
 
 ### Print — a first-class output, not a browser print
 
@@ -720,7 +791,7 @@ ignores much of modern CSS. Email templates are **table-based, inline-styled, si
 deep-links back into the application. Deliverability needs a dedicated sending domain with SPF, DKIM
 and DMARC aligned from the start; retrofitting that after messages start landing in junk is painful.
 
-## 25. API and integration
+## 26. API and integration
 
 Where a customer wants the analysis inside their own systems rather than ours.
 
@@ -780,7 +851,7 @@ operational.
 | **NDJSON streaming** | Whole-cycle bulk pulls without pagination pain |
 | **AIXM 5.1** | For systems that already speak the ICAO/EUROCONTROL exchange model — an AIS or flight-planning system can ingest it without a custom mapping |
 | **XLSX / CSV** | For the analyst who will work the change record in a spreadsheet, which is a real workflow |
-| **PDF / PDF/A** | Programmatic generation of the controlled documents in §24 |
+| **PDF / PDF/A** | Programmatic generation of the controlled documents in §25 |
 
 Likely integration targets: flight-planning systems, EFB document libraries, operations manual and
 document-control systems, safety and SMS reporting tools, and OCC dashboards. The API is designed so a
@@ -793,7 +864,7 @@ for a real public aerodrome** — not fabricated test fixtures. The no-mock rule
 developer convenience, and an integrator building against the sandbox is building against exactly the
 shapes production returns.
 
-## 26. Running 24/7
+## 27. Running 24/7
 
 An always-on cloud service with a one-minute heartbeat. What varies per source is the cadence, not
 whether the system is watching.
@@ -887,7 +958,7 @@ archive, which object storage with lifecycle tiering handles cheaply. Because th
 once and assessed per tenant, **the second customer adds almost nothing to this bill** — which is
 precisely what makes the continuous-operation requirement commercially viable rather than ruinous.
 
-## 27. Intelligence roadmap
+## 28. Intelligence roadmap
 
 What else the platform can answer once the archive exists. The most valuable additions are not new
 data — they are questions only this dataset can answer.
@@ -908,7 +979,7 @@ data — they are questions only this dataset can answer.
 Not a new feature. It is the bitemporal model (§5) queried a different way: every `Fact` already carries
 `valid_from`, `valid_to` and a `SourceRef` with an archived copy of the original. Exposing "as at
 `<datetime>`" is a query layer and a date picker, and the API already specifies `?at=` on almost every
-read (§25).
+read (§26).
 
 What it answers that nothing on the market can:
 
@@ -929,7 +1000,7 @@ pruning permanently destroys the capability. Object storage with lifecycle tieri
 modest; the discipline is what matters.
 
 **Why it is also the strongest commercial move.** It converts the immutable raw archive from a growing
-cost line (§26) into the product's most defensible asset. Every cycle that passes widens the moat,
+cost line (§27) into the product's most defensible asset. Every cycle that passes widens the moat,
 because a competitor *cannot retroactively acquire* documents that States have already replaced. It is
 also the best demonstration in the product: pick any aerodrome, pick any past date, show the complete
 state with citations. A live-only system cannot answer the question at all.
@@ -996,7 +1067,7 @@ provided the archive discipline above is respected from the start. Only **works 
 genuinely new build, and it belongs after coverage has scaled — there is little point clustering
 messages from five aerodromes.
 
-## 28. The licensing wall
+## 29. The licensing wall
 
 Internal analysis of published AIPs is one thing. **Selling a product built on them is another.** Most
 States assert copyright over AIP content and reuse terms vary State by State. EAD has defined user
@@ -1013,20 +1084,20 @@ ship.**
 official AIP and NOTAM as published by the State remain authoritative. Every output carries that
 statement, a full citation trail, and — above the auto-publish threshold — a recorded attestation.
 
-## 29. Phasing
+## 30. Phasing
 
 | Phase | Focus |
 |---|---|
 | **0** | Foundations — bitemporal model with mandatory `SourceRef`, operator profile and Trip schema, AIRAC calendar, source registry. No-mock rule enforced in the type system from the first commit |
 | **1** | Watcher + US vertical slice — full status model against live FAA sources including GEN/ENR/AD checklist reconciliation; five aerodromes parsed, validated and diffed cycle-over-cycle |
 | **2** | Provenance UI + CES engine — layered precedence and the receipt view |
-| **3** | Fleet-aware significance + live profile discovery — rules v1; AeroAPI and registry integration. First real impact bulletin |
+| **3** | Fleet-aware significance + live profile discovery — rules v1; AeroAPI and registry integration. **Fleet library v1** (§20): type bibliography for the top 50 operators and the business-aviation fleet, national register ingest, operator-to-registration mapping. First real impact bulletin |
 | **4** | NOTAM analysis — SWIM real-time ingestion, Q-line decode, Item E interpretation, supersession and persistence detection |
 | **5** | Obstacle + chart studies — departure-sector analysis and crane tracking; d-TPP revision tracking, minima extraction, gradient screening |
 | **6** | Aerodrome dossier + competency method — complete AD 2.1–2.25, §14 Phase 2 workflow, first three lenses, Trip generation |
 | **7** | Self-building parser layer — source discovery, parser synthesis, self-healing, validation harness |
-| **8** | Multi-tenancy + delivery channels — tenant isolation, entitlements, white-label, configurable review gate, signed offline bundle, plus the controlled-PDF print pipeline, scheduled email routing, and the v1 JSON API with webhooks (§24, §25). **Sellable shape — target first design partners** |
-| **9** | ENR, routes & performance — full GEN/ENR parsing, route dossiers, terrain and driftdown preparation, PBN and RAIM audit, payload-range envelope analysis |
+| **8** | Multi-tenancy + delivery channels — tenant isolation, entitlements, white-label, configurable review gate, signed offline bundle, plus the controlled-PDF print pipeline, scheduled email routing, and the v1 JSON API with webhooks (§25, §26). **Sellable shape — target first design partners** |
+| **9** | ENR, routes & performance — full GEN/ENR parsing, route dossiers, terrain and driftdown preparation, PBN and RAIM audit, payload-range envelope analysis, and the fleet library's figure layer ingested per planning manual (§20) |
 | **10** | Coverage scale + commercial hardening — European eAIP, Gulf and Asia, PDF-only States. SOC 2, SLA, billing, supplier-evaluation pack |
 
 **Why the self-building layer is Phase 7, not Phase 1.** A system that writes parsers needs a
@@ -1034,7 +1105,7 @@ definition of "correct output" to validate against, and that comes from one pipe
 by hand. Phases 1–6 produce the ground truth; Phase 7 teaches the machine to reproduce it everywhere
 else. Build it earlier and it will generate 180 parsers with no way to tell which ones are wrong.
 
-## 30. Open decisions
+## 31. Open decisions
 
 | # | Decision | Status |
 |---|---|---|
@@ -1042,8 +1113,8 @@ else. Build it earlier and it will generate 180 parsers with no way to tell whic
 | B | **No mock data** | **Settled** — enforced in the type system; tests replay recorded real fixtures |
 | C | **Publication scope** | **Settled** — complete AIP: GEN 0–4, ENR 0–6, AD 0–3 including AD 2.1–2.25 |
 | D | **Performance boundary** | **Settled** — Tiers 1–2 in scope on published OEM data; certified computation stays with the operator's tool, bridged by uploaded operator data |
-| E | **Aircraft type library** — build from OEM planning manuals, or licence a reference dataset | Open. Planning manuals give ACR, dimensions and payload-range but must be parsed per type |
-| F | **Phase 1 aerodromes** | Open — recommendation in §31 |
+| E | **Aircraft type library** | **Settled** — build it, in the three cited layers of §20: type characteristics from OEM planning manuals, registration from national registers, operator holdings from attestation or observation. Bibliography ships first, figures follow per document. No licensed reference dataset, no secondary source, no figure in source code |
+| F | **Phase 1 aerodromes** | Open — recommendation in §32 |
 | G | **Stack and hosting** — lean single-machine MVP, or full Postgres and orchestration from the start | Open. The watcher, provenance store and multi-tenancy argue for getting the store right early; a solo build moves faster lean |
 
 **The question still worth operational judgement.** Across 180 States, where does the manual effort
@@ -1052,7 +1123,7 @@ the **judging** (deciding significance)? The plan weights all three roughly equa
 certainly wrong. If it is the judging, the significance rules and the competency method deserve more
 of the early effort than the watcher does.
 
-## 31. Where to start
+## 32. Where to start
 
 Everything above is a target state. The starting point is small, and deliberately so — each step
 produces something real and testable, and nothing is built before the thing it depends on.

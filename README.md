@@ -44,7 +44,7 @@ These are settled and deliberate. [`docs/plan.md`](docs/plan.md) has the reasoni
 
 ## Status
 
-Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
+Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "Where to start".
 
 - [x] AIRAC cycle calendar — the time spine every other component consumes
 - [x] `Fact` and `SourceRef` model — the bitemporal core, with CES resolution
@@ -81,6 +81,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Obstacles — required climb gradient, OIS penetration, cycle delta, crane tracking
 - [x] Trips — one flight, one aeroplane, one date, assessed for the day of the flight
 - [x] Review gate — severity-configurable, attestation bound to what was attested
+- [x] Fleet library — operators, tails and types, with a bibliography for what nobody has read
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -111,7 +112,18 @@ aeropub blindspots                                  # how late our own collectio
 
 aeropub trip --reference N901GX/25SEP --aircraft gl7t.json \
     --on 2026-09-25 --from KTEB --to KASE --alternate KGJT
+
+aeropub fleet --template > register.json      # fill it in from a register or a fleet list
+aeropub fleet --library register.json         # coverage per type, operators by tails held
+aeropub fleet --library register.json --operator QTR      # what they fly, and what we cannot check
+aeropub fleet OTHH --library register.json --operator QTR # which of their types can use it
 ```
+
+The library is the base that makes the first session a lookup rather than a form. One document
+holds one kind of claim — a national register, an operator's own fleet list, an observation set —
+and several are merged with each statement keeping the citation it arrived with. A type whose
+figures nobody has read yet is listed as *registered* with the document to go and read, never
+as a silent absence.
 
 A trip needs no profile file — a flight department asking about Thursday should not have to
 write a network definition first. It is assessed for the day of the flight, and reports what

@@ -41,6 +41,13 @@ from aeropub.bulletin import between_cycles
 from aeropub.credentials import CredentialStore, describe as describe_secret
 from aeropub.currency import Currency, assess_currency
 from aeropub.dossier import build
+from aeropub.fleet import (
+    fleet_of,
+    library_template,
+    load_library,
+    merge_libraries,
+    screen as screen_fleet,
+)
 from aeropub.horizon import DEFAULT_DAYS, horizon
 from aeropub.ingest import load_facts
 from aeropub.ingest import template as fact_template
@@ -84,6 +91,11 @@ def _moment(args: argparse.Namespace) -> datetime:
 
 def _day(text: str | None, fallback: date) -> date:
     return date.fromisoformat(text) if text else fallback
+
+
+def _plural(count: int, singular: str, plural: str | None = None) -> str:
+    """A count and its noun, agreeing. Output nobody has to forgive."""
+    return f"{count} {singular if count == 1 else (plural or singular + 's')}"
 
 
 def _emit(document, args: argparse.Namespace, rendered: str) -> None:
@@ -558,6 +570,76 @@ def _cmd_trip(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_fleet(args: argparse.Namespace) -> int:
+    """The fleet library: who operates what, and whether we can check it.
+
+    Three questions, one command, because they are the same lookup at
+    different depths — what the library covers, what one operator flies, and
+    which of their types can use an aerodrome.
+    """
+    if args.template:
+        print(library_template())
+        return OK
+    if not args.library:
+        print(
+            "give --library (repeatable), or --template for a blank library",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    library = merge_libraries(*(load_library(path) for path in args.library))
+
+    if not args.operator:
+        # No operator named: report the library's own coverage. Worst first,
+        # because the research is the point and the wins are not.
+        rows = library.coverage_report()
+        print(
+            f"FLEET LIBRARY — {_plural(len(library), 'operator')}  ·  "
+            f"{_plural(len(rows), 'type')}"
+        )
+        print(
+            f"{_plural(len(library.registrations), 'registration')}  ·  "
+            f"{_plural(len(library.references), 'bibliography entry', 'bibliography entries')}"
+        )
+        print()
+        for designator, coverage in rows:
+            print(f"  {designator:<6} {coverage.value.upper()}")
+        ranked = library.ranked_by_fleet_size(args.top)
+        if ranked:
+            print()
+            print("BY TAILS HELD — as the library holds them, not as they fly")
+            for record in ranked:
+                print(
+                    f"  {record.icao:<5} {record.fleet_size:>4} tails  "
+                    f"{record.segment.value:<11} {record.name}"
+                )
+        return OK
+
+    resolved = fleet_of(library, args.operator)
+    if not args.aerodrome:
+        _emit(resolved, args, resolved.render())
+        return OK
+
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        moment = _moment(args)
+        dossier = build(
+            args.aerodrome, facts=store, coverage=AipCoverage(),
+            register=NotamRegister(), as_at=moment,
+            on=_day(args.on, moment.date()),
+        )
+        document = screen_fleet(
+            library, args.operator, dossier, designators=args.type or None
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        # A definite failure for any type is adverse. Unchecked is not: the
+        # command could not answer for those, and it did not answer no.
+        return ADVERSE if document.not_suitable else OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -768,6 +850,44 @@ def _parser() -> argparse.ArgumentParser:
     flight.add_argument("--enroute", action="append", metavar="ICAO")
     flight.add_argument("--operator", default=None)
     flight.set_defaults(handler=_cmd_trip)
+
+    library = add(
+        "fleet",
+        "the fleet library: coverage, one operator's fleet, or a fleet "
+        "screened against an aerodrome",
+        aerodrome=False,
+    )
+    library.add_argument(
+        "aerodrome", nargs="?", default=None,
+        help="ICAO location indicator to screen the fleet against, e.g. OTHH",
+    )
+    library.add_argument(
+        "--library", action="append", metavar="FILE",
+        help=(
+            "path to a library document, repeatable. One document holds one "
+            "kind of claim — a register, an operator's own fleet list, or an "
+            "observation set — and several are merged with each statement "
+            "keeping its own citation."
+        ),
+    )
+    library.add_argument(
+        "--operator", default=None, metavar="CODE",
+        help="ICAO operator designator, IATA code or name",
+    )
+    library.add_argument(
+        "--type", action="append", metavar="DESIGNATOR",
+        help="narrow the screen to these type designators, repeatable",
+    )
+    library.add_argument(
+        "--top", type=int, default=None, metavar="N",
+        help="show only the N operators holding the most tails",
+    )
+    library.add_argument("--on", default=None)
+    library.add_argument(
+        "--template", action="store_true",
+        help="print a blank library document to fill in from a source you hold",
+    )
+    library.set_defaults(handler=_cmd_fleet)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
