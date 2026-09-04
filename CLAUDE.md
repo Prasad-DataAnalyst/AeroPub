@@ -376,6 +376,53 @@ The sweep's `overall` therefore takes the worst of the aerodromes **and** the gr
 three alternates are each individually clear, two of them on stale data, is at `HIGH` — and no
 aerodrome in it carries that.
 
+## Reading an eAIP: layout is configuration, not code
+
+`src/aeropub/eaip/` is the answer to a blocker that was the wrong shape. The plan was: capture a page
+from a State, send it to whoever writes parsers, get a parser back. That makes 180 States a queue
+with one person in it.
+
+So the layout of each State's eAIP is an `EaipProfile` in a JSON file, and `aeropub.eaip.probe` reads
+a real page and drafts one from what it actually finds. An AIS officer saves the AD 2 page from their
+browser, runs `python -m aeropub.eaip probe page.html --draft OT.json`, checks the draft against the
+page in front of them — which they can do and a stranger cannot — marks it verified, and the parser
+reads that State from then on. Same principle as the FAA connector: where a source lives, and now how
+it is laid out, is data an operator can correct.
+
+**The probe reports; it does not conclude.** It says "25 elements carry an id matching
+`AD-2.<number>`". It does not say those are the AD 2 sections. A tool that decided would be
+confidently wrong about some State and nobody would find out until a value came through misfiled.
+`Observation` deliberately carries no confidence score — a number there reads as an assessment, and
+the probe has no basis for one.
+
+**Nothing matched means nothing emitted.** No fallback selector, no fuzzy match, no best-effort pass.
+A section the profile could not locate is a miss, a miss is a coverage gap, and a coverage gap is a
+true statement. The `ParseResult` is the product on the day a State re-lays-out their eAIP: it names
+what was looked for and what was found, so "why is AD 2.12 empty this cycle" is answered in the
+output rather than in somebody's debugger.
+
+An unverified profile is **not** refused — refusing would make verification impossible, since
+somebody has to parse with the draft to check it. Instead every value it produces is `Confidence.LOW`,
+which the review gate already reads.
+
+### Two bugs found by running it, not reading it
+
+**The field reader walked into the next row.** It matched a label against the section's flattened
+text and took the next 120 characters. With the width cell reading "see remarks" it returned `80` —
+out of the PCN in the row below. A runway width of 80 m, confidently, from the pavement rating. Fixed
+structurally: the reader now preserves table cells, a row whose label matches yields that row's own
+cells and nothing beyond them, and the prose fallback is bounded by the next known label so it cannot
+cross into another field's territory either.
+
+**A fire category read as a number became `9.0`.** The RFFS check reads the published category with
+`int()`, which raises on `"9.0"` and reports the aerodrome as publishing something uninterpretable —
+three modules from where the float was introduced. `integer` is now a distinct field kind, and a
+fractional count is reported unread rather than truncated.
+
+`entities.under()` was added as the inverse of `scope_of` for the same reason the module exists at
+all: the parser needed to build `OTHH/RWY34L` from an aerodrome and a scope, and writing that join by
+hand is exactly the drift that once reported an aerodrome with a live runway NOTAM as a coverage gap.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

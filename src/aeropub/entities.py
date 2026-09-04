@@ -34,6 +34,7 @@ __all__ = [
     "APRON",
     "RUNWAY",
     "SEPARATOR",
+    "under",
     "TAXIWAY",
     "aerodrome_of",
     "beneath",
@@ -115,6 +116,31 @@ def compose(aerodrome: str, prefix: str, designator: str) -> str:
     if not thing:
         raise ValueError(f"cannot key an object on {ad} with no designator")
     return f"{ad}{SEPARATOR}{normalise(prefix)}{thing}"
+
+
+def under(aerodrome: str, scope: str) -> str:
+    """Build a key from an aerodrome and a whole scope. The inverse of :func:`scope_of`.
+
+    ``under("OTHH", "RWY34L")`` gives ``"OTHH/RWY34L"``, and ``scope_of`` of
+    that gives ``"RWY34L"`` back. Use it wherever the scope arrives as one
+    string — from a profile, a manifest, a foreign identifier — rather than as
+    a kind and a designator, which is what :func:`compose` is for.
+
+    It exists so that nothing outside this module ever joins the two halves
+    itself. That rule is not fussiness: the separator was previously written
+    out at four call sites, two of them normalised case and two did not, and an
+    aerodrome with a live runway NOTAM reported as a coverage gap.
+    """
+    ad = normalise(aerodrome)
+    thing = normalise(scope)
+    if not ad:
+        raise ValueError(
+            f"cannot key {thing} with no aerodrome: on its own it names an "
+            "object at every aerodrome that has one"
+        )
+    if not thing:
+        raise ValueError(f"cannot key an object on {ad} with no scope")
+    return f"{ad}{SEPARATOR}{thing}"
 
 
 def covers(parent: str, key: str) -> bool:

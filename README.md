@@ -75,8 +75,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Network sweep — every aerodrome ranked, unread ones never counted as clear
 - [x] Data currency — staleness in AIRAC cycles, so a clear verdict states its own age
 - [x] Redundancy analysis — a region down to one alternate, which no aerodrome reports
-- [ ] First captured fixture from a State that publishes an eAIP
-- [ ] eAIP parser feeding facts into the change record
+- [x] eAIP reader — layout as configuration, with a prober that drafts it from a real page
+- [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
 
@@ -101,6 +101,21 @@ aeropub exposure OTHH --profile fleet.json  # what it means for you, per type
 aeropub sweep --profile fleet.json          # your whole network, ranked
 aeropub currency --stale-only               # what has gone stale, in AIRAC cycles
 ```
+
+### Onboarding a State
+
+Save the AD 2 page from your browser, then:
+
+```
+python -m aeropub.eaip probe OTHH-AD-2.html --state OT --draft ot.json
+# add the fields you want under each section, check every rule against the page,
+# then set verified_at and verified_by
+python -m aeropub.eaip parse OTHH-AD-2.html --profile ot.json \
+    --aerodrome OTHH --document "AIP Qatar AD 2 OTHH" --valid-from 2026-09-03
+```
+
+No code is written to add a State, and nothing leaves your machine. Until a profile is marked
+verified every value it reads is recorded at LOW confidence.
 
 Add `--json` to any report for the API payload, or `--html FILE` to a dossier for a printable page.
 The store defaults to `aeropub.db`; `--store` or `AEROPUB_STORE` moves it.
