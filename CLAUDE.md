@@ -613,6 +613,44 @@ not an answer to "can I go on Thursday".
 A trip **expires**. It is a question about a date, and once that date has passed a stale assessment
 sitting in a list looking current is the failure this guards.
 
+## The review gate
+
+`gate.py` sits on the one step where a verdict reaches an operational consumer, and nowhere else.
+Finding, fetching, parsing, validating, resolving, diffing, assessing and drafting stay fully
+autonomous — a test parses the module's own source and fails if it reaches for a fact store, a
+builder or the network, because a gate that quietly does data work is no longer only a gate.
+
+The plan is direct that this is a commercial constraint rather than a technical one: a system with no
+attestation is buildable and not sellable, because a regulator asks who is accountable for the data
+feeding an operational decision and *"the system decided"* ends the conversation.
+
+That framing changes what the module has to do. It is not enough for a person to click.
+
+**An attestation binds to what was attested.** `fingerprint()` hashes the content a reviewer actually
+read — aeroplane, check, verdict, detail, reason, role, sole-suitability — and a signature offered
+for changed wording raises `StaleAttestation` rather than being ignored. Ignoring it would look
+identical to never having one, and the reviewer would never learn the thing they signed for had moved
+underneath them. The fingerprint deliberately excludes the run timestamp, so re-assessing an
+unchanged aerodrome does not invalidate a signature.
+
+**Audit sampling is deterministic, not random.** The obvious implementation draws a random sample and
+it is wrong here: an auditor asking why this one and not that one needs an answer, and "chance" is
+not one. The draw comes from the fingerprint, so it reproduces from the finding alone years later —
+there is a test asserting the same finding samples identically 900 days apart.
+
+**`UNKNOWN` never auto-publishes, at any threshold.** An unmade check is not a low-severity finding,
+it is the absence of one, and releasing it unattended publishes "we did not look" as though it were
+"nothing to report". A tenant can widen the gate as far as `CRITICAL` and this still holds.
+
+Two things the log records that a simpler one would not. A **widened** gate is marked as such, so a
+regulator can see that releasing more without a person was a choice somebody made rather than how the
+product arrived. And `auto_published_share` — the metric the plan wants climbing every cycle —
+excludes attested releases from the numerator, because a person was in that path and that is the
+whole distinction being measured.
+
+Held is not invisible. A held finding is in front of the reviewer; it is simply not yet in front of a
+crew, and `WITHHELD` records a reviewer who looked and declined as distinct from one who never saw it.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

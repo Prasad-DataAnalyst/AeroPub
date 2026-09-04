@@ -80,6 +80,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Collection blindness — how long a change was in force before we held it
 - [x] Obstacles — required climb gradient, OIS penetration, cycle delta, crane tracking
 - [x] Trips — one flight, one aeroplane, one date, assessed for the day of the flight
+- [x] Review gate — severity-configurable, attestation bound to what was attested
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it

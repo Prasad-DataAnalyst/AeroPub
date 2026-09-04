@@ -49,6 +49,7 @@ from aeropub.aircraft import Characteristic
 from aeropub.bulletin import ChangeBulletin, ReportedChange
 from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
+from aeropub.gate import GateLog, Release
 from aeropub.horizon import Horizon, Transition
 from aeropub.lenses import LensView
 from aeropub.obstacles import Obstacle, ObstacleChange, ObstacleReview
@@ -72,6 +73,7 @@ __all__ = [
     "suitability",
     "network_sweep",
     "obstacle_review",
+    "gate_log",
     "trip_assessment",
     "retrospect_document",
     "ndjson",
@@ -899,6 +901,59 @@ def trip_assessment(
     }
 
 
+def _release(item: Release, licensing: Licensing) -> dict[str, Any]:
+    return {
+        "fingerprint": item.mark,
+        "disposition": item.disposition.value,
+        "released": item.is_released,
+        "needs_a_person": item.needs_a_person,
+        "reason": item.reason,
+        "at": _moment(item.at),
+        "attestation": (
+            {
+                "by": item.attestation.by,
+                "at": _moment(item.attestation.at),
+                "finding": item.attestation.finding,
+                "released": item.attestation.released,
+                "note": item.attestation.note or None,
+            }
+            if item.attestation is not None
+            else None
+        ),
+        "finding": _exposure_finding(item.finding, licensing),
+    }
+
+
+def gate_log(item: GateLog, *, licensing: Licensing = _PERMISSIVE) -> dict[str, Any]:
+    """Every decision the gate made, and who is accountable for each.
+
+    ``fingerprint`` travels on every release, because that is what an
+    attestation binds to. Without it a consumer cannot tell whether a signature
+    still covers the wording in front of them, which is the one thing the gate
+    exists to make provable.
+    """
+    return {
+        "tenant": item.gate.tenant,
+        "gate": {
+            "auto_publish_at_or_below": item.gate.auto_publish_at_or_below.value,
+            "sample_rate": item.gate.sample_rate,
+            "is_default": item.gate.is_default,
+            "is_widened": item.gate.is_widened,
+        },
+        "summary": item.summary(),
+        "auto_published_share": item.auto_published_share,
+        "releases": [_release(r, licensing) for r in item.releases],
+        "held": [r.mark for r in item.held],
+        "withheld": [r.mark for r in item.withheld],
+        "note": (
+            "The data plane is autonomous; this gate sits only where a verdict "
+            "reaches an operational consumer. An unmade check never releases "
+            "unattended at any threshold. Audit sampling is drawn from the "
+            "fingerprint, so it reproduces from the finding alone."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -911,6 +966,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (Retrospect, "retrospect", retrospect_document),
     (ObstacleReview, "obstacle_review", obstacle_review),
     (TripAssessment, "trip_assessment", trip_assessment),
+    (GateLog, "gate_log", gate_log),
     (Fact, "fact", fact),
 )
 
