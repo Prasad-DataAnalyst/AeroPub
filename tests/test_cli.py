@@ -249,3 +249,91 @@ class TestOutput:
         assert "Code E" in out
         # Every figure prints its citation beneath it.
         assert "Table 2.1.1" in out
+
+
+def operator_profile(workspace: Path, name: str, role: str, *, sole: bool = False) -> str:
+    plane = aircraft_manifest(
+        workspace,
+        ("overall_length_m", 70.0, {}),
+        ("fuselage_width_m", 6.2, {}),
+    )
+    return write(workspace / f"{name.lower().replace(' ', '-')}.json", {
+        "name": name,
+        "fleet": [plane],
+        "network": [
+            {"aerodrome": "XXXX", "role": role, "sole_suitable": sole},
+        ],
+    })
+
+
+class TestExposure:
+    def test_the_same_aerodrome_splits_two_operators(self, capsys, workspace):
+        # The plan's headline, from a terminal: one loaded document, two
+        # profiles, two different answers and two different exit codes.
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 7)]))
+
+        exposed = operator_profile(workspace, "Operator A", "edto_alternate", sole=True)
+        code, out, _ = run(
+            capsys, "--store", store, "exposure", "XXXX", "--profile", exposed
+        )
+        assert code == ADVERSE
+        assert "CRITICAL" in out
+
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        # A profile whose aeroplane the published category now satisfies.
+        fine = operator_profile(workspace, "Operator B", "destination")
+        code, out, _ = run(
+            capsys, "--store", store, "exposure", "XXXX", "--profile", fine
+        )
+        assert code == OK
+
+    def test_an_unknown_exposure_does_not_exit_adverse(self, capsys, workspace):
+        # "Nobody checked" and "no" are different answers.
+        store = str(workspace / "s.db")
+        fine = operator_profile(workspace, "Operator C", "destination")
+        code, out, _ = run(
+            capsys, "--store", store, "exposure", "XXXX", "--profile", fine
+        )
+        assert code == OK
+        assert "unknown" in out.lower()
+
+    def test_a_template_is_offered(self, capsys, workspace):
+        code, out, _ = run(capsys, "exposure", "--template")
+        assert code == OK
+        assert json.loads(out)["network"][0]["role"] == "destination"
+
+    def test_an_aerodrome_without_a_profile_cannot_run(self, capsys, workspace):
+        code, _, err = run(
+            capsys, "--store", str(workspace / "s.db"), "exposure", "XXXX"
+        )
+        assert code == CANNOT_RUN
+        assert "--profile" in err
+
+    def test_an_unknown_role_names_the_valid_ones(self, capsys, workspace):
+        bad = write(workspace / "bad-profile.json", {
+            "name": "Operator D", "fleet": [],
+            "network": [{"aerodrome": "XXXX", "role": "sometimes"}],
+        })
+        code, _, err = run(
+            capsys, "--store", str(workspace / "s.db"),
+            "exposure", "XXXX", "--profile", bad,
+        )
+        assert code == CANNOT_RUN
+        assert "edto_alternate" in err
+        assert "never defaulted" in err
+
+    def test_the_payload_carries_the_shared_record(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 7)]))
+        profile = operator_profile(workspace, "Operator E", "destination")
+        _, out, _ = run(
+            capsys, "--store", store, "exposure", "XXXX",
+            "--profile", profile, "--json",
+        )
+        payload = json.loads(out)
+        assert payload["aeropub"]["kind"] == "operator_exposure"
+        assert payload["data"]["suitability"]

@@ -14,7 +14,8 @@ about an aerodrome, from ICAO Annex 14 Volume I:
 - Table 1-1, the aerodrome reference code — :mod:`aeropub.aircraft`
 - Table 3-1, minimum runway width for that code
 - Table 9-1, the rescue and fire fighting category the aeroplane requires
-- the ACN/PCN pavement method
+- the pavement method, in whichever system the State publishes — ACN/PCN or
+  the ACR/PCR that replaced it from 28 November 2024
 
 It does **not** compute take-off or landing performance, and it never will.
 That is certified computation against the manufacturer's own documentation, it
@@ -64,8 +65,9 @@ from enum import Enum
 from aeropub.aircraft import (
     AircraftType,
     Characteristic,
-    Pcn,
+    PavementRating,
     PavementVerdict,
+    RatingSystem,
     accommodates,
     code_letter,
     code_number,
@@ -392,24 +394,28 @@ def _runway_lines(dossier: AerodromeDossier, attribute: str) -> dict[str, ValueL
     return found
 
 
-def _acn_for(aircraft: AircraftType, pcn: Pcn) -> Characteristic | None:
-    """The aeroplane's ACN for the pavement and subgrade this PCN reports.
+def _aircraft_rating(
+    aircraft: AircraftType, rating: PavementRating
+) -> Characteristic | None:
+    """The aeroplane's ACN or ACR for the cell this pavement rating reports.
 
-    ACAP publishes ACN as a table across pavement type, subgrade category and
-    weight, so a held ACN is only meaningful with the cell it came from. The
-    convention here is a characteristic named ``acn`` whose ``variant`` begins
-    with the pavement and subgrade — ``"F/A"``, ``"R/B at MTOW"`` — which is
-    the cell address of the ACAP table it was read from.
+    ACAP publishes the figure as a table across pavement type, subgrade
+    category and weight, so a held value is only meaningful with the cell it
+    came from. The convention is a characteristic named ``acn`` or ``acr`` —
+    matching the system, never interchangeable — whose ``variant`` begins with
+    the pavement and subgrade: ``"F/A"``, ``"R/B at MTOW"``, the cell address
+    of the ACAP table it was read from.
 
-    Where several match, the highest wins. The variants that differ beyond the
-    cell address differ by weight, and the heaviest is the one a suitability
-    check must answer for.
+    Where several match, the highest wins. Variants that differ beyond the cell
+    address differ by weight, and the heaviest is the one a suitability check
+    must answer for.
     """
-    prefix = f"{pcn.pavement}/{pcn.subgrade}".upper()
+    attribute = rating.system.aircraft_label.lower()
+    prefix = f"{rating.pavement}/{rating.subgrade}".upper()
     matching = [
         c
         for c in aircraft.characteristics
-        if c.attribute == "acn"
+        if c.attribute == attribute
         and c.variant is not None
         and c.variant.strip().upper().startswith(prefix)
     ]
@@ -482,54 +488,119 @@ def _reference_code_check(
     )
 
 
+def _runway_ratings(dossier: AerodromeDossier) -> dict[str, list[tuple[ValueLine, PavementRating]]]:
+    """Every parseable pavement rating per runway, in whichever system it is in.
+
+    Both are read. ICAO replaced ACN/PCN with ACR/PCR from 28 November 2024 and
+    States are converting at different rates, so a runway may carry one, the
+    other, or — during changeover — both. Reading only one would report a
+    coverage gap at an aerodrome that publishes the other.
+    """
+    found: dict[str, list[tuple[ValueLine, PavementRating]]] = {}
+    for attribute, system in (
+        ("pcn", RatingSystem.ACN_PCN),
+        ("pcr", RatingSystem.ACR_PCR),
+    ):
+        for line in _lines(dossier, attribute):
+            scope = scope_of(line.entity)
+            if not scope:
+                continue
+            try:
+                rating = PavementRating.parse(str(line.value), system=system)
+            except ValueError:
+                found.setdefault(scope, []).append((line, None))  # type: ignore[arg-type]
+                continue
+            found.setdefault(scope, []).append((line, rating))
+    return found
+
+
+def _changeover_note(
+    held: list[tuple[ValueLine, PavementRating | None]]
+) -> str:
+    """What to say when a runway publishes both ratings at once.
+
+    Plan section 13 asks for this explicitly: the two systems must be evaluated
+    concurrently for years, and internal inconsistency during changeover must
+    be flagged rather than silently resolved. Two ratings for one runway that
+    disagree about the pavement type or the subgrade cannot both describe it.
+    """
+    ratings = [r for _, r in held if r is not None]
+    if len(ratings) < 2:
+        return ""
+    surfaces = {(r.pavement, r.subgrade) for r in ratings}
+    if len(surfaces) > 1:
+        described = "; ".join(sorted(r.describe() for r in ratings))
+        return (
+            f" This runway publishes {described}, and they disagree about the "
+            "pavement type or subgrade — the same pavement cannot be both. One "
+            "of them is stale from the ACN/PCN changeover; ask the State which."
+        )
+    return (
+        " This runway publishes both an ACN/PCN and an ACR/PCR rating during "
+        "the changeover. The ACR/PCR figure is the current standard and is the "
+        "one assessed; the numbers are not convertible, so the other is not a "
+        "cross-check."
+    )
+
+
 def _pavement_checks(
     dossier: AerodromeDossier, aircraft: AircraftType
 ) -> list[Check]:
-    reported = _runway_lines(dossier, "pcn")
+    reported = _runway_ratings(dossier)
     if not reported:
         return [
             Check(
                 name="Pavement strength",
                 assessment=Assessment.UNKNOWN,
                 detail=(
-                    "no PCN held for any runway at this aerodrome. Pavement "
-                    "suitability is unknown, not assumed."
+                    "no PCN or PCR held for any runway at this aerodrome. "
+                    "Pavement suitability is unknown, not assumed."
                 ),
                 section="AD 2.12",
             )
         ]
 
     checks: list[Check] = []
-    for runway, line in sorted(reported.items()):
-        try:
-            pcn = Pcn.parse(str(line.value))
-        except ValueError as error:
+    for runway, held in sorted(reported.items()):
+        unreadable = [line for line, rating in held if rating is None]
+        readable = [(line, r) for line, r in held if r is not None]
+        for line in unreadable:
             checks.append(
                 Check(
                     name="Pavement strength",
                     assessment=Assessment.UNKNOWN,
                     detail=(
-                        f"the published rating {line.value!r} could not be read: "
-                        f"{error}"
+                        f"the published rating {line.value!r} could not be read "
+                        "as number/pavement(R|F)/subgrade(A-D)/tyre/method(T|U)"
                     ),
                     scope=runway,
                     section="AD 2.12",
                     aerodrome_basis=(line,),
                 )
             )
+        if not readable:
             continue
 
-        acn = _acn_for(aircraft, pcn)
-        if acn is None:
+        # Where both systems are published, assess the current one. The other
+        # is not a cross-check: the scales are unrelated.
+        line, rating = max(
+            readable, key=lambda pair: pair[1].system is RatingSystem.ACR_PCR
+        )
+        note = _changeover_note(held)
+
+        figure = _aircraft_rating(aircraft, rating)
+        if figure is None:
             checks.append(
                 Check(
                     name="Pavement strength",
                     assessment=Assessment.UNKNOWN,
                     detail=(
-                        f"the aerodrome reports {pcn}, and no ACN is held for a "
-                        f"{pcn.pavement} pavement on subgrade {pcn.subgrade}. The "
-                        "figure for a different cell of the ACAP table is not a "
-                        "substitute."
+                        f"the aerodrome reports {rating.describe()}, and no "
+                        f"{rating.system.aircraft_label} is held for a "
+                        f"{rating.pavement} pavement on subgrade "
+                        f"{rating.subgrade}. The figure for a different cell of "
+                        "the ACAP table is not a substitute, and neither is the "
+                        "figure from the other classification system." + note
                     ),
                     scope=runway,
                     section="AD 2.12",
@@ -539,10 +610,11 @@ def _pavement_checks(
             continue
 
         result = compare_pavement(
-            acn=float(acn.value),
-            acn_pavement=pcn.pavement,
-            acn_subgrade=pcn.subgrade,
-            pcn=pcn,
+            acn=float(figure.value),
+            acn_pavement=rating.pavement,
+            acn_subgrade=rating.subgrade,
+            acn_system=rating.system,
+            pcn=rating,
         )
         assessment = {
             PavementVerdict.WITHIN: Assessment.SUITABLE,
@@ -554,11 +626,11 @@ def _pavement_checks(
             Check(
                 name="Pavement strength",
                 assessment=assessment,
-                detail=result.detail,
+                detail=result.detail + note,
                 scope=runway,
                 section="AD 2.12",
                 aerodrome_basis=(line,),
-                aircraft_basis=(acn,),
+                aircraft_basis=(figure,),
             )
         )
     return checks

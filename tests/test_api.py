@@ -34,6 +34,14 @@ from aeropub.horizon import horizon
 from aeropub.lenses import Audience, view
 from aeropub.aircraft import AircraftType, Characteristic, Origin
 from aeropub.provenance import SourceRef
+from aeropub.operator import (
+    Fleet,
+    Network,
+    NetworkEntry,
+    OperatorProfile,
+    Role,
+    assess_operator,
+)
 from aeropub.suitability import assess_suitability
 from aeropub.quality import assess_quality
 from aeropub.registry import Redistribution
@@ -88,12 +96,30 @@ def coverage():
     ])
 
 
+def aircraft_type():
+    """One cited aeroplane, enough for every suitability check to be made."""
+    return AircraftType(designator="TEST").with_characteristics(
+        [
+            Characteristic(attribute=a, value=v, source=ref("ACAP", a),
+                           origin=Origin.ACAP)
+            for a, v in (
+                ("wingspan_m", 60.0),
+                ("omgws_m", 12.0),
+                ("reference_field_length_m", 3100.0),
+                ("overall_length_m", 70.0),
+                ("fuselage_width_m", 6.2),
+            )
+        ]
+    )
+
+
 @pytest.fixture
 def documents(store, coverage):
     dossier = build("OTHH", facts=store, coverage=coverage, as_at=NOW, cycle=N2)
     bulletin = between_cycles(store, "OTHH", N1, N2,
                               coverage_before=coverage, coverage_after=coverage)
     ahead = horizon(store, "OTHH", from_date=NOW.date(), days=60)
+    aircraft = aircraft_type()
     return {
         "aerodrome_dossier": dossier,
         "change_bulletin": bulletin,
@@ -101,20 +127,13 @@ def documents(store, coverage):
         "publication_conduct": assess_quality(as_at=NOW),
         "lens_view": view(Audience.DISPATCH, "OTHH", as_at=NOW,
                           dossier=dossier, bulletin=bulletin, ahead=ahead),
-        "aerodrome_suitability": assess_suitability(
+        "aerodrome_suitability": assess_suitability(dossier, aircraft),
+        "operator_exposure": assess_operator(
             dossier,
-            AircraftType(designator="TEST").with_characteristics(
-                [
-                    Characteristic(attribute=a, value=v, source=ref("ACAP", a),
-                                   origin=Origin.ACAP)
-                    for a, v in (
-                        ("wingspan_m", 60.0),
-                        ("omgws_m", 12.0),
-                        ("reference_field_length_m", 3100.0),
-                        ("overall_length_m", 70.0),
-                        ("fuselage_width_m", 6.2),
-                    )
-                ]
+            OperatorProfile(
+                name="Test Operator",
+                fleet=Fleet((aircraft,)),
+                network=Network((NetworkEntry("OTHH", Role.EDTO_ALTERNATE),)),
             ),
         ),
     }
@@ -136,7 +155,7 @@ class TestProvenanceIsNeverOmitted:
 
     @pytest.mark.parametrize("kind", [
         "aerodrome_dossier", "change_bulletin", "forward_view", "lens_view",
-        "aerodrome_suitability",
+        "aerodrome_suitability", "operator_exposure",
     ])
     def test_every_value_travels_with_its_citation(self, documents, kind):
         payload = document(documents[kind])
@@ -332,3 +351,34 @@ class TestHonesty:
     def test_conduct_findings_carry_the_standard_they_measure_against(self, documents):
         payload = document(documents["publication_conduct"])["data"]
         assert "PANS-AIM" in payload["standard"]
+
+
+class TestOperatorExposurePayload:
+    """Layer three over the wire, with layer two still attached beneath it."""
+
+    def test_the_shared_record_travels_with_the_tenant_view(self, documents):
+        # Emitting only the tenant view would make the record it was derived
+        # from unverifiable from the payload that depends on it.
+        payload = document(documents["operator_exposure"])["data"]
+        assert payload["suitability"]
+        assert payload["suitability"][0]["checks"]
+
+    def test_the_per_type_headline_is_emitted_not_left_to_be_derived(self, documents):
+        # Deriving it by averaging is the mistake the whole layer prevents.
+        payload = document(documents["operator_exposure"])["data"]
+        assert payload["worst_by_type"] == {"TEST": payload["overall"]}
+
+    def test_conclusiveness_is_a_field_not_an_inference(self, documents):
+        payload = document(documents["operator_exposure"])["data"]
+        assert "conclusive" in payload
+        assert isinstance(payload["conclusive"], bool)
+
+    def test_the_kind_names_the_layer(self, documents):
+        assert (
+            document(documents["operator_exposure"])["aeropub"]["kind"]
+            == "operator_exposure"
+        )
+
+    def test_a_note_says_the_record_beneath_is_unchanged(self, documents):
+        payload = document(documents["operator_exposure"])["data"]
+        assert "same for everyone" in payload["note"]

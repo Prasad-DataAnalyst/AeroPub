@@ -43,6 +43,8 @@ from aeropub.ingest import load_facts
 from aeropub.ingest import template as fact_template
 from aeropub.lenses import LENSES, Audience, view
 from aeropub.notam_register import NotamRegister
+from aeropub.operator import Exposure, assess_operator, load_profile
+from aeropub.operator import profile_template
 from aeropub.quality import assess_quality
 from aeropub.render import render_dossier
 from aeropub.store import open_store
@@ -273,6 +275,38 @@ def _cmd_load(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_exposure(args: argparse.Namespace) -> int:
+    if args.template:
+        print(profile_template())
+        return OK
+    if not args.profile or not args.aerodrome:
+        print(
+            "give an aerodrome and --profile, or --template for a blank profile",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        profile = load_profile(args.profile)
+        moment = _moment(args)
+        dossier = build(
+            args.aerodrome, facts=store, coverage=AipCoverage(),
+            register=NotamRegister(), as_at=moment,
+            on=_day(args.on, moment.date()),
+        )
+        document = assess_operator(dossier, profile)
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        # Only a definite adverse finding exits non-zero. UNKNOWN does not:
+        # "nobody checked" and "no" are different answers.
+        return ADVERSE if document.overall in (
+            Exposure.CRITICAL, Exposure.HIGH
+        ) else OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -410,6 +444,19 @@ def _parser() -> argparse.ArgumentParser:
         help="print a blank manifest to fill in from a page you read",
     )
     ingest.set_defaults(handler=_cmd_load)
+
+    exposure = add(
+        "exposure", "what an aerodrome means for one operator's fleet and network",
+        aerodrome=False,
+    )
+    # Optional so --template works with nothing else supplied.
+    exposure.add_argument("aerodrome", nargs="?", help="ICAO location indicator")
+    exposure.add_argument("--profile", default=None, metavar="PROFILE",
+                          help="path to an operator profile")
+    exposure.add_argument("--template", action="store_true",
+                          help="print a blank operator profile")
+    exposure.add_argument("--on", default=None)
+    exposure.set_defaults(handler=_cmd_exposure)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

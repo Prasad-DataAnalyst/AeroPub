@@ -53,6 +53,7 @@ from aeropub.horizon import Horizon, Transition
 from aeropub.lenses import LensView
 from aeropub.provenance import SourceRef
 from aeropub.quality import QualityFinding, QualityReport
+from aeropub.operator import ExposureFinding, OperatorAssessment
 from aeropub.registry import Redistribution
 from aeropub.suitability import Check, Note, Suitability
 
@@ -62,6 +63,7 @@ __all__ = [
     "VERBATIM_THRESHOLD",
     "document",
     "dumps",
+    "operator_assessment",
     "suitability",
     "ndjson",
     "to_json",
@@ -456,6 +458,61 @@ def suitability(
     }
 
 
+def _exposure_finding(item: ExposureFinding, licensing: Licensing) -> dict[str, Any]:
+    return {
+        "designator": item.designator,
+        "exposure": item.exposure.value,
+        "needs_action": item.needs_action,
+        "reason": item.reason,
+        "role": item.role.value,
+        "sole_suitable": item.sole_suitable,
+        "check": _check(item.check, licensing),
+    }
+
+
+def operator_assessment(
+    item: OperatorAssessment, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """Layer three — exposure for one operator, with layer two attached.
+
+    ``suitability`` carries the operator-agnostic assessment this was derived
+    from, unchanged, so an integrator can show both: what is true for everyone
+    and what follows for this tenant. Emitting only the tenant view would make
+    the shared record unverifiable from the payload that depends on it.
+
+    ``worst_by_type`` is the headline and is emitted rather than left to be
+    derived, because deriving it wrongly — by averaging — is the mistake the
+    whole layer exists to prevent.
+    """
+    return {
+        "operator": item.operator,
+        "aerodrome": item.aerodrome,
+        "as_at": _moment(item.as_at),
+        "role": item.role.value,
+        "sole_suitable": item.sole_suitable,
+        "overall": item.overall.value,
+        "conclusive": item.is_conclusive,
+        "worst_by_type": {k: v.value for k, v in item.worst_by_type().items()},
+        "findings": [_exposure_finding(f, licensing) for f in item.findings],
+        "actionable": [
+            {"designator": f.designator, "check": f.check.name,
+             "scope": f.check.scope, "exposure": f.exposure.value}
+            for f in item.actionable
+        ],
+        "unknown": [
+            {"designator": f.designator, "check": f.check.name,
+             "scope": f.check.scope}
+            for f in item.unknown
+        ],
+        "suitability": [suitability(s, licensing=licensing) for s in item.suitability],
+        "note": (
+            "Exposure for one operator. The publication record and the generic "
+            "assessment beneath it are the same for everyone and are unchanged "
+            "by it."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -463,6 +520,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (QualityReport, "publication_conduct", quality),
     (LensView, "lens_view", lens_view),
     (Suitability, "aerodrome_suitability", suitability),
+    (OperatorAssessment, "operator_exposure", operator_assessment),
     (Fact, "fact", fact),
 )
 

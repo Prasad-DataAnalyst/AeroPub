@@ -67,7 +67,8 @@ __all__ = [
     "RffsCategory",
     "PavementCheck",
     "PavementVerdict",
-    "Pcn",
+    "RatingSystem",
+    "TYRE_PRESSURE_MPA",
     "accommodates",
     "code_letter",
     "code_number",
@@ -348,22 +349,67 @@ def rffs_category(
 # Pavement
 # --------------------------------------------------------------------------
 
-_PCN = re.compile(
-    r"^\s*(?P<number>\d+(?:\.\d+)?)\s*/\s*(?P<pavement>[RF])\s*/\s*"
+_RATING = re.compile(
+    r"^\s*(?:PCN|PCR)?\s*(?P<number>\d+(?:\.\d+)?)\s*/\s*(?P<pavement>[RF])\s*/\s*"
     r"(?P<subgrade>[ABCD])\s*/\s*(?P<tyre>[WXYZ]|\d+(?:\.\d+)?)\s*/\s*"
     r"(?P<method>[TU])\s*$",
     re.IGNORECASE,
 )
 
 
-@dataclass(frozen=True, slots=True)
-class Pcn:
-    """A reported pavement classification number, in all five of its parts.
+class RatingSystem(str, Enum):
+    """Which pavement classification system a rating belongs to.
 
-    A PCN is not a number. ``80/F/A/W/T`` says the pavement rates 80 **for a
+    ICAO replaced ACN/PCN with ACR/PCR in Annex 14 Volume I, mandatory from
+    **28 November 2024** after a four-year transition. States are converting at
+    different rates, so both will be published somewhere for years — which is
+    the whole reason this enum exists rather than an assumption.
+    """
+
+    ACN_PCN = "acn_pcn"
+    """The legacy method. Withdrawn from the standard, still published by many
+    States and still on many charts."""
+
+    ACR_PCR = "acr_pcr"
+    """The current method. A more accurate model of the load each aeroplane
+    puts on a pavement — and on a completely different numerical scale."""
+
+    @property
+    def pavement_label(self) -> str:
+        return "PCN" if self is RatingSystem.ACN_PCN else "PCR"
+
+    @property
+    def aircraft_label(self) -> str:
+        return "ACN" if self is RatingSystem.ACN_PCN else "ACR"
+
+
+#: Tyre pressure category limits, in MPa, ``None`` meaning no limit. The
+#: categories kept their letters across the change and moved their limits,
+#: which is exactly the kind of silent difference that makes reading a rating
+#: without knowing its system dangerous.
+TYRE_PRESSURE_MPA: dict[RatingSystem, dict[str, float | None]] = {
+    RatingSystem.ACN_PCN: {"W": None, "X": 1.50, "Y": 1.00, "Z": 0.50},
+    RatingSystem.ACR_PCR: {"W": None, "X": 1.75, "Y": 1.25, "Z": 0.50},
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PavementRating:
+    """A reported pavement rating, in all five of its parts and its system.
+
+    A rating is not a number. ``80/F/A/W/T`` says the pavement rates 80 **for a
     flexible pavement on a high-strength subgrade with no tyre pressure limit,
-    determined technically**. Comparing an aeroplane's ACN for a rigid pavement
-    on subgrade C against that number compares two different things.
+    determined technically**. Comparing an aeroplane's figure for a rigid
+    pavement on subgrade C against that number compares two different things.
+
+    The sixth part is the one that does not appear in the string at all.
+    ACN/PCN and ACR/PCR share the identical five-part format and share nothing
+    else: a real PCR runs in the hundreds where the PCN for the same pavement
+    runs in the tens. Reading ``560/F/B/W/T`` as a PCN, or comparing an ACR to
+    a PCN, produces a confident answer that is wrong by an order of magnitude
+    and wrong in the permissive direction. So the system is required at parse
+    time and is never guessed from the number: a State that has converted says
+    PCR in AD 2.12, and that is where it is read from.
     """
 
     number: float
@@ -374,20 +420,29 @@ class Pcn:
     """``A`` high, ``B`` medium, ``C`` low, ``D`` ultra low."""
 
     tyre_pressure: str
-    """``W`` unlimited, ``X`` to 1.50 MPa, ``Y`` to 1.00 MPa, ``Z`` to 0.50 MPa —
-    or a figure, where the State reports one."""
+    """``W`` unlimited, or ``X``/``Y``/``Z`` — whose MPa limits differ between
+    the two systems — or a figure, where the State reports one."""
 
     method: str
     """``T`` technical evaluation, ``U`` using aircraft experience."""
 
+    system: RatingSystem
+
     @classmethod
-    def parse(cls, text: str) -> "Pcn":
-        match = _PCN.match(str(text))
+    def parse(cls, text: str, *, system: RatingSystem) -> "PavementRating":
+        """Read a five-part rating, in the system the State publishes it in."""
+        if not isinstance(system, RatingSystem):
+            raise TypeError(
+                "the rating system is required and is never inferred: ACN/PCN "
+                "and ACR/PCR share a format and nothing else, and guessing "
+                "from the number is wrong in the permissive direction."
+            )
+        match = _RATING.match(str(text))
         if match is None:
             raise ValueError(
-                f"{text!r} is not a PCN. The reported form is "
-                "number/pavement(R|F)/subgrade(A-D)/tyre(W|X|Y|Z or a figure)/"
-                "method(T|U), for example 80/F/A/W/T."
+                f"{text!r} is not a {system.pavement_label}. The reported form "
+                "is number/pavement(R|F)/subgrade(A-D)/tyre(W|X|Y|Z or a "
+                "figure)/method(T|U), for example 80/F/A/W/T."
             )
         return cls(
             number=float(match.group("number")),
@@ -395,11 +450,33 @@ class Pcn:
             subgrade=match.group("subgrade").upper(),
             tyre_pressure=match.group("tyre").upper(),
             method=match.group("method").upper(),
+            system=system,
         )
+
+    @classmethod
+    def pcn(cls, text: str) -> "PavementRating":
+        """A rating published under the legacy ACN/PCN method."""
+        return cls.parse(text, system=RatingSystem.ACN_PCN)
+
+    @classmethod
+    def pcr(cls, text: str) -> "PavementRating":
+        """A rating published under the current ACR/PCR method."""
+        return cls.parse(text, system=RatingSystem.ACR_PCR)
 
     def __str__(self) -> str:
         number = f"{self.number:g}"
-        return f"{number}/{self.pavement}/{self.subgrade}/{self.tyre_pressure}/{self.method}"
+        return (
+            f"{number}/{self.pavement}/{self.subgrade}/"
+            f"{self.tyre_pressure}/{self.method}"
+        )
+
+    def describe(self) -> str:
+        """The rating with its system named, for anywhere a reader sees it."""
+        return f"{self.system.pavement_label} {self}"
+
+    @property
+    def label(self) -> str:
+        return self.system.pavement_label
 
     @property
     def is_technical(self) -> bool:
@@ -410,22 +487,34 @@ class Pcn:
         thin."""
         return self.method == "T"
 
+    @property
+    def tyre_pressure_limit_mpa(self) -> float | None:
+        """The MPa limit for this category, or ``None`` where unlimited.
+
+        Returns ``None`` for a category letter only. Where the State reported a
+        figure instead of a letter, that figure is the limit.
+        """
+        if self.tyre_pressure in TYRE_PRESSURE_MPA[self.system]:
+            return TYRE_PRESSURE_MPA[self.system][self.tyre_pressure]
+        return float(self.tyre_pressure)
+
 
 class PavementVerdict(str, Enum):
-    """What an ACN against a PCN means."""
+    """What an aircraft rating against a pavement rating means."""
 
     WITHIN = "within"
-    """ACN does not exceed PCN. Unrestricted operation."""
+    """The aircraft rating does not exceed the pavement's. Unrestricted
+    operation."""
 
     OVERLOAD = "overload"
-    """ACN exceeds PCN. Not a prohibition — Annex 14 provides for overload
+    """It exceeds. Not a prohibition — Annex 14 provides for overload
     operations — but it needs the aerodrome's own procedures and its consent,
     and it is never a dispatcher's decision alone."""
 
     NOT_COMPARABLE = "not_comparable"
-    """The ACN and the PCN describe different pavements or subgrades. Comparing
-    the numbers would be meaningless, and is how an aeroplane ends up on a
-    pavement that will not carry it."""
+    """The two describe different pavements, different subgrades, or different
+    classification systems. Comparing the numbers would be meaningless, and is
+    how an aeroplane ends up on a pavement that will not carry it."""
 
     UNKNOWN = "unknown"
     """One side is missing."""
@@ -437,12 +526,17 @@ class PavementVerdict(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class PavementCheck:
-    """One ACN-against-PCN comparison, and why it came out that way."""
+    """One aircraft-rating-against-pavement-rating comparison, and why."""
 
     verdict: PavementVerdict
     acn: float | None
-    pcn: Pcn | None
+    pcn: PavementRating | None
     detail: str
+
+    @property
+    def rating(self) -> PavementRating | None:
+        """The pavement side. ``pcn`` is the older name and still works."""
+        return self.pcn
 
     def describe(self) -> str:
         return f"[{self.verdict.value}] {self.detail}"
@@ -453,64 +547,87 @@ def compare_pavement(
     acn: float | None,
     acn_pavement: str | None = None,
     acn_subgrade: str | None = None,
-    pcn: Pcn | str | None,
+    acn_system: RatingSystem | None = None,
+    pcn: PavementRating | None,
 ) -> PavementCheck:
-    """Compare an aeroplane's ACN against a reported PCN.
+    """Compare an aeroplane's rating against a pavement's.
 
-    The comparison is only valid when the ACN was quoted for the same pavement
-    type and subgrade category the PCN reports. Where they differ this returns
-    :attr:`PavementVerdict.NOT_COMPARABLE` rather than a number, because the
-    alternative — comparing them anyway — produces a confident answer about the
-    wrong pavement.
+    The comparison is only valid when the aircraft figure was quoted in the
+    same **system**, for the same **pavement type**, and on the same
+    **subgrade** the pavement reports. Where any of the three differ this
+    returns :attr:`PavementVerdict.NOT_COMPARABLE` rather than a number,
+    because the alternative — comparing them anyway — produces a confident
+    answer about the wrong pavement.
+
+    The system check is the newest and the most dangerous to omit. During the
+    ACN/PCN to ACR/PCR changeover an operator holds ACAP tables in both, and a
+    State may publish one while a chart still carries the other. An ACR of 700
+    against a PCN of 80 is not an overload by 620; it is two numbers that mean
+    nothing to each other.
     """
-    reported = Pcn.parse(pcn) if isinstance(pcn, str) else pcn
-    if acn is None or reported is None:
-        missing = "ACN" if acn is None else "PCN"
+    if acn is None or pcn is None:
+        missing = "aircraft rating" if acn is None else "pavement rating"
         return PavementCheck(
-            verdict=PavementVerdict.UNKNOWN, acn=acn, pcn=reported,
+            verdict=PavementVerdict.UNKNOWN, acn=acn, pcn=pcn,
             detail=f"no {missing} held; pavement suitability is unknown, not assumed",
         )
 
-    if acn_pavement is not None and acn_pavement.upper() != reported.pavement:
+    if acn_system is not None and acn_system is not pcn.system:
         return PavementCheck(
-            verdict=PavementVerdict.NOT_COMPARABLE, acn=acn, pcn=reported,
+            verdict=PavementVerdict.NOT_COMPARABLE, acn=acn, pcn=pcn,
             detail=(
-                f"the ACN is quoted for a {acn_pavement.upper()} pavement and the "
-                f"aerodrome reports {reported.pavement}. Take the ACN for the "
-                "reported pavement type from the ACAP table rather than comparing "
-                "these."
+                f"the aircraft figure is an {acn_system.aircraft_label} and the "
+                f"aerodrome reports a {pcn.label}. These are different "
+                "classification systems on different numerical scales — ICAO "
+                "replaced ACN/PCN with ACR/PCR from 28 November 2024 and States "
+                f"are converting at different rates. Read the "
+                f"{pcn.system.aircraft_label} from the ACAP table; the numbers "
+                "are not convertible."
             ),
         )
-    if acn_subgrade is not None and acn_subgrade.upper() != reported.subgrade:
+    if acn_pavement is not None and acn_pavement.upper() != pcn.pavement:
         return PavementCheck(
-            verdict=PavementVerdict.NOT_COMPARABLE, acn=acn, pcn=reported,
+            verdict=PavementVerdict.NOT_COMPARABLE, acn=acn, pcn=pcn,
             detail=(
-                f"the ACN is quoted on subgrade {acn_subgrade.upper()} and the "
-                f"aerodrome reports subgrade {reported.subgrade}. Read the ACN for "
-                "the reported subgrade; the numbers are not interchangeable."
+                f"the aircraft rating is quoted for a {acn_pavement.upper()} "
+                f"pavement and the aerodrome reports {pcn.pavement}. Take the "
+                f"{pcn.system.aircraft_label} for the reported pavement type from "
+                "the ACAP table rather than comparing these."
+            ),
+        )
+    if acn_subgrade is not None and acn_subgrade.upper() != pcn.subgrade:
+        return PavementCheck(
+            verdict=PavementVerdict.NOT_COMPARABLE, acn=acn, pcn=pcn,
+            detail=(
+                f"the aircraft rating is quoted on subgrade "
+                f"{acn_subgrade.upper()} and the aerodrome reports subgrade "
+                f"{pcn.subgrade}. Read the {pcn.system.aircraft_label} for the "
+                "reported subgrade; the numbers are not interchangeable."
             ),
         )
 
-    if acn <= reported.number:
+    if acn <= pcn.number:
         return PavementCheck(
-            verdict=PavementVerdict.WITHIN, acn=acn, pcn=reported,
+            verdict=PavementVerdict.WITHIN, acn=acn, pcn=pcn,
             detail=(
-                f"ACN {acn:g} does not exceed PCN {reported.number:g} "
-                f"({reported.pavement}/{reported.subgrade}). Unrestricted operation."
+                f"{pcn.system.aircraft_label} {acn:g} does not exceed "
+                f"{pcn.label} {pcn.number:g} ({pcn.pavement}/{pcn.subgrade}). "
+                "Unrestricted operation."
             ),
         )
-    margin = acn - reported.number
-    experience = "" if reported.is_technical else (
+    margin = acn - pcn.number
+    experience = "" if pcn.is_technical else (
         " The rating is by aircraft experience rather than technical evaluation, "
         "which carries less weight when the margin is thin."
     )
     return PavementCheck(
-        verdict=PavementVerdict.OVERLOAD, acn=acn, pcn=reported,
+        verdict=PavementVerdict.OVERLOAD, acn=acn, pcn=pcn,
         detail=(
-            f"ACN {acn:g} exceeds PCN {reported.number:g} by {margin:g} "
-            f"({reported.pavement}/{reported.subgrade}). Annex 14 provides for "
-            "overload operations, but they need the aerodrome's own procedures "
-            f"and its consent — not a dispatch decision alone.{experience}"
+            f"{pcn.system.aircraft_label} {acn:g} exceeds {pcn.label} "
+            f"{pcn.number:g} by {margin:g} ({pcn.pavement}/{pcn.subgrade}). "
+            "Annex 14 provides for overload operations, but they need the "
+            "aerodrome's own procedures and its consent — not a dispatch "
+            f"decision alone.{experience}"
         ),
     )
 

@@ -663,3 +663,88 @@ class TestLayerTwoDiscipline:
     def test_the_assessment_holds_no_operator_field(self):
         fields = set(Suitability.__annotations__)
         assert not fields & {"operator", "tenant", "fleet", "airline"}
+
+
+# --------------------------------------------------------------------------
+# The ACN/PCN to ACR/PCR changeover
+# --------------------------------------------------------------------------
+
+
+class TestBothClassificationSystems:
+    """ICAO replaced ACN/PCN with ACR/PCR from 28 November 2024.
+
+    States are converting at different rates, so both will be published
+    somewhere for years. Plan section 13 asks for the two to be evaluated
+    concurrently and for internal inconsistency during changeover to be
+    flagged rather than silently resolved.
+    """
+
+    def find(self, result):
+        return [c for c in result.checks if c.name == "Pavement strength"]
+
+    def test_a_state_publishing_only_pcr_is_not_a_coverage_gap(self):
+        # Reading only the legacy attribute would report "no PCN held" at an
+        # aerodrome that publishes its strength perfectly well.
+        result = assess_suitability(
+            dossier(fact(RWY, "pcr", "560/F/B/W/T")),
+            aircraft(characteristic("acr", 520.0, variant="F/B at MTOW")),
+        )
+        check = self.find(result)[0]
+        assert check.assessment is Assessment.SUITABLE
+        assert "ACR 520" in check.detail and "PCR 560" in check.detail
+
+    def test_an_acr_is_not_offered_against_a_pcn(self):
+        # The aeroplane holds only an ACR; the aerodrome publishes a PCN. There
+        # is no comparison to make, and inventing one errs permissively.
+        result = assess_suitability(
+            dossier(fact(RWY, "pcn", "80/F/A/W/T")),
+            aircraft(characteristic("acr", 520.0, variant="F/A at MTOW")),
+        )
+        check = self.find(result)[0]
+        assert check.assessment is Assessment.UNKNOWN
+        assert "not a substitute" in check.detail
+        assert "other classification system" in check.detail
+
+    def test_where_both_are_published_the_current_system_is_assessed(self):
+        result = assess_suitability(
+            dossier(
+                fact(RWY, "pcn", "80/F/A/W/T"),
+                fact(RWY, "pcr", "560/F/A/W/T"),
+            ),
+            aircraft(
+                characteristic("acn", 62.0, variant="F/A at MTOW"),
+                characteristic("acr", 520.0, variant="F/A at MTOW"),
+            ),
+        )
+        check = self.find(result)[0]
+        assert check.assessment is Assessment.SUITABLE
+        assert "ACR 520" in check.detail
+        assert "changeover" in check.detail
+        assert "not convertible" in check.detail
+
+    def test_two_ratings_that_disagree_about_the_pavement_are_flagged(self):
+        # The same pavement cannot be both flexible on subgrade A and rigid on
+        # subgrade C. One of them is stale, and silently picking either would
+        # hide that.
+        result = assess_suitability(
+            dossier(
+                fact(RWY, "pcn", "80/F/A/W/T"),
+                fact(RWY, "pcr", "560/R/C/W/T"),
+            ),
+            aircraft(characteristic("acr", 520.0, variant="R/C at MTOW")),
+        )
+        check = self.find(result)[0]
+        assert "disagree" in check.detail
+        assert "ask the State" in check.detail
+
+    def test_an_unreadable_rating_in_either_system_is_reported(self):
+        result = assess_suitability(
+            dossier(fact(RWY, "pcr", "560")),
+            aircraft(characteristic("acr", 520.0, variant="F/B")),
+        )
+        assert self.find(result)[0].assessment is Assessment.UNKNOWN
+        assert "could not be read" in self.find(result)[0].detail
+
+    def test_neither_system_held_says_so_by_both_names(self):
+        check = self.find(assess_suitability(dossier(), aircraft()))[0]
+        assert "PCN or PCR" in check.detail

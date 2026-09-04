@@ -233,6 +233,68 @@ figure then keeps the citation it was read with, and the operator half still sta
 Both loaders offer `--template`, and both templates carry `null` for every value. There is nothing
 in them for somebody to keep who did not open the document, and neither loads as it stands.
 
+## Layer three, at last
+
+`operator.py` is the layer the product is named for, and the only one that may know who is asking.
+The plan's headline case: an RFFS downgrade from Category 9 to 7 is **critical** at a sole-suitable
+EDTO alternate for a wide-body and **irrelevant** to a narrow-body operator that needs Category 6.
+Same publication, same change record, same generic impact, two different answers — and neither
+answer is a property of the change.
+
+**Severity is derived, never asserted.** There is no table saying "RFFS downgrade = critical".
+Exposure falls out of three cited things: what the fleet's aeroplanes require under Annex 14, what
+the aerodrome publishes, and what role the operator has given it. Change any one and the answer
+moves, which is what makes it an assessment rather than an opinion. There is a test for both
+directions of that.
+
+Role is the multiplier, and `demands_certainty` is the distinction that matters: an unmade check at a
+destination can be made before the next flight is planned; an unmade check at an EDTO or take-off
+alternate is a gap in something a dispatched flight is already relying on. `sole_suitable` is
+recorded, never inferred — only the operator knows what else is within reach, what their approvals
+cover and what their handling arrangements allow. It is the difference between "choose another
+alternate" and "there is no other alternate".
+
+Three rules. **"No exposure" is a real answer and the record beneath survives in full** — an
+aerodrome outside the network resolves to `NONE` with the complete suitability assessment attached,
+so adding a destination later needs no catch-up run. **Unknown never becomes "no exposure"**: those
+are opposite conclusions that would print the same comforting word, and at a role that demands
+certainty an unmade check is graded `HIGH`, not `UNKNOWN`. **Every finding names its type** — "your
+fleet is exposed" is not actionable, "the wide-body is, the narrow-body is not" is; the roll-up is
+the worst case across types and never an average.
+
+`actionable` sorts worst-first. That came from reading the output: the critical finding sat below
+three high ones, and a list that buries the thing it exists to surface has failed.
+
+Layer two stays clean beneath. A test renders every `Suitability` inside an `OperatorAssessment` and
+fails on the words operator, fleet, network, EDTO or sole — and another asserts two operators with
+different roles get byte-identical suitability checks off the same dossier.
+
+An operator profile is **not** a citation manifest and carries no document hash. The other manifests
+describe something somebody read, and the hash is what makes the reading resolvable; a profile
+describes the operator's own operation, where there is no external document to be right or wrong
+about. Demanding a hash for one would be provenance theatre. The aircraft manifests it references
+carry their citations as usual.
+
+## The two pavement systems
+
+ICAO replaced ACN/PCN with ACR/PCR in Annex 14 Volume I, mandatory from **28 November 2024**, and
+States are converting at different rates — so both are published somewhere for years. The two share
+an identical five-part format and share nothing else: a real PCR runs in the hundreds where the PCN
+for the same pavement runs in the tens, and the tyre pressure categories kept their letters while
+moving their MPa limits.
+
+So `PavementRating.parse` **requires** the system and never infers it from the number. Guessing is
+wrong in the permissive direction: an ACN of 62 against a PCR of 560 reads as a vast margin.
+`compare_pavement` checks the system before the pavement type and the subgrade, because reporting a
+subgrade mismatch for a cross-system comparison sends a reader to the wrong ACAP table.
+
+`suitability.py` reads both the `pcn` and `pcr` attributes — reading one would report a coverage gap
+at an aerodrome that publishes the other. Where a runway carries both it assesses the ACR/PCR one
+and says so; the other is not a cross-check, because the scales are unrelated. Where the two
+disagree about pavement type or subgrade, that is flagged as changeover inconsistency rather than
+silently resolved: the same pavement cannot be both, one of them is stale, and only the State can
+say which.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
@@ -264,7 +326,8 @@ HTTP transport, the universal change record, the generic impact layer, the valid
 NOTAM parser, the FAA NMS-API connector, the NOTAM register, the AIP index, the aerodrome dossier,
 the change bulletin, the change horizon, SQLite persistence, AIS quality intelligence, the six
 output lenses, the JSON surface, the printable dossier, the aircraft reference code and pavement
-checks, and the aerodrome suitability assessment. Next: a captured
+checks, the aerodrome suitability assessment, the citation manifests, the command line and
+layer three. Next: a captured
 fixture from a State that publishes an eAIP, then the eAIP parser built against it — plan section 31
 step 5, the milestone that proves the system.
 

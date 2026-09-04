@@ -28,11 +28,13 @@ from aeropub.aircraft import (
     CODE_LETTERS,
     CODE_NUMBERS,
     RFFS_CATEGORIES,
+    TYRE_PRESSURE_MPA,
     AircraftType,
     Characteristic,
     Origin,
+    PavementRating,
     PavementVerdict,
-    Pcn,
+    RatingSystem,
     accommodates,
     code_letter,
     code_number,
@@ -358,25 +360,32 @@ class TestTheFuselageWidthBump:
 # --------------------------------------------------------------------------
 
 
-class TestPcnParsing:
+class TestRatingParsing:
     def test_the_reported_five_part_form(self):
-        pcn = Pcn.parse("80/F/A/W/T")
-        assert pcn.number == 80.0
-        assert pcn.pavement == "F"
-        assert pcn.subgrade == "A"
-        assert pcn.tyre_pressure == "W"
-        assert pcn.method == "T"
-        assert pcn.is_technical
+        rating = PavementRating.pcn("80/F/A/W/T")
+        assert rating.number == 80.0
+        assert rating.pavement == "F"
+        assert rating.subgrade == "A"
+        assert rating.tyre_pressure == "W"
+        assert rating.method == "T"
+        assert rating.is_technical
+        assert rating.system is RatingSystem.ACN_PCN
 
     def test_it_round_trips(self):
         for text in ("80/F/A/W/T", "62/R/B/X/U", "105/F/C/Y/T"):
-            assert str(Pcn.parse(text)) == text
+            assert str(PavementRating.pcn(text)) == text
 
     def test_whitespace_lower_case_and_a_numeric_tyre_limit_are_accepted(self):
-        pcn = Pcn.parse(" 55 / r / c / 1.25 / u ")
-        assert (pcn.number, pcn.pavement, pcn.subgrade) == (55.0, "R", "C")
-        assert pcn.tyre_pressure == "1.25"
-        assert not pcn.is_technical
+        rating = PavementRating.pcn(" 55 / r / c / 1.25 / u ")
+        assert (rating.number, rating.pavement, rating.subgrade) == (55.0, "R", "C")
+        assert rating.tyre_pressure == "1.25"
+        assert not rating.is_technical
+
+    def test_a_leading_pcn_or_pcr_label_is_accepted(self):
+        # States print the label in AD 2.12. It carries no information the
+        # system argument does not already have, so it is tolerated, not read.
+        assert PavementRating.pcn("PCN 80/F/A/W/T").number == 80.0
+        assert PavementRating.pcr("PCR 560/F/B/W/T").number == 560.0
 
     @pytest.mark.parametrize(
         "text",
@@ -391,59 +400,144 @@ class TestPcnParsing:
     )
     def test_malformed_ratings_are_refused_rather_than_guessed(self, text):
         with pytest.raises(ValueError):
-            Pcn.parse(text)
+            PavementRating.pcn(text)
+
+
+class TestTheTwoClassificationSystems:
+    """ACN/PCN and ACR/PCR share a format and share nothing else."""
+
+    def test_the_system_is_required_and_never_inferred(self):
+        # A real PCR runs in the hundreds where the PCN for the same pavement
+        # runs in the tens, so guessing from the number is wrong in the
+        # permissive direction.
+        with pytest.raises(TypeError) as caught:
+            PavementRating.parse("560/F/B/W/T", system=None)
+        assert "never inferred" in str(caught.value)
+
+    def test_the_same_string_parses_in_either_system(self):
+        legacy = PavementRating.pcn("80/F/A/W/T")
+        current = PavementRating.pcr("80/F/A/W/T")
+        assert legacy.number == current.number
+        assert legacy != current
+        assert legacy.label == "PCN"
+        assert current.label == "PCR"
+        assert legacy.system.aircraft_label == "ACN"
+        assert current.system.aircraft_label == "ACR"
+
+    def test_the_tyre_pressure_categories_kept_their_letters_and_moved_their_limits(self):
+        # Exactly the kind of silent difference that makes reading a rating
+        # without knowing its system dangerous.
+        assert PavementRating.pcn("80/F/A/X/T").tyre_pressure_limit_mpa == 1.50
+        assert PavementRating.pcr("560/F/A/X/T").tyre_pressure_limit_mpa == 1.75
+        assert PavementRating.pcn("80/F/A/Y/T").tyre_pressure_limit_mpa == 1.00
+        assert PavementRating.pcr("560/F/A/Y/T").tyre_pressure_limit_mpa == 1.25
+
+    def test_z_and_w_did_not_move(self):
+        for build in (PavementRating.pcn, PavementRating.pcr):
+            assert build("80/F/A/Z/T").tyre_pressure_limit_mpa == 0.50
+            assert build("80/F/A/W/T").tyre_pressure_limit_mpa is None
+
+    def test_a_reported_figure_is_its_own_limit(self):
+        assert PavementRating.pcn("80/F/A/1.4/T").tyre_pressure_limit_mpa == 1.4
+
+    def test_describing_a_rating_names_its_system(self):
+        # Anywhere a reader sees the number, they see which system it is in.
+        assert PavementRating.pcr("560/F/B/W/T").describe() == "PCR 560/F/B/W/T"
+        assert PavementRating.pcn("80/F/A/W/T").describe() == "PCN 80/F/A/W/T"
 
 
 class TestPavementComparison:
     def test_an_acn_within_the_pcn_permits_unrestricted_operation(self):
         check = compare_pavement(
-            acn=54, acn_pavement="F", acn_subgrade="A", pcn="80/F/A/W/T"
+            acn=54, acn_pavement="F", acn_subgrade="A", pcn=PavementRating.pcn("80/F/A/W/T")
         )
         assert check.verdict is PavementVerdict.WITHIN
         assert check.verdict.permits_operation
 
     def test_an_equal_acn_is_within(self):
-        check = compare_pavement(acn=80, pcn="80/F/A/W/T")
+        check = compare_pavement(acn=80, pcn=PavementRating.pcn("80/F/A/W/T"))
         assert check.verdict is PavementVerdict.WITHIN
 
     def test_an_acn_above_the_pcn_is_an_overload_not_a_prohibition(self):
         check = compare_pavement(
-            acn=93, acn_pavement="F", acn_subgrade="A", pcn="80/F/A/W/T"
+            acn=93, acn_pavement="F", acn_subgrade="A", pcn=PavementRating.pcn("80/F/A/W/T")
         )
         assert check.verdict is PavementVerdict.OVERLOAD
         assert not check.verdict.permits_operation
         assert "consent" in check.detail
 
     def test_an_overload_against_an_experience_rating_says_so(self):
-        check = compare_pavement(acn=93, pcn="80/F/A/W/U")
+        check = compare_pavement(acn=93, pcn=PavementRating.pcn("80/F/A/W/U"))
         assert check.verdict is PavementVerdict.OVERLOAD
         assert "experience" in check.detail
 
     def test_a_different_pavement_type_is_not_compared(self):
         # 54 is well under 80, and the answer is still not "within".
         check = compare_pavement(
-            acn=54, acn_pavement="R", acn_subgrade="A", pcn="80/F/A/W/T"
+            acn=54, acn_pavement="R", acn_subgrade="A", pcn=PavementRating.pcn("80/F/A/W/T")
         )
         assert check.verdict is PavementVerdict.NOT_COMPARABLE
         assert "pavement" in check.detail
 
     def test_a_different_subgrade_is_not_compared(self):
         check = compare_pavement(
-            acn=54, acn_pavement="F", acn_subgrade="C", pcn="80/F/A/W/T"
+            acn=54, acn_pavement="F", acn_subgrade="C", pcn=PavementRating.pcn("80/F/A/W/T")
         )
         assert check.verdict is PavementVerdict.NOT_COMPARABLE
         assert "subgrade" in check.detail
 
     def test_a_missing_side_is_unknown_not_assumed(self):
         assert (
-            compare_pavement(acn=None, pcn="80/F/A/W/T").verdict
+            compare_pavement(acn=None, pcn=PavementRating.pcn("80/F/A/W/T")).verdict
             is PavementVerdict.UNKNOWN
         )
         assert compare_pavement(acn=54, pcn=None).verdict is PavementVerdict.UNKNOWN
 
-    def test_a_parsed_pcn_object_is_accepted_directly(self):
-        check = compare_pavement(acn=54, pcn=Pcn.parse("80/F/A/W/T"))
+    def test_a_parsed_rating_object_is_accepted_directly(self):
+        check = compare_pavement(acn=54, pcn=PavementRating.pcn("80/F/A/W/T"))
         assert check.verdict is PavementVerdict.WITHIN
+
+    def test_an_acr_against_a_pcn_is_not_compared(self):
+        # The failure this check exists for. ACR 700 against PCN 80 is not an
+        # overload by 620; it is two numbers that mean nothing to each other,
+        # and the naive comparison errs in the permissive direction whenever
+        # the aircraft figure is the smaller one.
+        check = compare_pavement(
+            acn=700, acn_system=RatingSystem.ACR_PCR,
+            pcn=PavementRating.pcn("80/F/A/W/T"),
+        )
+        assert check.verdict is PavementVerdict.NOT_COMPARABLE
+        assert "28 November 2024" in check.detail
+        assert "not convertible" in check.detail
+
+    def test_an_acn_against_a_pcr_is_not_compared(self):
+        # And the permissive direction: ACN 62 against PCR 560 would read as a
+        # vast margin.
+        check = compare_pavement(
+            acn=62, acn_system=RatingSystem.ACN_PCN,
+            pcn=PavementRating.pcr("560/F/B/W/T"),
+        )
+        assert check.verdict is PavementVerdict.NOT_COMPARABLE
+
+    def test_matching_systems_compare_normally(self):
+        within = compare_pavement(
+            acn=520, acn_system=RatingSystem.ACR_PCR,
+            acn_pavement="F", acn_subgrade="B",
+            pcn=PavementRating.pcr("560/F/B/W/T"),
+        )
+        assert within.verdict is PavementVerdict.WITHIN
+        assert "ACR 520" in within.detail and "PCR 560" in within.detail
+
+    def test_the_system_check_runs_before_the_pavement_and_subgrade_checks(self):
+        # Reporting a subgrade mismatch for a cross-system comparison would
+        # send a reader to the wrong ACAP table.
+        check = compare_pavement(
+            acn=700, acn_system=RatingSystem.ACR_PCR,
+            acn_pavement="R", acn_subgrade="D",
+            pcn=PavementRating.pcn("80/F/A/W/T"),
+        )
+        assert check.verdict is PavementVerdict.NOT_COMPARABLE
+        assert "classification systems" in check.detail
 
 
 # --------------------------------------------------------------------------
@@ -585,6 +679,12 @@ class TestNoFiguresAreShipped:
                 float(row.category), row.length_from_m, row.length_to_m,
                 row.max_fuselage_width_m,
             )
+        }
+        permitted |= {
+            limit
+            for table in TYRE_PRESSURE_MPA.values()
+            for limit in table.values()
+            if limit is not None
         }
         permitted |= {0.0, 1.0}  # indices, and the negative-length guard
         assert numbers <= permitted, (
