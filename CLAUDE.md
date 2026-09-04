@@ -423,6 +423,57 @@ fractional count is reported unread rather than truncated.
 all: the parser needed to build `OTHH/RWY34L` from an aerodrome and a scope, and writing that join by
 hand is exactly the drift that once reported an aerodrome with a live runway NOTAM as a coverage gap.
 
+## Credentials, and why none are in this repository
+
+`credentials.py` resolves a named secret from the process environment first, then from
+`~/.aeropub/credentials.json`. The default path being **outside any working tree** is the whole
+design: a secrets file inside a repository gets committed eventually — by a stray `git add -A`, by a
+clone that has not read the ignore file, by somebody in a hurry. One in the home directory cannot be
+committed by accident because git has no way to reach it.
+
+The store holds no copy of any value. `describe()` reports shape only, never content and not even a
+truncated prefix — "starts with abc..." is how key material reaches screenshots and support tickets.
+`aeropub credentials --set NAME` reads from a prompt rather than an argument, because a secret on the
+command line lands in shell history and the process list.
+
+`tests/test_credentials.py` scans every tracked file on each run for credential-shaped content and
+fails the build on a hit. That is not hypothetical: the FAA's own onboarding pack ships a SoapUI
+project carrying the client id, the client secret and a live bearer token in plain text, and the
+FAA's own FAQ tells registrants not to send those in the clear. Files like that are easy to commit
+and impossible to un-commit — git history is permanent and a repository's visibility can change after
+the fact.
+
+When a credential is asked for and missing, the message names the variable, the purpose and the file.
+The person hitting it is usually not the one who wrote the connector.
+
+## What the FAA actually documented
+
+`docs/faa-nms.md` holds all of it — hosts, endpoints, parameter rules, rate limits, response shapes
+and the failure modes — so nobody has to find an email thread. Four things in it are worth knowing
+before touching the connector:
+
+**The token endpoint is not under `/nmsapi`.** Data goes to `https://<host>/nmsapi/v1/...`, the token
+call to `https://<host>/v1/auth/token`. The FAQ names this as the most common failure.
+
+**The initial-load handover changed shape, and the two behaviours are opposite.** It used to return a
+Google Cloud Storage signed URL, where the correct behaviour is to send *no* `Authorization` header —
+GCS signs the host header and nothing else, so a bearer alongside the signature is two credentials at
+once. It now returns `/nmsapi/v1/content/{token}` on the FAA's own host, which **requires** the
+bearer. `handover_needs_bearer()` reads it off the URL rather than from a setting: a Google signature
+means no bearer *wherever the URL lives*, and otherwise the bearer travels only to the FAA's own
+host and never off it. The conformance harness found that ordering — it serves signed storage from
+the same host as the API, and an earlier version let the hostname outrank the signature.
+
+**`nmsResponseFormat` is a required header**, not an option, and **the token call must not carry a
+JSON `Content-Type`** — tools that default to JSON get a failure that looks like bad credentials.
+
+Rate limits are strict and now encoded on `NmsEnvironment` so the client paces itself: 1 request per
+second pre-production, one data pull every 3 minutes in production, one bulk initial load per 24
+hours. Exceeding them needs FAA approval and produces errors.
+
+The production host is **not named in any document supplied with registration**. It carries
+`confirmed=False` so a guess cannot read like a fact.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

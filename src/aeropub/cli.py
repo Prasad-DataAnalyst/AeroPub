@@ -38,6 +38,7 @@ from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
 from aeropub.bulletin import between_cycles
+from aeropub.credentials import CredentialStore, describe as describe_secret
 from aeropub.currency import Currency, assess_currency
 from aeropub.dossier import build
 from aeropub.horizon import DEFAULT_DAYS, horizon
@@ -386,6 +387,75 @@ def _cmd_currency(args: argparse.Namespace) -> int:
         store.close()
 
 
+#: Every secret the platform can use, what it is for, and who issues it.
+#: Recorded here so an operator can see the whole list without reading source.
+KNOWN_CREDENTIALS: tuple[tuple[str, str], ...] = (
+    ("AEROPUB_FAA_CLIENT_ID",
+     "FAA NMS-API OAuth2 client id — issued by the FAA / CGI with registration"),
+    ("AEROPUB_FAA_CLIENT_SECRET",
+     "FAA NMS-API OAuth2 client secret — issued with the client id"),
+)
+
+
+def _cmd_credentials(args: argparse.Namespace) -> int:
+    """Show, set or remove a stored secret. Never prints a value.
+
+    Values are read from a prompt rather than an argument, deliberately: a
+    secret passed on the command line lands in the shell history and in the
+    process list, where anyone on the machine can read it.
+    """
+    store = CredentialStore()
+
+    if args.set:
+        import getpass
+
+        try:
+            value = getpass.getpass(f"{args.set}: ")
+        except (EOFError, KeyboardInterrupt):
+            print("\nnothing stored", file=sys.stderr)
+            return CANNOT_RUN
+        try:
+            written = store.set_secret(args.set, value)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return CANNOT_RUN
+        print(f"stored {args.set} in {written}")
+        print("  The file is owner-readable only and sits outside any "
+              "repository, so it cannot be committed.")
+        return OK
+
+    if args.forget:
+        if store.forget(args.forget):
+            print(f"removed {args.forget} from {store.file}")
+            return OK
+        print(f"{args.forget} was not in {store.file}", file=sys.stderr)
+        return CANNOT_RUN
+
+    print("CREDENTIALS")
+    print(f"  file: {store.file}")
+    print()
+    missing = 0
+    for name, purpose in KNOWN_CREDENTIALS:
+        held = store.get(name)
+        if not held:
+            missing += 1
+        print(f"  {name}")
+        print(f"      {describe_secret(held)}  ·  {store.where(name)}")
+        print(f"      {purpose}")
+    extra = [n for n in store.names() if n not in dict(KNOWN_CREDENTIALS)]
+    if extra:
+        print()
+        print("  Also stored (not used by any connector this build knows):")
+        for name in extra:
+            print(f"      {name}")
+    if missing:
+        print()
+        print(f"{missing} not set. Set one with: aeropub credentials --set NAME")
+        print("In a hosted environment prefer environment variables — they "
+              "survive restarts\nand never touch a disk this project can read.")
+    return ADVERSE if missing else OK
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -554,6 +624,14 @@ def _parser() -> argparse.ArgumentParser:
     age.add_argument("--stale-only", action="store_true",
                      help="list only what is too old to stand on")
     age.set_defaults(handler=_cmd_currency)
+
+    secrets = sub.add_parser(
+        "credentials", help="show, set or remove a stored secret (never prints one)"
+    )
+    secrets.add_argument("--set", metavar="NAME",
+                         help="store a secret, read from a prompt")
+    secrets.add_argument("--forget", metavar="NAME", help="remove a stored secret")
+    secrets.set_defaults(handler=_cmd_credentials)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

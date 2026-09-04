@@ -1,23 +1,74 @@
-"""FAA NMS-API — connection configuration, held as data rather than code.
+"""FAA NMS-API — everything the FAA documented, held as data rather than code.
 
 The FAA's NOTAM Management System API is the first live, credentialed source
 AeroPub connects to, and the one most likely to move. Its hosts are operated by
-a contractor, its paths are versioned, and the onboarding pack that describes
-them is a text file emailed to each registrant — all three change without
+a contractor (CGI Federal), its paths are versioned, and the onboarding pack
+that describes them is emailed to each registrant — all three change without
 notice and without a deprecation window.
 
-So nothing about the connection is written into the calling code. An
-:class:`NmsEnvironment` is a plain record of hosts, paths and required headers;
-:data:`ENVIRONMENTS` holds the three the FAA publishes today; and
-:meth:`NmsEnvironment.overlay` and :func:`load_environment` let an operator
-correct any part of it from a JSON file or an environment variable, with the
-service running and without a release.
+So nothing about the connection is written into the calling code, and
+everything the FAA has told us is written down *here*, where the next person to
+touch this can read it without going back to an email thread.
+
+Sources, so a future reader can check them
+------------------------------------------
+- *Welcome to NMS* onboarding email, FAA NOTAM Service Center
+- *NMS-API Frequently Asked Questions*, CGI Inc.
+- ``NMS-API Pre-Prod`` SoapUI project, supplied with registration
+- Sample initial-load AIXM and checklist JSON, supplied with registration
+
+Support: ``7-AWA-NAIMES@faa.gov`` or 866-466-1336. Report test-environment
+problems to that address; ask the same address for production onboarding once
+testing is validated.
+
+The four things that trip people up
+-----------------------------------
+**1. The token endpoint is NOT under ``/nmsapi``.** The FAQ names this as the
+most common failure. Data calls go to ``https://<host>/nmsapi/v1/...``; the
+token call goes to ``https://<host>/v1/auth/token``. Same host, different root.
+
+**2. The initial-load handover is no longer an off-host signed URL.** It used
+to return a Google Cloud Storage V4 signed URL, and the correct behaviour there
+was to send *no* ``Authorization`` header, because GCS rejects a request bearing
+both its signature and a bearer. It now returns a relative
+``/nmsapi/v1/content/{token}`` on the FAA's own host, and that endpoint
+**requires the same bearer token as every other call**. The two behaviours are
+opposite, both shapes are still possible, and which one applies is decided by
+the URL itself — see :func:`aeropub.faa.client.handover_needs_bearer`.
+
+**3. ``nmsResponseFormat`` is a required header on ``/v1/notams``**, not an
+option. Values are ``AIXM`` or ``GEOJSON``. Omitting it is an error, not a
+default.
+
+**4. The token call must not carry a JSON ``Content-Type``.** The FAQ says to
+remove the header or set ``application/x-www-form-urlencoded``; tools that
+default to JSON get a failure that looks like bad credentials.
+
+Rate limits, from the FAQ, and they are strict
+----------------------------------------------
+Exceeding these produces errors and, in production, needs FAA approval:
+
+- Pre-production: **1 request per second**; content calls about 2 per second.
+- Production: **1 data pull every 3 minutes**, returning the previous 3 minutes
+  of activity. More frequent use requires FAA approval.
+- Initial load: **1 bulk pull every 24 hours at most**, whether by ``/il`` or by
+  full-classification pulls.
+
+These are encoded in :attr:`NmsEnvironment.min_request_interval` and
+:attr:`NmsEnvironment.min_initial_load_interval` so the client paces itself
+rather than relying on the caller to remember.
+
+Token behaviour
+---------------
+OAuth2 ``client_credentials``, HTTP Basic with the client id and secret.
+``expires_in`` comes back as the **string** ``"1799"`` — roughly 30 minutes —
+and ``issued_at`` is in **milliseconds**. Keys themselves do not expire; a 401
+saying "Access Token is Invalid or Expired" means the bearer lapsed, not the
+credentials. A 401 with an invalid key reads differently.
 
 The one thing configuration deliberately cannot do is supply a credential. Keys
-are named here — never carried.
-
-Source: *NMS-API cURL Command Examples and Instructions for connecting*, issued
-by the FAA with API registration.
+are named here — never carried. See :mod:`aeropub.faa.credentials` for how a
+secret reaches the client without being written down anywhere shareable.
 """
 
 from __future__ import annotations
@@ -142,6 +193,14 @@ _DEFAULT_ENDPOINTS: tuple[NmsEndpoint, ...] = (
         path="/v1/notams/il/{classification}",
         note="As initial_load, narrowed to one classification.",
     ),
+    NmsEndpoint(
+        name="content",
+        path="/v1/content/{token}",
+        note="Where an initial-load handover now points. The {token} is a "
+        "Base64 representation of a GCS signed URL which the NMS-API decrypts "
+        "and proxies. Unlike the GCS signed URLs it replaced, this endpoint "
+        "REQUIRES the same bearer token as every other call.",
+    ),
 )
 
 
@@ -158,6 +217,30 @@ class NmsEnvironment:
     people up: the OAuth2 endpoint and the API live at different prefixes."""
 
     api_base: str = "/nmsapi"
+
+    min_request_interval: float = 1.0
+    """Seconds between requests, from the FAQ's published rate limits.
+
+    Pre-production is 1 request per second. Production is far stricter for data
+    pulls — one every three minutes — but that is a pull *cadence* rather than a
+    transport gap, so it is kept separate and the client paces the socket by
+    this figure. Exceeding either produces errors, and in production also needs
+    FAA approval."""
+
+    min_data_pull_interval: float = 1.0
+    """Seconds between NOTAM data pulls. Production is 180: one pull every three
+    minutes, each returning the previous three minutes of activity."""
+
+    min_initial_load_interval: float = 86400.0
+    """Seconds between bulk pulls. The FAQ is explicit: one every 24 hours at
+    most, whether by the ``/il`` endpoints or by full-classification pulls.
+    More frequent use requires FAA approval."""
+
+    confirmed: bool = True
+    """Whether a document from the FAA names this host.
+
+    ``False`` marks an assumption, and the check command says so rather than
+    letting a guessed host look like a documented one."""
     """Prefix every operation hangs from, once the bearer token is held."""
 
     endpoints: tuple[NmsEndpoint, ...] = _DEFAULT_ENDPOINTS
@@ -235,6 +318,15 @@ class NmsEnvironment:
         an operator fixing one path silently dropped the other five.
         """
         fields: dict[str, Any] = {}
+        for key in (
+            "min_request_interval",
+            "min_data_pull_interval",
+            "min_initial_load_interval",
+        ):
+            if key in changes:
+                fields[key] = float(changes[key])
+        if "confirmed" in changes:
+            fields["confirmed"] = bool(changes["confirmed"])
         for key in ("name", "host", "auth_path", "api_base", "description"):
             if key in changes:
                 fields[key] = str(changes[key])
@@ -274,23 +366,30 @@ class NmsEnvironment:
 #: The three environments the FAA documents. Registration is per-environment:
 #: a key issued for staging does not work against production.
 ENVIRONMENTS: dict[str, NmsEnvironment] = {
-    "fit": NmsEnvironment(
-        name="fit",
-        host="https://api-fit.cgifederal-aim.com",
-        description="FIT — Facility Integration Test. Where the FAA expects "
-        "first connection attempts.",
+    "sit": NmsEnvironment(
+        name="sit",
+        host="https://api-sit.cgifederal-aim.com",
+        description="SIT — System Integration Test. The host the FAQ's own "
+        "token example uses.",
     ),
     "staging": NmsEnvironment(
         name="staging",
         host="https://api-staging.cgifederal-aim.com",
-        description="Staging (Pre-Prod).",
+        description="Staging / Pre-Production. The environment the onboarding "
+        "email issues credentials for, and where validation is done before "
+        "requesting production.",
     ),
     "prod": NmsEnvironment(
         name="prod",
         host="https://api-nms.aim.faa.gov",
-        description="Production. The only environment whose NOTAM are "
-        "operationally valid.",
+        min_data_pull_interval=180.0,
+        description="Production. NOT CONFIRMED — no document supplied with "
+        "registration names the production host, and this is an assumption "
+        "carried from earlier work. The FAA issues production details "
+        "separately when onboarding is requested at 7-AWA-NAIMES@faa.gov; "
+        "correct it with AEROPUB_FAA_NMS_CONFIG rather than editing code.",
         is_production=True,
+        confirmed=False,
     ),
 }
 

@@ -54,6 +54,7 @@ from aeropub.airac import (
     cycles_in_year,
 )
 from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
+from aeropub.credentials import CredentialStore, MissingCredential
 from aeropub.currency import Currency, DataCurrency, assess_currency
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
@@ -154,6 +155,7 @@ __all__ = [
     "covers",
     "CredentialRef",
     "CredentialStatus",
+    "CredentialStore",
     "Currency",
     "current_cycle",
     "cycle_for",
@@ -191,6 +193,7 @@ __all__ = [
     "ManifestError",
     "merge",
     "minimum_runway_width_m",
+    "MissingCredential",
     "ndjson",
     "Network",
     "NetworkEntry",
@@ -219,8 +222,8 @@ __all__ = [
     "rffs_category",
     "Role",
     "scope_of",
-    "section",
     "Section",
+    "section",
     "SectionEntry",
     "SectionHolding",
     "Severity",

@@ -60,6 +60,7 @@ __all__ = [
     "NmsClient",
     "NmsResponse",
     "SignedUrl",
+    "handover_needs_bearer",
     "parse_signed_url",
 ]
 
@@ -141,6 +142,39 @@ class SignedUrl:
     def is_expired(self, now: datetime | None = None) -> bool:
         remaining = self.seconds_remaining(now)
         return remaining is not None and remaining <= 0
+
+
+def handover_needs_bearer(url: str, *, host: str) -> bool:
+    """Whether the initial-load handover must carry the bearer token.
+
+    The FAA changed this and the two answers are opposite, so it is decided
+    from the URL itself rather than from configuration — a setting would be one
+    more thing to get wrong on the day they change it back.
+
+    Two rules, in this order, and the order matters:
+
+    **A signed URL never gets the bearer, wherever it lives.** A Google V4
+    signature signs the ``host`` header and nothing else, so a bearer alongside
+    it is two credentials at once and is rejected. The signature is the
+    stronger signal than the hostname, because signed storage can sit behind a
+    custom domain — including, as the conformance harness demonstrates, the
+    same host as the API.
+
+    **Otherwise, the bearer travels only to the FAA's own host.** A relative
+    ``/nmsapi/v1/content/{token}``, or an absolute URL on the configured host,
+    is the content endpoint and requires it. Anything else is a third party,
+    and our token has no business going there — an off-host handover we do not
+    recognise is far more likely to be a redirect we should not have followed
+    than a place to present credentials.
+    """
+    if not url.strip():
+        return False
+    parts = urllib.parse.urlsplit(url)
+    if "x-goog-signature" in parts.query.lower():
+        return False
+    if not parts.netloc:
+        return True  # relative — necessarily on the API host
+    return parts.netloc.lower() == urllib.parse.urlsplit(host).netloc.lower()
 
 
 def parse_signed_url(url: str) -> SignedUrl:
@@ -570,11 +604,22 @@ class NmsClient:
         return parse_signed_url(url)
 
     def download_signed(self, signed: SignedUrl) -> bytes:
-        """Fetch a signed URL, unauthenticated.
+        """Fetch the initial-load bundle from wherever the handover pointed.
 
-        Deliberately does not send the bearer token. A GCS V4 signed URL signs
-        the ``host`` header and nothing else; adding ``Authorization`` makes GCS
-        reject the request for presenting two credentials at once.
+        Whether this carries the bearer token depends on where it points, and
+        the two answers are opposite:
+
+        The FAA used to hand back a Google Cloud Storage V4 signed URL, and the
+        correct behaviour was to send **no** ``Authorization`` header — GCS
+        signs the ``host`` header and nothing else, so a bearer alongside the
+        signature is two credentials at once and is rejected. It would also
+        disclose our token to a third party.
+
+        They now hand back ``/nmsapi/v1/content/{token}`` on their own host,
+        which proxies the data and **requires** the same bearer as every other
+        call. Both shapes remain possible, so
+        :func:`handover_needs_bearer` decides from the URL rather than from a
+        setting somebody would have to remember to change.
         """
         if signed.is_expired(self._clock()):
             raise NmsError(
@@ -584,9 +629,14 @@ class NmsClient:
                 "download rather than caching it."
             )
 
-        request = urllib.request.Request(
-            signed.url, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}
-        )
+        target = signed.url
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        if handover_needs_bearer(target, host=self.environment.host):
+            if not urllib.parse.urlsplit(target).netloc:
+                target = f"{self.environment.host.rstrip('/')}{target}"
+            headers.update(self.tokens.header())
+
+        request = urllib.request.Request(target, headers=headers)
         try:
             with self._opener(request, timeout=self.timeout) as response:
                 return response.read()
@@ -597,9 +647,16 @@ class NmsClient:
                 if remaining is not None and remaining <= 0
                 else ""
             )
+            if exc.code == 401:
+                hint += (
+                    " A 401 here means the content endpoint did not accept the "
+                    "bearer token. The FAA's content endpoint requires it; a "
+                    "Google signed URL refuses it. Check which shape the "
+                    "handover returned."
+                )
             raise NmsError(
-                f"the storage service refused the initial-load download "
-                f"(HTTP {exc.code}).{hint} URL: {signed.masked}",
+                f"the initial-load download was refused (HTTP {exc.code}).{hint} "
+                f"URL: {signed.masked}",
                 status=exc.code,
             ) from None
         except urllib.error.URLError as exc:

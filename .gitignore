@@ -33,3 +33,11 @@ htmlcov/
 /archive/
 *.sqlite
 *.db
+
+# Credentials never live in the working tree — the store's default path is
+# ~/.aeropub/credentials.json, outside any repository. These entries are belt
+# and braces for anyone who points AEROPUB_CREDENTIALS at the repo by mistake.
+credentials.json
+*.credentials.json
+.env
+secrets.json

@@ -29,7 +29,7 @@ class TestPublishedEnvironments:
     @pytest.mark.parametrize(
         "name,host",
         [
-            ("fit", "https://api-fit.cgifederal-aim.com"),
+            ("sit", "https://api-sit.cgifederal-aim.com"),
             ("staging", "https://api-staging.cgifederal-aim.com"),
             ("prod", "https://api-nms.aim.faa.gov"),
         ],
@@ -73,7 +73,7 @@ class TestPublishedEnvironments:
 
     def test_only_production_is_marked_production(self):
         assert ENVIRONMENTS["prod"].is_production
-        assert not ENVIRONMENTS["fit"].is_production
+        assert not ENVIRONMENTS["sit"].is_production
         assert not ENVIRONMENTS["staging"].is_production
 
 
@@ -181,10 +181,10 @@ class TestLoadEnvironment:
         assert load_environment(environ={}).name == "prod"
 
     def test_the_environment_variable_selects(self):
-        assert load_environment(environ={ENVIRONMENT_VAR: "fit"}).name == "fit"
+        assert load_environment(environ={ENVIRONMENT_VAR: "sit"}).name == "sit"
 
     def test_an_explicit_name_beats_the_environment_variable(self):
-        assert load_environment("staging", environ={ENVIRONMENT_VAR: "fit"}).name == "staging"
+        assert load_environment("staging", environ={ENVIRONMENT_VAR: "sit"}).name == "staging"
 
     def test_an_unknown_name_says_how_to_add_one(self):
         with pytest.raises(KeyError, match=CONFIG_PATH_VAR):

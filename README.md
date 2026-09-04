@@ -161,6 +161,17 @@ so it is safe to commit to a public repository.
 belong in your environment; the registry stores only the name of the variable
 holding one, plus a masked hint.
 
+### Credentials
+
+```
+aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET   # prompts, never echoes
+aeropub credentials                                    # what is set, never a value
+```
+
+Stored in `~/.aeropub/credentials.json`, owner-readable only, outside any repository so it
+cannot be committed. In a hosted environment prefer real environment variables — the store
+checks those first. A test scans every tracked file for credential-shaped content on each run.
+
 ### Connecting the FAA
 
 The first live credentialed source. The FAA issues an OAuth2 pair on a

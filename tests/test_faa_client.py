@@ -372,7 +372,7 @@ class TestSignedDownload:
         with pytest.raises(NmsError) as caught:
             _client(router, archive=Archive(tmp_path / "raw")).fetch_initial_load()
         assert "X-Goog-Signature=REDACTED" not in str(caught.value)
-        assert "storage service refused" in str(caught.value)
+        assert "initial-load download was refused" in str(caught.value)
 
 
 class TestDecompression:
@@ -561,3 +561,49 @@ class TestFailureModes:
         with pytest.raises(NmsUnavailableError, match="holding off"):
             client.ping()
         assert len(router.requests) == 1
+
+
+class TestTheHandoverDecidesWhereTheBearerTravels:
+    """The FAA changed this, and the two answers are opposite.
+
+    It used to hand back a Google Cloud Storage V4 signed URL, where the
+    correct behaviour is to send no Authorization header at all. It now hands
+    back /nmsapi/v1/content/{token} on its own host, which requires the same
+    bearer as every other call. Both shapes remain possible, so the decision is
+    read off the URL rather than set in configuration — a setting is one more
+    thing to get wrong on the day they change it back.
+    """
+
+    HOST = "https://api-staging.cgifederal-aim.com"
+
+    def needs(self, url: str) -> bool:
+        from aeropub.faa.client import handover_needs_bearer
+
+        return handover_needs_bearer(url, host=self.HOST)
+
+    def test_the_relative_content_endpoint_needs_it(self):
+        assert self.needs("/nmsapi/v1/content/eyJhbGciOi")
+
+    def test_the_absolute_content_endpoint_on_our_host_needs_it(self):
+        assert self.needs(f"{self.HOST}/nmsapi/v1/content/eyJhbGciOi")
+
+    def test_a_google_signed_url_must_not_receive_it(self):
+        # GCS signs the host header and nothing else; a bearer alongside the
+        # signature is two credentials at once and is rejected.
+        assert not self.needs(
+            "https://storage.googleapis.com/bucket/f.gz?X-Goog-Signature=abc"
+        )
+
+    def test_a_signature_outranks_the_hostname(self):
+        # Signed storage can sit behind a custom domain — including, as the
+        # conformance harness does, the same host as the API. The signature is
+        # the stronger signal, and this ordering was found by that harness.
+        assert not self.needs(f"{self.HOST}/storage/f.gz?X-Goog-Signature=abc")
+
+    def test_the_token_never_travels_off_host(self):
+        # An unrecognised off-host handover is far more likely to be a redirect
+        # we should not have followed than a place to present credentials.
+        assert not self.needs("https://elsewhere.example/file.gz")
+
+    def test_an_empty_handover_needs_nothing(self):
+        assert not self.needs("   ")
