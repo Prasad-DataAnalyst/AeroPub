@@ -698,9 +698,12 @@ def retrospect_document(
     }
 
 
-def _obstacle(item: Obstacle) -> dict[str, Any]:
+def _obstacle(
+    item: Obstacle, *, runway_bearing_deg: float | None = None
+) -> dict[str, Any]:
     from aeropub.obstacles import penetrates_ois, required_gradient
 
+    resolved = item.position(runway_bearing_deg)
     return {
         "identifier": item.identifier,
         "kind": item.kind or None,
@@ -715,13 +718,21 @@ def _obstacle(item: Obstacle) -> dict[str, Any]:
         "valid_to": _day(item.valid_to),
         "temporary": item.is_temporary,
         "measurable": item.is_measurable,
-        "required_gradient_percent": required_gradient(item),
-        "penetration": penetrates_ois(item).value,
+        "along_track_m": resolved.along_track_m if resolved else None,
+        "lateral_offset_m": resolved.offset_m if resolved else None,
+        "required_gradient_percent": required_gradient(
+            item, runway_bearing_deg=runway_bearing_deg
+        ),
+        "penetration": penetrates_ois(
+            item, runway_bearing_deg=runway_bearing_deg
+        ).value,
         "source_ref": source_ref(item.source),
     }
 
 
-def _obstacle_change(item: ObstacleChange) -> dict[str, Any]:
+def _obstacle_change(
+    item: ObstacleChange, *, runway_bearing_deg: float | None = None
+) -> dict[str, Any]:
     return {
         "identifier": item.identifier,
         "changed": item.changed,
@@ -729,8 +740,12 @@ def _obstacle_change(item: ObstacleChange) -> dict[str, Any]:
         "removed": item.removed,
         "raised": item.raised,
         "extended": item.extended,
-        "before": _obstacle(item.before) if item.before else None,
-        "after": _obstacle(item.after) if item.after else None,
+        "before": _obstacle(item.before, runway_bearing_deg=runway_bearing_deg)
+        if item.before
+        else None,
+        "after": _obstacle(item.after, runway_bearing_deg=runway_bearing_deg)
+        if item.after
+        else None,
     }
 
 
@@ -747,17 +762,33 @@ def obstacle_review(
     from aeropub.obstacles import OIS_PERCENT, STANDARD_PDG_PERCENT
 
     exposed = item.exposure()
+    bearing = item.runway_bearing_deg
     return {
         "runway": item.runway,
+        "runway_bearing_deg": bearing,
         "required_gradient_percent": item.required_percent,
         "standard_gradient_percent": STANDARD_PDG_PERCENT,
         "exceeds_standard": item.exceeds_standard,
         "ois_percent": OIS_PERCENT,
-        "governing": _obstacle(item.governing) if item.governing else None,
-        "obstacles": [_obstacle(o) for o in item.obstacles],
+        "governing": _obstacle(item.governing, runway_bearing_deg=bearing)
+        if item.governing
+        else None,
+        "obstacles": [
+            {
+                **_obstacle(o, runway_bearing_deg=bearing),
+                "in_departure_area": item.contains(o),
+            }
+            for o in item.obstacles
+        ],
         "penetrating": [o.identifier for o in item.penetrating],
         "unmeasured": [o.identifier for o in item.unmeasured],
-        "changes": [_obstacle_change(c) for c in item.changes if c.changed],
+        "inside_area": [o.identifier for o in item.inside_area],
+        "outside_area": [o.identifier for o in item.outside_area],
+        "changes": [
+            _obstacle_change(c, runway_bearing_deg=bearing)
+            for c in item.changes
+            if c.changed
+        ],
         "fleet_exposure": (
             {
                 "required_percent": exposed.required_percent,
@@ -769,14 +800,37 @@ def obstacle_review(
             if exposed is not None
             else None
         ),
-        "sector_membership": {
-            "decided": False,
+        "departure_area": (
+            {
+                "name": item.area.name,
+                "half_width_at_der_m": item.area.half_width_at_der_m,
+                "splay_percent": item.area.splay_percent,
+                "splay_degrees": item.area.splay_degrees,
+                "max_half_width_m": item.area.max_half_width_m,
+                "note": item.area.note,
+            }
+            if item.area is not None
+            else None
+        ),
+        "area_note": (
+            "Membership is computed against the named area above. Two "
+            "published conventions share the number 15 and mean different "
+            "things - PANS-OPS splays 15 per cent each side, the Annex 14 "
+            "instrument departure surface 15 degrees - so which was used is "
+            "always stated. A State may publish a non-standard area for a "
+            "specific procedure, and where it has, that one governs."
+            if item.area is not None
+            else "No protected area was given, so every measurable obstacle is "
+            "counted. That is the conservative reading, not a statement that "
+            "all of them lie in the departure area."
+        ),
+        "eosid": {
+            "computed": False,
             "reason": (
-                "Whether an obstacle lies inside the protected departure area "
-                "needs the full PANS-OPS construction. Approximating it would "
-                "be a confident answer about whether an obstacle matters at "
-                "all. Distances and bearings are given so a procedure designer "
-                "can decide."
+                "The engine-out net flight path depends on the aeroplane's net "
+                "performance and the operator's approved data, and designing an "
+                "escape path is certified engineering. The numbers that review "
+                "needs are in this document."
             ),
         },
     }

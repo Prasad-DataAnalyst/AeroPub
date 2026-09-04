@@ -24,10 +24,15 @@ from aeropub.obstacles import (
     METRES_PER_NM,
     MOC_PERCENT,
     OIS_PERCENT,
+    OLS_INSTRUMENT_DEPARTURE,
+    PANS_OPS_STRAIGHT,
     STANDARD_PDG_PERCENT,
+    DepartureArea,
     Obstacle,
     Penetration,
+    Position,
     compare_cycles,
+    decompose,
     penetrates_ois,
     required_gradient,
     review_runway,
@@ -268,13 +273,32 @@ class TestReview:
         printed = review.render()
         assert "not clear, they are unmeasured" in printed
 
-    def test_the_render_states_what_it_will_not_decide(self):
-        # Approximating the protected area would be a confident answer about
-        # whether an obstacle matters at all.
+    def test_with_no_area_given_it_says_every_obstacle_was_counted(self):
+        # The conservative reading, and it must not read as a statement that
+        # they all lie in the departure area.
         printed = review_runway("RWY16", [obstacle(feet=412, nm=2.1)]).render()
-        assert "not decided here" in printed
-        assert "PANS-OPS" in printed
-        assert "a procedure designer can" in printed
+        assert "No protected area was given" in printed
+        assert "every measurable obstacle is counted" in printed
+
+    def test_the_eosid_is_still_not_computed_and_says_why(self):
+        # This one genuinely is certified engineering, and the plan agrees.
+        printed = review_runway("RWY16", [obstacle(feet=412, nm=2.1)]).render()
+        assert "engine-out net flight path is not computed" in printed
+        assert "certified engineering" in printed
+
+    def test_one_gradient_is_quoted_for_one_obstacle(self):
+        # The bare module function does not know the runway bearing and the
+        # review does, so calling the wrong one printed two different gradients
+        # for the same obstacle in the same document.
+        import re
+
+        printed = review_runway(
+            "RWY16", [obstacle("CRANE", feet=412, nm=2.1, bearing_from_der_deg=168)],
+            runway_bearing_deg=160, area=PANS_OPS_STRAIGHT,
+        ).render()
+        quoted = set(re.findall(r"(\d+\.\d+)%", printed))
+        # 2.5 is the surface, 3.3 the standard; exactly one gradient beyond.
+        assert len(quoted - {"2.5", "3.3"}) == 1
 
     def test_the_render_leads_with_the_governing_gradient(self):
         printed = review_runway("RWY16", [obstacle(feet=412, nm=2.1)]).render()
@@ -290,3 +314,162 @@ class TestUnits:
     def test_a_temporary_obstacle_knows_it_is_one(self):
         assert obstacle(feet=412, nm=2.1, valid_to=date(2026, 12, 3)).is_temporary
         assert not obstacle(feet=412, nm=2.1).is_temporary
+
+
+# --------------------------------------------------------------------------
+# The protected area — computed, against a named convention
+# --------------------------------------------------------------------------
+
+
+class TestDecomposition:
+    def test_an_obstacle_dead_ahead_is_all_along_track(self):
+        resolved = decompose(distance_m=3704.0, bearing_deg=160,
+                             runway_bearing_deg=160)
+        assert resolved.along_track_m == pytest.approx(3704.0)
+        assert resolved.offset_m == pytest.approx(0.0, abs=1e-6)
+
+    def test_an_obstacle_abeam_is_all_lateral(self):
+        resolved = decompose(distance_m=1000.0, bearing_deg=250,
+                             runway_bearing_deg=160)
+        assert resolved.along_track_m == pytest.approx(0.0, abs=1e-6)
+        assert resolved.offset_m == pytest.approx(1000.0)
+
+    def test_either_side_gives_the_same_offset(self):
+        left = decompose(distance_m=1000.0, bearing_deg=130, runway_bearing_deg=160)
+        right = decompose(distance_m=1000.0, bearing_deg=190, runway_bearing_deg=160)
+        assert left.offset_m == pytest.approx(right.offset_m)
+        assert left.lateral_m == pytest.approx(-right.lateral_m)
+
+    def test_an_obstacle_behind_the_der_is_recognised(self):
+        behind = decompose(distance_m=1000.0, bearing_deg=340,
+                           runway_bearing_deg=160)
+        assert behind.is_behind
+
+
+class TestGradientIsMeasuredAlongTrack:
+    def off_to_one_side(self) -> Obstacle:
+        return obstacle("CRANE", feet=412, nm=2.1, bearing_from_der_deg=190)
+
+    def test_a_radial_distance_under_reports_the_gradient(self):
+        # The bug this fixes. An obstacle 30 degrees off the runway bearing at
+        # 2.1 NM radial is only 1.82 NM along track, so it needs a steeper
+        # gradient than the radial figure suggests — and under-reporting a
+        # required climb gradient errs in the direction that flies an aeroplane
+        # into something.
+        crane = self.off_to_one_side()
+        radial = required_gradient(crane)
+        along = required_gradient(crane, runway_bearing_deg=160)
+        assert along > radial
+        assert along == pytest.approx(4.53, abs=0.01)
+
+    def test_without_bearings_the_held_distance_is_taken_as_along_track(self):
+        # Which is how AD 2.10 usually gives it.
+        plain = obstacle(feet=412, nm=2.1)
+        assert required_gradient(plain, runway_bearing_deg=160) == required_gradient(plain)
+
+    def test_an_obstacle_behind_the_der_gets_no_gradient(self):
+        # Arithmetic about a climb that has already happened.
+        behind = obstacle(feet=412, nm=2.1, bearing_from_der_deg=340)
+        assert required_gradient(behind, runway_bearing_deg=160) is None
+
+    def test_penetration_is_measured_along_track_too(self):
+        crane = self.off_to_one_side()
+        # Same obstacle, nearer down the path, so it penetrates more surely.
+        assert penetrates_ois(crane, runway_bearing_deg=160) is Penetration.PENETRATES
+
+
+class TestDepartureArea:
+    def test_the_area_starts_150_m_either_side_at_the_der(self):
+        assert PANS_OPS_STRAIGHT.half_width_at(0.0) == 150.0
+        assert OLS_INSTRUMENT_DEPARTURE.half_width_at(0.0) == 150.0
+
+    def test_the_two_conventions_diverge_and_that_is_the_point(self):
+        # Both published surfaces use the number 15 and mean different things:
+        # PANS-OPS splays 15 per cent each side, the Annex 14 instrument
+        # departure surface 15 degrees. At 2.1 NM that is 733 m against 1192 m.
+        at = 2.1 * METRES_PER_NM
+        assert PANS_OPS_STRAIGHT.half_width_at(at) == pytest.approx(733, abs=2)
+        assert OLS_INSTRUMENT_DEPARTURE.half_width_at(at) == pytest.approx(1192, abs=2)
+
+    def test_an_area_must_name_exactly_one_convention(self):
+        # Accepting both at once would let a caller silently get the other one.
+        with pytest.raises(ValueError) as caught:
+            DepartureArea(name="ambiguous", splay_percent=15.0, splay_degrees=15.0)
+        assert "exactly one" in str(caught.value)
+        with pytest.raises(ValueError):
+            DepartureArea(name="neither")
+
+    def test_a_cap_limits_the_width(self):
+        capped = DepartureArea(name="capped", splay_percent=15.0,
+                               max_half_width_m=600.0)
+        assert capped.half_width_at(100_000.0) == 600.0
+
+    def test_containment_at_the_boundary_is_inclusive(self):
+        at = 2.1 * METRES_PER_NM
+        edge = Position(along_track_m=at, lateral_m=PANS_OPS_STRAIGHT.half_width_at(at))
+        assert PANS_OPS_STRAIGHT.contains(edge)
+
+    def test_an_obstacle_behind_the_der_is_never_inside(self):
+        assert not PANS_OPS_STRAIGHT.contains(
+            Position(along_track_m=-100.0, lateral_m=0.0)
+        )
+
+    def test_the_area_names_itself_in_its_description(self):
+        # An answer that does not say which convention it used is not an answer.
+        assert "15%" in PANS_OPS_STRAIGHT.describe()
+        assert "15 deg" in OLS_INSTRUMENT_DEPARTURE.describe()
+
+
+class TestAreaMembershipInAReview:
+    def crane(self) -> Obstacle:
+        return obstacle("CRANE-2291", feet=412, nm=2.1, bearing_from_der_deg=168)
+
+    def far_off(self) -> Obstacle:
+        return obstacle("MAST-09", feet=90 * 3.280839895, nm=3.0,
+                        bearing_from_der_deg=120)
+
+    def review(self, area=PANS_OPS_STRAIGHT):
+        return review_runway(
+            "RWY16", [self.crane(), self.far_off()],
+            runway_bearing_deg=160, area=area,
+        )
+
+    def test_an_obstacle_in_the_area_is_inside(self):
+        assert [o.identifier for o in self.review().inside_area] == ["CRANE-2291"]
+
+    def test_an_obstacle_well_off_the_centreline_is_outside(self):
+        assert [o.identifier for o in self.review().outside_area] == ["MAST-09"]
+
+    def test_an_obstacle_outside_the_area_does_not_set_the_gradient(self):
+        # Which is the point of having an area at all.
+        assert self.review().governing.identifier == "CRANE-2291"
+
+    def test_with_no_area_every_measurable_obstacle_counts(self):
+        wide = review_runway("RWY16", [self.crane(), self.far_off()],
+                             runway_bearing_deg=160)
+        assert len(wide.assessable) == 2
+        assert wide.contains(self.crane()) is None
+
+    def test_membership_is_unknown_rather_than_false_without_a_position(self):
+        # Not the same as outside, and must not print as though it were.
+        vague = review_runway("RWY16", [obstacle("VAGUE")],
+                              runway_bearing_deg=160, area=PANS_OPS_STRAIGHT)
+        assert vague.contains(vague.obstacles[0]) is None
+
+    def test_the_render_names_the_area_it_tested_against(self):
+        printed = self.review().render()
+        assert "PROTECTED AREA" in printed
+        assert "PANS-OPS straight departure" in printed
+        assert "INSIDE   CRANE-2291" in printed
+        assert "outside  MAST-09" in printed
+
+    def test_choosing_the_other_convention_can_change_the_answer(self):
+        # An obstacle can be inside one and outside the other, which is exactly
+        # why the convention is stated rather than assumed.
+        edge = obstacle("EDGE", feet=300, nm=2.0, bearing_from_der_deg=173)
+        narrow = review_runway("RWY16", [edge], runway_bearing_deg=160,
+                               area=PANS_OPS_STRAIGHT)
+        wide = review_runway("RWY16", [edge], runway_bearing_deg=160,
+                             area=OLS_INSTRUMENT_DEPARTURE)
+        assert narrow.contains(edge) is False
+        assert wide.contains(edge) is True

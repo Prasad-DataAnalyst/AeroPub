@@ -538,13 +538,30 @@ The subtlety worth knowing: the plan's own worked example, 412 ft at 2.1 NM, is 
 standard already contains the clearance. An implementation that compared the obstacle's own gradient
 against 3.3% would clear it.
 
-**What is refused.** Whether an obstacle lies inside the protected departure area needs the full
-PANS-OPS construction — splay rates, area widths at distance, turning geometry. Approximating that
-would be a confident answer about whether an obstacle matters *at all*, which is the worst thing to
-be approximately right about. So distance and bearing from the DER are reported and sector
-membership is left to a procedure designer. The JSON emits `sector_membership: {decided: false}`
-explicitly, because an absent field reads as an answer of "no". The EOSID net flight path is refused
-for the same reason and the plan agrees — it assigns that to an engineer.
+**The departure area is computed, against a named convention.** An earlier version refused this on
+the grounds that it needed the full PANS-OPS construction. That was wrong in kind: testing whether a
+point falls inside a published shape is the same work as deciding whether an aeroplane is Code E, and
+an operator wants to see it. `DepartureArea` does it.
+
+What is genuinely unsettled is the splay, and it is unsettled in the *sources* rather than in the
+arithmetic. Two published surfaces both use the number 15 and mean different things: classic PANS-OPS
+Doc 8168 splays **15 per cent** each side, the newer Annex 14 instrument departure surface **15
+degrees**. At 2.1 NM that is 733 m against 1192 m, so an obstacle can be inside one and outside the
+other. The convention is therefore a parameter with named presets — `PANS_OPS_STRAIGHT` and
+`OLS_INSTRUMENT_DEPARTURE` — and every answer says which it used. A `DepartureArea` that names both
+splays, or neither, is refused at construction.
+
+**Building the geometry found a real bug in the gradient.** `required_gradient` measured against the
+*radial* distance. An obstacle 30 degrees off the runway bearing at 2.1 NM is only 1.82 NM along
+track, so the radial figure gave 4.03% where the truth is 4.53% — under-reporting a required climb
+gradient, which errs in the direction that flies an aeroplane into something. It now decomposes
+bearing and distance into along-track and lateral first, and an obstacle resolving *behind* the DER
+gets no gradient at all rather than arithmetic about a climb that has already happened.
+
+**What is still refused is the engine-out net flight path**, and that one genuinely is certified
+engineering: it depends on the aeroplane's net performance, the operator's approved data and a
+designed escape path. The plan agrees and assigns it to an engineer. Obstacles are flagged for that
+review with the numbers it needs, and the JSON says `eosid: {computed: false}` with the reason.
 
 `penetrates_ois` defaults its surface origin to **0 m** (TERPS) rather than ICAO's 5 m. The lower
 surface reports more obstacles as penetrating, and conservative is the right default for a check
