@@ -1215,62 +1215,27 @@ def route_profile(
     network is exactly the aerodromes this sector uses, each at the role it
     actually serves.
 
-    The departure aerodrome enters as a destination role rather than as an
-    en-route one. It is a planned landing on the return, its pavement and fire
-    category matter on the day, and giving it the en-route role — where
-    pavement and RFFS deliberately do not count — would quietly drop the checks
-    that keep an aeroplane out of trouble at the field it is sitting on.
-
-    A single alternate is marked ``sole_suitable``. With one named alternate
-    there is by definition nothing to swap to, so the condition is derived here
-    rather than waiting for the operator to notice; where they name several,
-    the judgement goes back to them, because only they know what their region,
-    approvals and handling actually allow.
+    The network itself is built by :meth:`aeropub.route.Route.as_profile`,
+    which is the one place in the platform that decides what role a city pair
+    puts each aerodrome in. That decision was briefly made in two places, and
+    two implementations of a role assignment is how a take-off alternate ends
+    up assessed as an en-route one in half the product.
     """
+    from aeropub.route import Route  # local: route imports sweep, which is heavy
+
     resolved = fleet_of(library, code)
-    fleet = resolved.fleet
+    held = resolved.fleet
     if designators is not None:
         wanted = {_designator(d) for d in designators}
-        fleet = Fleet(tuple(t for t in fleet if t.designator.upper() in wanted))
+        held = Fleet(tuple(t for t in held if t.designator.upper() in wanted))
 
-    listed = [normalise(a) for a in alternates if str(a).strip()]
-    sole = len(set(listed)) == 1
-
-    entries = [
-        NetworkEntry(aerodrome=departure, role=Role.DESTINATION, group="departure"),
-        NetworkEntry(aerodrome=destination, role=Role.DESTINATION, group="destination"),
-    ]
-    entries += [
-        NetworkEntry(
-            aerodrome=where,
-            role=Role.ALTERNATE,
-            sole_suitable=sole,
-            group=f"{normalise(destination)} alternates",
-        )
-        for where in listed
-    ]
-    if str(takeoff_alternate).strip():
-        entries.append(
-            NetworkEntry(
-                aerodrome=takeoff_alternate,
-                role=Role.TAKEOFF_ALTERNATE,
-                sole_suitable=True,
-                group=f"{normalise(departure)} take-off alternates",
-            )
-        )
-    listed_enroute = [normalise(a) for a in enroute_alternates if str(a).strip()]
-    entries += [
-        NetworkEntry(
-            aerodrome=where,
-            role=Role.EDTO_ALTERNATE,
-            sole_suitable=len(set(listed_enroute)) == 1,
-            group=f"{normalise(departure)}-{normalise(destination)} en-route alternates",
-        )
-        for where in listed_enroute
-    ]
-
-    return OperatorProfile(
-        name=resolved.operator.name,
-        fleet=fleet,
-        network=Network(tuple(entries)),
+    sector = Route(
+        departure=departure,
+        destination=destination,
+        alternates=tuple(str(a) for a in alternates if str(a).strip()),
+        takeoff_alternate=takeoff_alternate,
+        enroute_alternates=tuple(
+            str(a) for a in enroute_alternates if str(a).strip()
+        ),
     )
+    return sector.as_profile(held, name=resolved.operator.name)

@@ -60,6 +60,7 @@ from aeropub.operator import profile_template
 from aeropub.quality import assess_quality
 from aeropub.render import render_dossier
 from aeropub.retrospect import blind_spots, retrospect
+from aeropub.route import Jurisdiction, Route, build_route_dossier
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
@@ -699,6 +700,56 @@ def _cmd_fleet(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_route(args: argparse.Namespace) -> int:
+    """Assemble everything held about one sector, and say what is missing.
+
+    The aerodromes go through the same sweep the network report uses, so a
+    verdict here is the verdict there. What this adds is the regions between
+    them — and the headline is how much of the route we can speak for, not a
+    risk score.
+    """
+    aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
+    crosses = tuple(
+        Jurisdiction(designator=name) for name in (args.crosses or ())
+    )
+    sector = Route(
+        departure=args.departure,
+        destination=args.destination,
+        alternates=tuple(args.alternate or ()),
+        takeoff_alternate=args.takeoff_alternate or "",
+        enroute_alternates=tuple(args.enroute_alternate or ()),
+        crosses=crosses,
+        designator=aircraft.designator,
+        reference=args.reference or "",
+    )
+
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        moment = _moment(args)
+        document = build_route_dossier(
+            store,
+            sector,
+            fleet=[aircraft],
+            as_at=moment,
+            on=_day(args.on, moment.date()),
+            register=NotamRegister(),
+            coverage=AipCoverage(),
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        # Adverse on anything above medium, or on a route we cannot speak for.
+        # An inconclusive route dossier is not a pass: most of what it did not
+        # cover, it did not cover because nobody has read it.
+        return (
+            ADVERSE
+            if document.overall.rank <= Exposure.MEDIUM.rank
+            or not document.is_conclusive
+            else OK
+        )
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -975,6 +1026,41 @@ def _parser() -> argparse.ArgumentParser:
         help="print a blank library document to fill in from a source you hold",
     )
     library.set_defaults(handler=_cmd_fleet)
+
+    sector = add(
+        "route",
+        "one sector end to end — both ends, the alternates, and the regions "
+        "between them",
+        aerodrome=False,
+    )
+    sector.add_argument("--from", dest="departure", required=True, metavar="ICAO")
+    sector.add_argument("--to", dest="destination", required=True, metavar="ICAO")
+    sector.add_argument(
+        "--aircraft", required=True, action="append", metavar="MANIFEST",
+        help="path to an aircraft manifest, repeatable",
+    )
+    sector.add_argument(
+        "--alternate", action="append", metavar="ICAO",
+        help="destination alternate, repeatable. One is treated as sole suitable",
+    )
+    sector.add_argument(
+        "--takeoff-alternate", dest="takeoff_alternate", default=None, metavar="ICAO"
+    )
+    sector.add_argument(
+        "--enroute-alternate", dest="enroute_alternate", action="append",
+        metavar="ICAO", help="en-route or EDTO alternate, repeatable",
+    )
+    sector.add_argument(
+        "--crosses", action="append", metavar="FIR",
+        help=(
+            "a flight information region this sector crosses, in order of "
+            "overflight, repeatable. Regions not named are not checked, and "
+            "the dossier says so."
+        ),
+    )
+    sector.add_argument("--reference", default=None, help="your own name for this sector")
+    sector.add_argument("--on", default=None)
+    sector.set_defaults(handler=_cmd_route)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

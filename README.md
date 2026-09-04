@@ -84,6 +84,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Fleet library — operators, tails and types, with a bibliography for what nobody has read
 - [x] 24/7 supervision — per-host politeness, circuit breakers, dead man's switch, outages stated
 - [x] Chart studies — the plate that should have moved and did not, and the one that moved unexplained
+- [x] Route dossiers — both ends, the alternates, and the regions between them, with the gaps counted
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -122,7 +123,18 @@ aeropub fleet OTHH --library register.json --operator QTR # which of their types
 
 aeropub charts --template > plates.json     # fill it in from the State's own chart index
 aeropub charts OTHH --register plates.json  # did the plates follow the AIP, and did the AIP follow the plates
+
+aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+    --alternate EGKK --alternate EGSS \
+    --crosses OBBB --crosses OIIX --crosses LTAA --crosses LBSR --crosses EBUR
 ```
+
+A route dossier's headline is not a risk score. It is how much of the route the platform can
+speak for — places read, out of places crossed. A sector whose two ends are read and whose five
+regions are not is 2 of 7, and it says so at the top, because a document with five empty sections
+otherwise reads exactly like a route with nothing wrong. It also names what it did not look at
+at all: terrain, driftdown, RAD and PBN need ENR content no parser reaches yet, and an
+approximated driftdown corridor is worse than none — it is one somebody might fly.
 
 The library is the base that makes the first session a lookup rather than a form. One document
 holds one kind of claim — a national register, an operator's own fleet list, an observation set —

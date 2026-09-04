@@ -40,7 +40,10 @@ __all__ = [
     "beneath",
     "compose",
     "covers",
+    "designator_of",
     "is_free_standing",
+    "kind_of",
+    "named",
     "normalise",
     "scope_of",
 ]
@@ -141,6 +144,53 @@ def under(aerodrome: str, scope: str) -> str:
     if not thing:
         raise ValueError(f"cannot key an object on {ad} with no scope")
     return f"{ad}{SEPARATOR}{thing}"
+
+
+def named(kind: str, designator: str) -> str:
+    """Build a key for an object belonging to no aerodrome.
+
+    ``named("FIR", "OTDF")`` gives ``"FIR:OTDF"``. The counterpart of
+    :func:`compose` for the free-standing half of the grammar, and it exists
+    for the same reason: the separator was never written out anywhere before
+    because nothing built these keys, and the first module that needed one
+    would have joined the halves itself.
+
+    A kind containing the aerodrome separator is refused. ``"A/B:C"`` parses as
+    an object on an aerodrome, not as a free-standing thing, so a key built
+    that way would be silently rolled up under an aerodrome called ``A``.
+    """
+    prefix = normalise(kind)
+    thing = normalise(designator)
+    if not prefix:
+        raise ValueError(
+            f"cannot name {thing} with no kind: a bare designator does not say "
+            "whether it is an airspace, a route or a navaid"
+        )
+    if not thing:
+        raise ValueError(f"cannot name a {prefix} with no designator")
+    if SEPARATOR in prefix:
+        raise ValueError(
+            f"kind {prefix!r} contains {SEPARATOR!r}, which divides an "
+            "aerodrome from an object on it. A key built this way would be "
+            "rolled up under an aerodrome that does not exist."
+        )
+    return f"{prefix}{KIND_SEPARATOR}{thing}"
+
+
+def kind_of(key: str) -> str | None:
+    """The kind of a free-standing key, or ``None`` where it hangs from an aerodrome."""
+    canonical = normalise(key)
+    if not is_free_standing(canonical):
+        return None
+    return canonical.partition(KIND_SEPARATOR)[0] or None
+
+
+def designator_of(key: str) -> str | None:
+    """The designator of a free-standing key. The inverse of :func:`named`."""
+    canonical = normalise(key)
+    if not is_free_standing(canonical):
+        return None
+    return canonical.partition(KIND_SEPARATOR)[2] or None
 
 
 def covers(parent: str, key: str) -> bool:

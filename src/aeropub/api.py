@@ -61,6 +61,7 @@ from aeropub.quality import QualityFinding, QualityReport
 from aeropub.operator import ExposureFinding, OperatorAssessment
 from aeropub.registry import Redistribution
 from aeropub.retrospect import Blindness, LateArrival, Retrospect, Revision
+from aeropub.route import RouteDossier
 from aeropub.suitability import Check, Note, Suitability
 from aeropub.currency import DataCurrency
 from aeropub.sweep import AerodromeExposure, GroupRedundancy, NetworkSweep
@@ -1229,6 +1230,92 @@ def chart_review(
     }
 
 
+def route_dossier(
+    item: RouteDossier, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """One sector, assembled from everything held about it.
+
+    ``spoken_for`` and ``places`` are the headline and they sit at the top for
+    the reason the document puts them there: a payload whose sections are
+    simply absent where nothing is held reads identically to one for a route
+    with nothing wrong. ``not_addressed`` is carried for the same reason —
+    what the platform did not look at is part of the answer.
+    """
+    read, total = item.coverage
+    return {
+        "route": {
+            "reference": item.route.reference,
+            "label": item.route.label,
+            "departure": item.route.departure,
+            "destination": item.route.destination,
+            "alternates": list(item.route.alternates),
+            "takeoff_alternate": item.route.takeoff_alternate,
+            "enroute_alternates": list(item.route.enroute_alternates),
+            "designator": item.route.designator,
+            "crosses": [
+                {
+                    "designator": j.designator,
+                    "name": j.name,
+                    "publisher": j.publisher,
+                    "entity": j.key,
+                }
+                for j in item.route.crosses
+            ],
+        },
+        "as_at": _moment(item.as_at),
+        "on": _day(item.on),
+        "spoken_for": read,
+        "places": total,
+        "conclusive": item.is_conclusive,
+        "overall": item.overall.value,
+        "sweep": network_sweep(item.sweep, licensing=licensing),
+        "jurisdictions": [
+            {
+                "designator": j.jurisdiction.designator,
+                "publisher": j.jurisdiction.publisher,
+                "covered": j.is_covered,
+                "current": j.is_current,
+                "facts_held": j.facts_held,
+                "transition_altitude_ft": j.transition_altitude_ft,
+                "transition_level": j.transition_level,
+            }
+            for j in item.jurisdictions
+        ],
+        "altimetry": {
+            "complete": item.altimetry.is_complete,
+            "changes": [
+                {
+                    "leaving": b.leaving.designator,
+                    "entering": b.entering.designator,
+                    "from_ft": b.from_ft,
+                    "to_ft": b.to_ft,
+                    "delta_ft": b.delta_ft,
+                }
+                for b in item.altimetry.changes
+            ],
+            "unknown": [
+                {"leaving": b.leaving.designator, "entering": b.entering.designator}
+                for b in item.altimetry.unknown
+            ],
+        },
+        "open_items": [
+            {
+                "where": i.where,
+                "what": i.what,
+                "severity": i.severity.value,
+                "why": i.why,
+            }
+            for i in item.open_items
+        ],
+        "not_addressed": list(item.not_addressed),
+        "disclaimer": (
+            "An assembly of what is held about one sector. Not a flight plan, "
+            "not a performance calculation, and silent on everything listed "
+            "under not_addressed."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -1247,6 +1334,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (RuntimeReport, "runtime_tick", runtime_report),
     (ChartReview, "chart_review", chart_review),
     (Chart, "chart", chart),
+    (RouteDossier, "route_dossier", route_dossier),
     (Fact, "fact", fact),
 )
 
