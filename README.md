@@ -68,8 +68,35 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Printable dossier — a controlled document that renders the payload verbatim
 - [x] Aircraft reference code and pavement — Annex 14 Table 1-1, ACN against PCN, no figures shipped
 - [x] Aerodrome suitability — code, pavement, width and fire category, with every unmade check named
+- [x] Citation manifests — a cited way in for the States no parser reaches
+- [x] Command line — `aeropub dossier`, `bulletin`, `horizon`, `quality`, `lens`, `fit`, `load`
 - [ ] First captured fixture from a State that publishes an eAIP
 - [ ] eAIP parser feeding facts into the change record
+
+## Using it
+
+```
+pip install -e .
+
+aeropub load --template > othh-ad2.json     # fill it in from the AIP page you are reading
+aeropub load othh-ad2.json                  # the document is hashed as it loads
+aeropub store -v                            # what is now held
+
+aeropub dossier OTHH                        # every AD 2 section, held or not
+aeropub horizon OTHH                        # what changes next, announced or not
+aeropub bulletin OTHH --from 2609 --to 2610 # what changed, and what was not compared
+aeropub lens OTHH --audience flight_crew    # one reader's view, gaps never filtered out
+aeropub quality                             # how this State publishes, against PANS-AIM
+
+aeropub aircraft --template > b77w.json     # fill it in from an ACAP document you hold
+aeropub fit OTHH --aircraft b77w.json       # code, pavement, width, fire category
+```
+
+Add `--json` to any report for the API payload, or `--html FILE` to a dossier for a printable page.
+The store defaults to `aeropub.db`; `--store` or `AEROPUB_STORE` moves it.
+
+Exit codes: `0` produced a document, `1` the answer is adverse, `2` the command could not run. An
+inconclusive assessment exits `0` — "I could not tell" is not "no".
 
 ## Development
 

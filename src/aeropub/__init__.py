@@ -22,6 +22,7 @@ The connectors live in subpackages — :mod:`aeropub.faa` today — and are not
 imported here, so ``import aeropub`` costs nothing a caller has not asked for.
 """
 
+from aeropub.acap import load_aircraft, merge
 from aeropub.aip import (
     AipCoverage,
     HoldingState,
@@ -48,6 +49,8 @@ from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.changes import Change, ChangeKind, diff_cycles, diff_effective
 from aeropub.facts import Fact, FactStore, Precedence
 from aeropub.impact import Direction, Impact, assess
+from aeropub.ingest import load_facts
+from aeropub.manifest import ManifestError, sha256_of
 from aeropub.provenance import Confidence, SourceRef
 from aeropub.quality import FindingKind, QualityFinding, QualityReport, assess_quality
 from aeropub.store import SqliteFactStore, open_store
@@ -137,14 +140,18 @@ __all__ = [
     "ForceState",
     "Freshness",
     "HoldingState",
-    "Horizon",
     "horizon",
+    "Horizon",
     "Impact",
     "Lens",
     "lens_for",
     "LENSES",
     "LensView",
     "Licensing",
+    "load_aircraft",
+    "load_facts",
+    "ManifestError",
+    "merge",
     "minimum_runway_width_m",
     "ndjson",
     "Notam",
@@ -172,6 +179,7 @@ __all__ = [
     "SectionEntry",
     "SectionHolding",
     "Severity",
+    "sha256_of",
     "Source",
     "SourceFormat",
     "SourceKind",

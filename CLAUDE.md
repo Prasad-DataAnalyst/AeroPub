@@ -191,6 +191,48 @@ the current edition before anything operational depends on them, and treat a Tab
 `RESTRICTED` rather than a prohibition — it is a design standard, and States approve narrower
 runways.
 
+## Getting data in, and getting it out
+
+`cli.py` is the one way to run any of this: `python -m aeropub <command>`, or `aeropub` once
+installed. Every command opens the store, calls the same function `api.py` calls, and prints. Nothing
+is computed there, so there is no path by which the terminal and the JSON can disagree about the
+same aerodrome — which is exactly when the two get compared.
+
+Exit codes carry meaning and a script depends on it. `0` produced a document, `1` the answer is
+adverse, `2` the command could not run. **An inconclusive assessment exits `0`, not `1`**: "I could
+not tell" is not "no", and a caller that conflates them acts on the wrong one.
+
+Every command over an empty store says the store is empty, in its own output. That line separates
+"we read the AIP and there is nothing to report" from "nobody has ever loaded anything", and those
+are opposite answers that otherwise print an identical document.
+
+`manifest.py` holds the citation-manifest machinery both loaders share: one file describes one
+document, the document is hashed **as the file loads**, and every value inside points at where in it
+the value was found. The hash proves which document, the locator proves where, and a citation
+missing either is one a reviewer cannot resolve. Prefer `document_path` over `content_hash` — the
+citation then cannot be written unless the document is on disk to be hashed. There is no partial
+success anywhere: one uncitable value fails the file, because a store that is nearly all cited is
+one people stop checking.
+
+`ingest.py` is the answer to a real problem, not a shortcut around the eAIP parser. Most of the 180
+States do not publish a machine-readable eAIP, and "we have no parser for Chad" is a fact about us,
+not about Chad. An AIS officer reads AD 2.12 and writes a manifest; it loads into the same store
+with the same bitemporal model, and every downstream component cannot tell the difference and should
+not. `parser_id` records `aip-manifest` rather than an extractor's name, because a transcription
+error and a parser defect have different failure modes and must trace separately. `precedence` is
+required and never defaulted: a supplement loaded as an AIP sits *beneath* the base it is meant to
+override, and the effective state comes out wrong with nothing downstream able to detect it.
+
+`acap.py` is the same discipline for aircraft. **One manifest, one document, one origin** — a
+characteristic may not declare an origin of its own, because the citation it would carry is the
+manifest's, so an operator figure inside an ACAP manifest comes out cited to the ACAP. That is worse
+than an uncited figure: it resolves, to the wrong page. Write a second manifest and `merge()`; each
+figure then keeps the citation it was read with, and the operator half still stays out of
+`redistributable`.
+
+Both loaders offer `--template`, and both templates carry `null` for every value. There is nothing
+in them for somebody to keep who did not open the document, and neither loads as it stands.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the
