@@ -47,6 +47,7 @@ from typing import Any, Callable, Iterable, Iterator, Mapping
 
 from aeropub.aircraft import Characteristic
 from aeropub.bulletin import ChangeBulletin, ReportedChange
+from aeropub.charts import Chart, ChartReview, Minimum
 from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
 from aeropub.fleet import FleetScreen, OperatorFleet
@@ -1123,6 +1124,111 @@ def runtime_report(
     }
 
 
+def _minimum(item: Minimum) -> dict[str, Any]:
+    return {
+        "category": item.category,
+        "line": item.line,
+        "da_ft": item.da_ft,
+        "mda_ft": item.mda_ft,
+        "rvr_m": item.rvr_m,
+        "vis_m": item.vis_m,
+        "source_ref": source_ref(item.source),
+    }
+
+
+def chart(item: Chart, *, licensing: Licensing = _PERMISSIVE) -> dict[str, Any]:
+    """One published chart as the State's index describes it.
+
+    ``transcribed`` is a first-class field. Without it an empty ``minima``
+    array is ambiguous between a chart nobody has read and a chart with no
+    minima, and those are opposite answers.
+    """
+    return {
+        "aerodrome": item.aerodrome,
+        "kind": item.kind.value,
+        "identifier": item.identifier,
+        "label": item.label,
+        "revision": item.revision,
+        "cycle": item.cycle,
+        "runways": list(item.runways),
+        "amended": item.amended,
+        "transcribed": item.is_transcribed,
+        "minima": [_minimum(m) for m in item.minima],
+        "requirements": [
+            {
+                "code": r.code,
+                "detail": r.detail,
+                "source_ref": source_ref(r.source),
+            }
+            for r in item.requirements
+        ],
+        "note": item.note,
+        "source_ref": source_ref(item.source),
+    }
+
+
+def chart_review(
+    item: ChartReview, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """A chart set reconciled against the AIP changes that should drive it.
+
+    Both directions are carried, and ``unmapped`` alongside them. A consumer
+    reading ``discrepancies`` alone would see a clean reconciliation on a
+    review that never decided what half the changes implied — which is why
+    ``conclusive`` sits at the top rather than being derivable.
+    """
+    transcribed, registered = item.register.coverage()
+    return {
+        "aerodrome": item.aerodrome,
+        "on": _day(item.on),
+        "from_cycle": item.from_cycle,
+        "to_cycle": item.to_cycle,
+        "conclusive": item.is_conclusive,
+        "registered": registered,
+        "transcribed": transcribed,
+        "amended": [c.identifier for c in item.register.amended],
+        "expected": [
+            {
+                "chart": e.chart.identifier,
+                "kind": e.chart.kind.value,
+                "entity": e.entity,
+                "attribute": e.attribute,
+                "change": e.change.describe(),
+            }
+            for e in item.expected
+        ],
+        "discrepancies": [
+            {
+                "chart": d.chart.identifier,
+                "kind": d.chart.kind.value,
+                "revision": d.chart.revision,
+                "entity": d.change.entity,
+                "attribute": d.change.attribute,
+                "detail": d.describe(),
+            }
+            for d in item.discrepancies
+        ],
+        "unexplained": [
+            {
+                "chart": u.chart.identifier,
+                "kind": u.chart.kind.value,
+                "revision": u.chart.revision,
+                "detail": u.describe(),
+            }
+            for u in item.unexplained
+        ],
+        "unmapped": [
+            {"entity": c.entity, "attribute": c.attribute, "change": c.describe()}
+            for c in item.unmapped
+        ],
+        "disclaimer": (
+            "A reconciliation between two published things, not a reading of "
+            "the chart image. A discrepancy says the AIP and the chart index "
+            "disagree; it does not say which of them is wrong."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -1139,6 +1245,8 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (OperatorFleet, "operator_fleet", operator_fleet),
     (FleetScreen, "fleet_screen", fleet_screen),
     (RuntimeReport, "runtime_tick", runtime_report),
+    (ChartReview, "chart_review", chart_review),
+    (Chart, "chart", chart),
     (Fact, "fact", fact),
 )
 

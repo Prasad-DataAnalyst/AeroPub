@@ -83,6 +83,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Review gate — severity-configurable, attestation bound to what was attested
 - [x] Fleet library — operators, tails and types, with a bibliography for what nobody has read
 - [x] 24/7 supervision — per-host politeness, circuit breakers, dead man's switch, outages stated
+- [x] Chart studies — the plate that should have moved and did not, and the one that moved unexplained
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -118,6 +119,9 @@ aeropub fleet --template > register.json      # fill it in from a register or a 
 aeropub fleet --library register.json         # coverage per type, operators by tails held
 aeropub fleet --library register.json --operator QTR      # what they fly, and what we cannot check
 aeropub fleet OTHH --library register.json --operator QTR # which of their types can use it
+
+aeropub charts --template > plates.json     # fill it in from the State's own chart index
+aeropub charts OTHH --register plates.json  # did the plates follow the AIP, and did the AIP follow the plates
 ```
 
 The library is the base that makes the first session a lookup rather than a form. One document

@@ -38,6 +38,8 @@ from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
 from aeropub.bulletin import between_cycles
+from aeropub.changes import diff_cycles
+from aeropub.charts import load_register, register_template, review_charts
 from aeropub.credentials import CredentialStore, describe as describe_secret
 from aeropub.currency import Currency, assess_currency
 from aeropub.dossier import build
@@ -186,6 +188,63 @@ def _cmd_bulletin(args: argparse.Namespace) -> int:
         )
         _emit(document, args, document.render() + _emptiness_note(store, path))
         return OK
+    finally:
+        store.close()
+
+
+def _cmd_charts(args: argparse.Namespace) -> int:
+    """Reconcile a chart index against the AIP changes that should drive it.
+
+    Both directions. An expected amendment that did not arrive says the chart
+    set is behind the AIP; an amendment nothing explains says our AIP holdings
+    are behind the State, and that one is the more likely of the two.
+    """
+    if args.template:
+        print(register_template())
+        return OK
+    if not args.register:
+        print(
+            "give --register, or --template for a blank chart index",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    register = load_register(args.register)
+    if args.aerodrome and aerodrome_of(args.aerodrome) != register.aerodrome:
+        print(
+            f"{args.register} is the chart index for {register.aerodrome}, "
+            f"not {args.aerodrome}. Reconciling one aerodrome's plates against "
+            "another's changes would find nothing and say so confidently.",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        # Defaulting to the cycle now in force and the one before it. A
+        # planner asking whether the plates followed this cycle's changes
+        # should not have to name two cycle identifiers to be asked the
+        # question they already had in mind.
+        to_cycle = (
+            AiracCycle.from_identifier(args.to_cycle)
+            if args.to_cycle
+            else current_cycle()
+        )
+        from_cycle = (
+            AiracCycle.from_identifier(args.from_cycle)
+            if args.from_cycle
+            else to_cycle.previous
+        )
+        document = review_charts(
+            register,
+            diff_cycles(store, from_cycle, to_cycle, entity=register.aerodrome),
+            on=to_cycle.effective_date,
+            from_cycle=from_cycle.identifier,
+            to_cycle=to_cycle.identifier,
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        return ADVERSE if document.has_findings else OK
     finally:
         store.close()
 
@@ -738,6 +797,34 @@ def _parser() -> argparse.ArgumentParser:
     bulletin.add_argument("--from", dest="from_cycle", required=True, metavar="CYCLE")
     bulletin.add_argument("--to", dest="to_cycle", required=True, metavar="CYCLE")
     bulletin.set_defaults(handler=_cmd_bulletin)
+
+    plates = add(
+        "charts",
+        "reconcile a chart index against the AIP changes that should have "
+        "amended it",
+        aerodrome=False,
+    )
+    plates.add_argument(
+        "aerodrome", nargs="?", default=None,
+        help="ICAO location indicator, checked against the index (e.g. OTHH)",
+    )
+    plates.add_argument(
+        "--register", default=None, metavar="FILE",
+        help="path to a chart index manifest for one aerodrome",
+    )
+    plates.add_argument(
+        "--from", dest="from_cycle", default=None, metavar="CYCLE",
+        help="the cycle to compare from (default: the one before --to)",
+    )
+    plates.add_argument(
+        "--to", dest="to_cycle", default=None, metavar="CYCLE",
+        help="the cycle to compare to (default: the one now in force)",
+    )
+    plates.add_argument(
+        "--template", action="store_true",
+        help="print a blank chart index to fill in from a State's own index",
+    )
+    plates.set_defaults(handler=_cmd_charts)
 
     ahead = add("horizon", "what changes next, including what nobody will announce")
     ahead.add_argument("--days", type=int, default=DEFAULT_DAYS)
