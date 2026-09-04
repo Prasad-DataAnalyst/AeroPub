@@ -51,6 +51,7 @@ from aeropub.dossier import AerodromeDossier, SectionEntry, ValueLine
 from aeropub.facts import Fact
 from aeropub.fleet import FleetScreen, OperatorFleet
 from aeropub.gate import GateLog, Release
+from aeropub.runtime import RuntimeReport
 from aeropub.horizon import Horizon, Transition
 from aeropub.lenses import LensView
 from aeropub.obstacles import Obstacle, ObstacleChange, ObstacleReview
@@ -1063,6 +1064,65 @@ def fleet_screen(
     }
 
 
+def runtime_report(
+    item: RuntimeReport, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """One supervised tick — including everything it decided not to do.
+
+    ``restrained`` is not an operational detail that belongs in a log. A
+    consumer reading ``checked`` and ``changed`` alone would see a healthy tick
+    on a platform that was asking forty sources out of a hundred, and the
+    payload has to make that impossible. Same for ``gap``: a period nobody
+    watched is a fact about coverage, not about uptime.
+    """
+    return {
+        "at": _moment(item.at),
+        "alive": item.alive,
+        "quiet": item.quiet,
+        "due": item.due,
+        "asked": item.asked,
+        "checked": list(item.tick.checked),
+        "changed": list(item.tick.changed),
+        "failed": list(item.tick.failed),
+        "skipped": list(item.tick.skipped),
+        "overdue": list(item.tick.overdue),
+        "restrained": [
+            {
+                "source_id": held.source_id,
+                "reason": held.reason,
+                "until": _moment(held.until) if held.until else None,
+                "detail": held.detail,
+            }
+            for held in item.restrained
+        ],
+        "gap": (
+            {
+                "began": _moment(item.gap.began),
+                "ended": _moment(item.gap.ended),
+                "seconds": int(item.gap.duration.total_seconds()),
+            }
+            if item.gap is not None
+            else None
+        ),
+        "breakers": {
+            source_id: {
+                "state": breaker.state.value,
+                "failures": breaker.failures,
+                "blocked": breaker.was_blocked,
+                "error": breaker.last_error,
+                "ready_at": (
+                    _moment(breaker.ready_at()) if breaker.ready_at() else None
+                ),
+            }
+            for source_id, breaker in item.breakers.items()
+        },
+        "note": (
+            "A source that was held back is not a source that is fine. Read "
+            "restrained and gap before concluding anything from checked."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -1078,6 +1138,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (GateLog, "gate_log", gate_log),
     (OperatorFleet, "operator_fleet", operator_fleet),
     (FleetScreen, "fleet_screen", fleet_screen),
+    (RuntimeReport, "runtime_tick", runtime_report),
     (Fact, "fact", fact),
 )
 

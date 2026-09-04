@@ -295,6 +295,29 @@ class Watcher:
             self._last_hash[source.source_id] = result.content_hash
         return outcome
 
+    def _known_hash(self, source_id: str) -> str | None:
+        """The last content hash held for this source, across restarts.
+
+        In-memory only, this was a defect with a cost: a fresh process has an
+        empty map, so the first check after any restart compared the current
+        content against nothing and reported a change for every source at
+        once. On the order of a thousand sources, that is a deploy firing the
+        whole heavy pipeline and writing a change record for content nobody
+        changed.
+
+        The registry has already recorded the hash, so the fallback reads it
+        back. That is what the plan means by catching up on restart rather than
+        resuming: the comparison is against the last known state of the source,
+        not against where the queue happened to stop.
+        """
+        remembered = self._last_hash.get(source_id)
+        if remembered is not None:
+            return remembered
+        for outcome in reversed(self.registry.checks(source_id)):
+            if outcome.content_hash:
+                return outcome.content_hash
+        return None
+
     def _interpret(
         self, source: Source, result: FetchResult, moment: datetime
     ) -> CheckOutcome:
@@ -324,7 +347,7 @@ class Watcher:
                 error=result.error or "fetch failed",
             )
 
-        previous = self._last_hash.get(source.source_id)
+        previous = self._known_hash(source.source_id)
         changed = (
             not result.not_modified
             and result.content_hash is not None

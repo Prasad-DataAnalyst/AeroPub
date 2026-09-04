@@ -82,6 +82,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Trips — one flight, one aeroplane, one date, assessed for the day of the flight
 - [x] Review gate — severity-configurable, attestation bound to what was attested
 - [x] Fleet library — operators, tails and types, with a bibliography for what nobody has read
+- [x] 24/7 supervision — per-host politeness, circuit breakers, dead man's switch, outages stated
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
