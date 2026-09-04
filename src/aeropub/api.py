@@ -55,6 +55,7 @@ from aeropub.provenance import SourceRef
 from aeropub.quality import QualityFinding, QualityReport
 from aeropub.operator import ExposureFinding, OperatorAssessment
 from aeropub.registry import Redistribution
+from aeropub.retrospect import Blindness, LateArrival, Retrospect, Revision
 from aeropub.suitability import Check, Note, Suitability
 from aeropub.currency import DataCurrency
 from aeropub.sweep import AerodromeExposure, GroupRedundancy, NetworkSweep
@@ -68,6 +69,7 @@ __all__ = [
     "operator_assessment",
     "suitability",
     "network_sweep",
+    "retrospect_document",
     "ndjson",
     "to_json",
 ]
@@ -625,6 +627,75 @@ def network_sweep(
     }
 
 
+def _late_arrival(item: LateArrival) -> dict[str, Any]:
+    return {
+        "entity": item.fact.entity,
+        "attribute": item.fact.attribute,
+        "value": item.fact.value,
+        "effective_from": _day(item.effective_from),
+        "known_from": _moment(item.known_from),
+        "blind_hours": item.blind_hours,
+        "predates_watching": item.predates_watching,
+        "source_ref": source_ref(item.fact.source),
+    }
+
+
+def _revision(item: Revision, licensing: Licensing) -> dict[str, Any]:
+    return {
+        "entity": item.entity,
+        "attribute": item.attribute,
+        "changed": item.changed,
+        "appeared": item.appeared,
+        "withdrawn": item.withdrawn,
+        "restated": item.restated,
+        "then": fact(item.then, licensing=licensing) if item.then else None,
+        "now": fact(item.now, licensing=licensing) if item.now else None,
+    }
+
+
+def _blindness(item: Blindness) -> dict[str, Any]:
+    return {
+        "summary": item.summary(),
+        "late": [_late_arrival(a) for a in item.late],
+    }
+
+
+def retrospect_document(
+    item: Retrospect, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """What was knowable at a moment, beside what is held now.
+
+    Both readings travel, never one. A payload carrying only ``now`` would be
+    the corrected record wearing a past date, which is the confusion this whole
+    document exists to prevent — so every revision emits ``then`` and ``now``
+    side by side, each with its own citation.
+
+    ``notam_is_retrospective`` is emitted even though it is always false today.
+    A consumer must be able to see that the NOTAM picture is current rather
+    than contemporaneous, and a field that is absent teaches nobody anything.
+    """
+    return {
+        "entity": item.entity,
+        "on": _day(item.on),
+        "as_known_at": _moment(item.as_known_at),
+        "faithful": item.is_faithful,
+        "summary": item.summary(),
+        "revisions": [_revision(r, licensing) for r in item.revisions],
+        "changed": [
+            {"entity": r.entity, "attribute": r.attribute}
+            for r in item.changed
+        ],
+        "blindness": _blindness(item.blindness),
+        "notam_is_retrospective": item.notam_is_retrospective,
+        "note": (
+            "`then` is what could have been printed at as_known_at; `now` is "
+            "today's corrected record for the same day. They are different "
+            "answers and both are given. NOTAM are not filtered to past "
+            "knowledge - the register records effectivity, not when we learned."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -634,6 +705,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (Suitability, "aerodrome_suitability", suitability),
     (OperatorAssessment, "operator_exposure", operator_assessment),
     (NetworkSweep, "network_sweep", network_sweep),
+    (Retrospect, "retrospect", retrospect_document),
     (Fact, "fact", fact),
 )
 

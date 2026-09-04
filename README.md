@@ -76,6 +76,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Data currency — staleness in AIRAC cycles, so a clear verdict states its own age
 - [x] Redundancy analysis — a region down to one alternate, which no aerodrome reports
 - [x] eAIP reader — layout as configuration, with a prober that drafts it from a real page
+- [x] Time machine — what was knowable at a past moment, beside what is held now
+- [x] Collection blindness — how long a change was in force before we held it
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -100,6 +102,9 @@ aeropub exposure --template > fleet.json    # your fleet, your network, your rol
 aeropub exposure OTHH --profile fleet.json  # what it means for you, per type
 aeropub sweep --profile fleet.json          # your whole network, ranked
 aeropub currency --stale-only               # what has gone stale, in AIRAC cycles
+
+aeropub retrospect OTHH --known 2026-10-12T06:00Z   # what could we have said that morning
+aeropub blindspots                                  # how late our own collection was
 ```
 
 ### Onboarding a State

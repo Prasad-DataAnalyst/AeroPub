@@ -106,6 +106,14 @@ from aeropub.notam_register import (
 )
 from aeropub.validation import Finding, Severity, validate
 from aeropub.render import render_dossier
+from aeropub.retrospect import (
+    Blindness,
+    LateArrival,
+    Retrospect,
+    Revision,
+    blind_spots,
+    retrospect,
+)
 from aeropub.registry import (
     CheckOutcome,
     CredentialRef,
@@ -140,6 +148,8 @@ __all__ = [
     "Attention",
     "Audience",
     "between_cycles",
+    "blind_spots",
+    "Blindness",
     "build_dossier",
     "Change",
     "ChangeBulletin",
@@ -182,6 +192,7 @@ __all__ = [
     "Horizon",
     "horizon",
     "Impact",
+    "LateArrival",
     "Lens",
     "lens_for",
     "LENSES",
@@ -219,11 +230,14 @@ __all__ = [
     "RegisteredNotam",
     "render_board",
     "render_dossier",
+    "Retrospect",
+    "retrospect",
+    "Revision",
     "rffs_category",
     "Role",
     "scope_of",
-    "Section",
     "section",
+    "Section",
     "SectionEntry",
     "SectionHolding",
     "Severity",

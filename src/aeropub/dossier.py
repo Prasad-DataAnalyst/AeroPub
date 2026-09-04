@@ -119,6 +119,13 @@ class AerodromeDossier:
 
     cycle: AiracCycle | None = None
 
+    as_known_at: datetime | None = None
+    """The moment whose knowledge this was built from, or ``None`` for now.
+
+    Present in the document rather than only in the call, because a printed
+    dossier that does not say it is a retrospective view is indistinguishable
+    from a current one."""
+
     # -- views -----------------------------------------------------------
 
     @property
@@ -175,6 +182,14 @@ class AerodromeDossier:
             f"AERODROME DOSSIER — {self.aerodrome}",
             f"as at {self.as_at:%Y-%m-%d %H:%MZ}  ·  effective state on "
             f"{self.on:%Y-%m-%d}{cycle}",
+            *(
+                [
+                    f"RETROSPECTIVE — built from what was known at "
+                    f"{self.as_known_at:%Y-%m-%d %H:%MZ}, not from what is known now",
+                ]
+                if self.as_known_at is not None
+                else []
+            ),
             "",
             f"{counts['held']} of {counts['sections']} AD 2 sections held  ·  "
             f"{counts['absent']} not published  ·  {counts['gaps']} unaccounted for",
@@ -228,6 +243,7 @@ def build(
     register: NotamRegister | None = None,
     as_at: datetime | None = None,
     on: date | None = None,
+    as_known_at: datetime | None = None,
     cycle: AiracCycle | None = None,
 ) -> AerodromeDossier:
     """Assemble the dossier for one aerodrome.
@@ -237,6 +253,20 @@ def build(
     with no register says plainly that no NOTAM were indexed. Nothing is
     silently skipped, because a report that omits what it was not given is
     indistinguishable from one where there was nothing to say.
+
+    Two different dates, and confusing them is the trap
+    --------------------------------------------------
+    ``on`` is **valid time**: which day the effective state is resolved for.
+    ``as_known_at`` is **transaction time**: the moment whose *knowledge* to
+    use. Left unset it means now, and the dossier is the corrected record —
+    everything we hold today about that day, including a NOTAM that reached us
+    three days late.
+
+    Set it, and the dossier becomes what could actually have been produced at
+    that moment. For a safety investigation that is the only honest answer:
+    "what was in force on the 15th" and "what anybody could have known on the
+    15th" are different documents, and reporting the first as the second
+    quietly blames a crew for not knowing something nobody had sent them yet.
     """
     moment = as_at or datetime.now(timezone.utc)
     if moment.tzinfo is None:
@@ -256,7 +286,7 @@ def build(
     unplaced: list[ValueLine] = []
     for entity in sorted(e for e in store.entities() if covers(key, e)):
         for attribute in sorted(store.attributes(entity)):
-            fact = store.effective(entity, attribute, day)
+            fact = store.effective(entity, attribute, day, as_known_at=as_known_at)
             if fact is None:
                 # Nothing in force on this day. Not an error and not a value —
                 # the attribute simply has no answer for this date.
@@ -291,6 +321,7 @@ def build(
         notams=notams,
         unplaced=tuple(unplaced),
         cycle=cycle,
+        as_known_at=as_known_at,
     )
 
 

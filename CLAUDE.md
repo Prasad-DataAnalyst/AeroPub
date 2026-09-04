@@ -474,6 +474,53 @@ hours. Exceeding them needs FAA approval and produces errors.
 The production host is **not named in any document supplied with registration**. It carries
 `confirmed=False` so a guess cannot read like a fact.
 
+## The time machine, and the distinction it protects
+
+`retrospect.py` is plan section 27's highest-value roadmap item, and it needed almost no new
+machinery: facts already carried `valid_from` and `recorded_at`, the archive is never pruned, and
+`effective()` already took `as_known_at`. What was missing was the question.
+
+**"What was in force on 15 October" and "what anybody could have known on 15 October" are different
+documents.** The first is the corrected record — today's holdings filtered to that day, including a
+NOTAM that reached us three days late. The second is what the platform could actually have printed
+that morning. Every system with a date picker returns the first and calls it history; for a safety
+investigation the second is the only honest answer, because reporting the corrected record as
+contemporaneous quietly blames a crew for not knowing something nobody had sent them yet.
+
+So nothing here returns one number. `Revision` carries `then` and `now` side by side, each with its
+own citation, and the JSON emits both — a payload with only `now` would be the corrected record
+wearing a past date. `dossier.build()` takes `as_known_at` and a retrospective dossier announces
+itself in its own header, because a printed one that does not is indistinguishable from a current
+one.
+
+### Blindness is a measure of us, not of the State
+
+The measurement that falls out is the one nobody publishes: how long a change was operationally in
+force before we held it. A NOTAM effective 11 October at 1420Z, recorded 14 October at 0900Z, is an
+**81-hour blind window** during which every dossier for that aerodrome was confidently wrong and said
+nothing to suggest it.
+
+Two exclusions are what make the number mean anything, and the first was a bug found by running it.
+A standing AIP value effective since January, first read when the aerodrome was onboarded in
+September, reported **5832 hours blind** — which is not lateness, it is onboarding, and counting it
+made every new source look catastrophic while burying the case that matters. `watching_since` fixes
+it. The second exclusion is a fact recorded *before* it takes effect, which is the healthy case: an
+AIRAC amendment held 42 days ahead.
+
+`quality.py` measures how well a State publishes. This is the mirror: how well we read.
+
+### Two limits stated in the output rather than in a docstring
+
+**NOTAM are not retrospective.** The register records when a NOTAM is effective, not when we learned
+of it, so it cannot be filtered to past knowledge. `notam_is_retrospective` is a field on the
+document and always false today — a consumer must be able to see that the NOTAM picture is current,
+and an absent field teaches nobody anything. Making the register bitemporal is real work and is not
+pretended.
+
+**An attribute with nothing on either side was not compared.** Counting it as agreement inflates the
+denominator: "4 of 5 read the same" implies four were examined and matched, when four had no value in
+force that day at all. `compared` is the honest denominator and `not_in_force` is reported separately.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

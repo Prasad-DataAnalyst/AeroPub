@@ -439,3 +439,58 @@ class TestCurrency:
         _, out, _ = run(capsys, "--store", store, "currency",
                         "--on", "2026-09-02", "--stale-only")
         assert "XXXX:" not in out
+
+
+class TestRetrospect:
+    def test_a_record_that_moved_exits_adverse(self, capsys, workspace):
+        # The finding, not a failure — a scripted audit acts on it.
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(
+            capsys, "--store", store, "retrospect", "XXXX",
+            "--known", "2019-01-01T00:00:00Z", "--on", "2026-01-01",
+        )
+        assert code == ADVERSE
+        assert "WHAT MOVED" in out
+
+    def test_it_always_states_the_notam_limitation(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        _, out, _ = run(
+            capsys, "--store", store, "retrospect", "XXXX",
+            "--known", "2026-09-04T12:00:00Z",
+        )
+        assert "NOTAM are NOT included" in out
+
+    def test_the_payload_carries_both_readings(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        _, out, _ = run(
+            capsys, "--store", store, "retrospect", "XXXX",
+            "--known", "2019-01-01T00:00:00Z", "--on", "2026-01-01", "--json",
+        )
+        payload = json.loads(out)
+        assert payload["aeropub"]["kind"] == "retrospect"
+        revision = payload["data"]["revisions"][0]
+        # Both readings travel. One alone would be the corrected record wearing
+        # a past date.
+        assert "then" in revision and "now" in revision
+        assert payload["data"]["notam_is_retrospective"] is False
+
+    def test_blindspots_over_a_prompt_store_is_clean(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        code, out, _ = run(capsys, "--store", store, "blindspots")
+        assert code == OK
+        assert "Nothing arrived late" in out
+
+    def test_blindspots_explains_what_it_excludes(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
+        _, out, _ = run(capsys, "--store", store, "blindspots")
+        assert "onboarding, not lateness" in out

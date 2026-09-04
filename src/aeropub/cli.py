@@ -50,6 +50,7 @@ from aeropub.operator import Exposure, assess_operator, load_profile
 from aeropub.operator import profile_template
 from aeropub.quality import assess_quality
 from aeropub.render import render_dossier
+from aeropub.retrospect import blind_spots, retrospect
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
@@ -456,6 +457,71 @@ def _cmd_credentials(args: argparse.Namespace) -> int:
     return ADVERSE if missing else OK
 
 
+def _cmd_retrospect(args: argparse.Namespace) -> int:
+    """What was knowable at a past moment, beside what is held now."""
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        known = datetime.fromisoformat(args.known.replace("Z", "+00:00"))
+        if known.tzinfo is None:
+            known = known.replace(tzinfo=timezone.utc)
+        document = retrospect(
+            store, args.aerodrome,
+            on=_day(args.on, known.date()),
+            as_known_at=known,
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        # A record that moved is the finding, not a failure. Exit adverse so a
+        # scripted audit can act on it.
+        return OK if document.is_faithful else ADVERSE
+    finally:
+        store.close()
+
+
+def _cmd_blindspots(args: argparse.Namespace) -> int:
+    """How late our own collection was. A measure of us, not of the State."""
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        entities = sorted({aerodrome_of(e) or e for e in store.entities()})
+        if args.aerodrome:
+            entities = [args.aerodrome.strip().upper()]
+        print(f"COLLECTION BLINDNESS - {path}")
+        print(
+            "How long each change was operationally in force before we held it."
+        )
+        print(
+            "Values predating our watching an entity are excluded: that is "
+            "onboarding, not lateness."
+        )
+        print()
+        worst_overall = 0.0
+        for entity in entities:
+            measured = blind_spots(store, entity, through=_moment(args))
+            counts = measured.summary()
+            if not counts["facts"]:
+                continue
+            mark = "" if not counts["late"] else (
+                f"  {counts['late']} late, worst {counts['worst_hours']:g}h"
+            )
+            print(f"  {entity:12} {counts['facts']} values{mark}")
+            for arrival in measured.late:
+                print(f"      {arrival.describe()}")
+            worst_overall = max(worst_overall, float(counts["worst_hours"]))
+        if worst_overall:
+            print()
+            print(
+                f"Worst blind window across the store: {worst_overall:g} hours. "
+                "Every report for that\nentity in that window was confidently "
+                "wrong and said nothing to suggest it."
+            )
+            return ADVERSE
+        print("  Nothing arrived late in what is held.")
+        return OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -632,6 +698,21 @@ def _parser() -> argparse.ArgumentParser:
                          help="store a secret, read from a prompt")
     secrets.add_argument("--forget", metavar="NAME", help="remove a stored secret")
     secrets.set_defaults(handler=_cmd_credentials)
+
+    back = add(
+        "retrospect",
+        "what was knowable at a past moment, beside what is held now",
+    )
+    back.add_argument("--known", required=True, metavar="MOMENT",
+                      help="the moment whose knowledge to use, ISO-8601 UTC")
+    back.add_argument("--on", default=None,
+                      help="the day to resolve (default: the day of --known)")
+    back.set_defaults(handler=_cmd_retrospect)
+
+    blind = add("blindspots", "how late our own collection was",
+                aerodrome=False)
+    blind.add_argument("aerodrome", nargs="?", help="narrow to one aerodrome")
+    blind.set_defaults(handler=_cmd_blindspots)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
