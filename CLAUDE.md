@@ -577,6 +577,42 @@ whether two readings describe one obstacle, and a wrong guess reads as a removal
 exactly the alert somebody would act on. `extended` catches the crane whose end date moved: four
 extensions are one works programme, not four unrelated messages.
 
+## Trips: the business aviation entry point
+
+An airline has a persistent network. A flight department has none — it flies to airports it has never
+studied, at days' notice, and the question is *"can I take this aeroplane into that airport on
+Thursday, and what will bite me?"* The plan calls this the faster path to a first paying customer,
+and it is also the lighter build, because `trip.py` is not a second engine: a `Trip` produces an
+`OperatorProfile` and everything downstream runs unchanged. A test asserts a flight department and an
+airline get the identical answer for the same aeroplane at the same aerodrome — the aerodrome does
+not know who is asking.
+
+**Two things a trip does that a network cannot.**
+
+It is assessed **for the day of the flight, not today**. A supplement lapsing on the 21st has already
+lapsed by the time an aeroplane arrives on the 25th, and assessing today clears an aerodrome that
+will not be clear when it matters. There is a test asserting the same trip flown today reads clear
+and on the 25th reads critical, so the date is doing the work rather than the fixture.
+
+It reports **what changes between now and departure**, with the forward window running to the flight
+date rather than the default 84 days — what changes after the aeroplane has left is somebody else's
+trip. Composed with the horizon, that produces the line no dispatcher can write by hand: *"fine
+today; on the 21st a supplement lapses and the fire category drops below what you need, and nobody
+will publish a word about it."*
+
+`sole_alternate` is **derived**, not declared. A flight department nominating one alternate is
+usually not thinking of it as sole-suitable; it is, and the grading treats it that way.
+
+`BIZAV_SECTIONS` names the sections a trip turns on with **what each absence actually means**. "AD 2.3
+not held" and "we do not know whether it is open when you arrive" are different sentences and only
+one of them stops a crew, so the consequence travels beside the code all the way into the JSON. A
+missing one makes the trip inconclusive, because an aeroplane fitting an aerodrome says nothing about
+whether it is open — a fit assessment that passes every check at a field nobody knows the hours of is
+not an answer to "can I go on Thursday".
+
+A trip **expires**. It is a question about a date, and once that date has passed a stale assessment
+sitting in a list looking current is the failure this guards.
+
 ## The entity key grammar
 
 `entities.py` owns how everything is named — `OTHH`, `OTHH/RWY34L`, `AIRSPACE:EGTT` — and it is the

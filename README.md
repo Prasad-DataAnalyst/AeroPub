@@ -79,6 +79,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 30.
 - [x] Time machine — what was knowable at a past moment, beside what is held now
 - [x] Collection blindness — how long a change was in force before we held it
 - [x] Obstacles — required climb gradient, OIS penetration, cycle delta, crane tracking
+- [x] Trips — one flight, one aeroplane, one date, assessed for the day of the flight
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -106,7 +107,14 @@ aeropub currency --stale-only               # what has gone stale, in AIRAC cycl
 
 aeropub retrospect OTHH --known 2026-10-12T06:00Z   # what could we have said that morning
 aeropub blindspots                                  # how late our own collection was
+
+aeropub trip --reference N901GX/25SEP --aircraft gl7t.json \
+    --on 2026-09-25 --from KTEB --to KASE --alternate KGJT
 ```
+
+A trip needs no profile file — a flight department asking about Thursday should not have to
+write a network definition first. It is assessed for the day of the flight, and reports what
+changes between now and then.
 
 ### Onboarding a State
 

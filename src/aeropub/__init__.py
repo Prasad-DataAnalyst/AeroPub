@@ -119,6 +119,13 @@ from aeropub.notam_register import (
     Subject,
     SubjectKind,
 )
+from aeropub.trip import (
+    BIZAV_SECTIONS,
+    LegAssessment,
+    Trip,
+    TripAssessment,
+    assess_trip,
+)
 from aeropub.validation import Finding, Severity, validate
 from aeropub.render import render_dossier
 from aeropub.retrospect import (
@@ -159,10 +166,12 @@ __all__ = [
     "assess_operator",
     "assess_quality",
     "assess_suitability",
+    "assess_trip",
     "Assessment",
     "Attention",
     "Audience",
     "between_cycles",
+    "BIZAV_SECTIONS",
     "blind_spots",
     "Blindness",
     "build_dossier",
@@ -211,6 +220,7 @@ __all__ = [
     "horizon",
     "Impact",
     "LateArrival",
+    "LegAssessment",
     "Lens",
     "lens_for",
     "LENSES",
@@ -285,6 +295,8 @@ __all__ = [
     "to_json",
     "Transition",
     "Trigger",
+    "Trip",
+    "TripAssessment",
     "validate",
     "view",
     "worst_exposure",

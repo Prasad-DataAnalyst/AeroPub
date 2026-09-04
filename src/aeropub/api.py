@@ -60,6 +60,7 @@ from aeropub.retrospect import Blindness, LateArrival, Retrospect, Revision
 from aeropub.suitability import Check, Note, Suitability
 from aeropub.currency import DataCurrency
 from aeropub.sweep import AerodromeExposure, GroupRedundancy, NetworkSweep
+from aeropub.trip import LegAssessment, TripAssessment
 
 __all__ = [
     "API_VERSION",
@@ -71,6 +72,7 @@ __all__ = [
     "suitability",
     "network_sweep",
     "obstacle_review",
+    "trip_assessment",
     "retrospect_document",
     "ndjson",
     "to_json",
@@ -836,6 +838,67 @@ def obstacle_review(
     }
 
 
+def _leg(item: LegAssessment, licensing: Licensing) -> dict[str, Any]:
+    return {
+        "aerodrome": item.aerodrome,
+        "role": item.role.value,
+        "exposure": item.exposure.value,
+        "needs_action": item.needs_action,
+        "changes_before_departure": [
+            _transition(t, licensing) for t in item.changes_before
+        ],
+        "unannounced_before_departure": [
+            _transition(t, licensing) for t in item.unannounced_before
+        ],
+        "missing_sections": [
+            {"section": code, "consequence": meaning}
+            for code, meaning in item.missing_sections
+        ],
+        "assessment": operator_assessment(item.assessment, licensing=licensing),
+    }
+
+
+def trip_assessment(
+    item: TripAssessment, *, licensing: Licensing = _PERMISSIVE
+) -> dict[str, Any]:
+    """One flight, assessed for its own date.
+
+    ``on`` and ``as_at`` are both emitted and they are different questions: the
+    first is the day whose effective state was resolved, the second is when the
+    assessment was taken. A consumer showing only the second would present a
+    three-week-old answer about a future date as current.
+
+    ``missing_sections`` carries the consequence beside the code, because
+    "AD 2.3" tells an integrator nothing and "whether it is open when you
+    arrive" tells them what to put on the screen.
+    """
+    return {
+        "reference": item.trip.reference,
+        "operator": item.trip.operator or None,
+        "designator": item.trip.aircraft.designator,
+        "on": _day(item.trip.on),
+        "as_at": _moment(item.as_at),
+        "days_away": item.trip.days_away(item.as_at.date()),
+        "expired": item.expired,
+        "departure": item.trip.departure,
+        "destination": item.trip.destination,
+        "alternates": list(item.trip.alternates),
+        "sole_alternate": item.trip.sole_alternate,
+        "overall": item.overall.value,
+        "conclusive": item.is_conclusive,
+        "legs": [_leg(leg, licensing) for leg in item.legs],
+        "blocking": [leg.aerodrome for leg in item.blocking],
+        "changing_before_departure": [
+            leg.aerodrome for leg in item.changing_before_departure
+        ],
+        "note": (
+            "A fit and exposure assessment for the day of the flight. Not a "
+            "performance calculation, not a dispatch release, and not a "
+            "substitute for the published AIP."
+        ),
+    }
+
+
 _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (AerodromeDossier, "aerodrome_dossier", dossier),
     (ChangeBulletin, "change_bulletin", bulletin),
@@ -847,6 +910,7 @@ _SERIALISERS: tuple[tuple[type, str, Any], ...] = (
     (NetworkSweep, "network_sweep", network_sweep),
     (Retrospect, "retrospect", retrospect_document),
     (ObstacleReview, "obstacle_review", obstacle_review),
+    (TripAssessment, "trip_assessment", trip_assessment),
     (Fact, "fact", fact),
 )
 

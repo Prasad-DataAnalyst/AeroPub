@@ -54,6 +54,7 @@ from aeropub.retrospect import blind_spots, retrospect
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
+from aeropub.trip import Trip, assess_trip
 
 __all__ = ["DEFAULT_STORE", "main"]
 
@@ -522,6 +523,41 @@ def _cmd_blindspots(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_trip(args: argparse.Namespace) -> int:
+    """Assess one flight, for its own date.
+
+    Everything is given on the command line rather than in a profile file. A
+    flight department asking about Thursday should not have to write a network
+    definition first; that is the whole point of a trip being the lighter
+    entity.
+    """
+    path = _store_path(args)
+    store = open_store(path)
+    try:
+        aircraft = merge(*(load_aircraft(m) for m in args.aircraft))
+        document = assess_trip(
+            store,
+            Trip(
+                reference=args.reference,
+                aircraft=aircraft,
+                on=date.fromisoformat(args.on),
+                departure=args.departure,
+                destination=args.destination,
+                alternates=tuple(args.alternate or ()),
+                takeoff_alternate=args.takeoff_alternate,
+                enroute_alternates=tuple(args.enroute or ()),
+                operator=args.operator or "",
+            ),
+            as_at=_moment(args),
+        )
+        _emit(document, args, document.render() + _emptiness_note(store, path))
+        return ADVERSE if document.overall in (
+            Exposure.CRITICAL, Exposure.HIGH
+        ) else OK
+    finally:
+        store.close()
+
+
 def _cmd_store(args: argparse.Namespace) -> int:
     path = _store_path(args)
     store = open_store(path)
@@ -713,6 +749,25 @@ def _parser() -> argparse.ArgumentParser:
                 aerodrome=False)
     blind.add_argument("aerodrome", nargs="?", help="narrow to one aerodrome")
     blind.set_defaults(handler=_cmd_blindspots)
+
+    flight = add(
+        "trip", "one flight, one aeroplane, one date", aerodrome=False
+    )
+    flight.add_argument("--reference", required=True,
+                        help="your own trip number")
+    flight.add_argument("--aircraft", required=True, action="append",
+                        metavar="MANIFEST")
+    flight.add_argument("--on", required=True, metavar="DATE",
+                        help="the day of the flight (YYYY-MM-DD)")
+    flight.add_argument("--from", dest="departure", required=True, metavar="ICAO")
+    flight.add_argument("--to", dest="destination", required=True, metavar="ICAO")
+    flight.add_argument("--alternate", action="append", metavar="ICAO",
+                        help="destination alternate, repeatable")
+    flight.add_argument("--takeoff-alternate", dest="takeoff_alternate",
+                        default=None, metavar="ICAO")
+    flight.add_argument("--enroute", action="append", metavar="ICAO")
+    flight.add_argument("--operator", default=None)
+    flight.set_defaults(handler=_cmd_trip)
 
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")

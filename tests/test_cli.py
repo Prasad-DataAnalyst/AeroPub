@@ -494,3 +494,72 @@ class TestRetrospect:
             aerodrome_manifest(workspace, rows=[("XXXX", "rffs_category", 9)]))
         _, out, _ = run(capsys, "--store", store, "blindspots")
         assert "onboarding, not lateness" in out
+
+
+class TestTrip:
+    def flight(self, workspace: Path, **overrides) -> list[str]:
+        plane = aircraft_manifest(
+            workspace,
+            ("wingspan_m", 31.7, {}),
+            ("omgws_m", 6.4, {}),
+            ("overall_length_m", 33.9, {}),
+            ("fuselage_width_m", 2.7, {}),
+            ("reference_field_length_m", 1920.0, {}),
+        )
+        argv = ["trip", "--reference", "N901GX/25SEP", "--aircraft", plane,
+                "--on", "2026-09-25", "--from", "KTEB", "--to", "KASE",
+                "--alternate", "KGJT"]
+        for flag, value in overrides.items():
+            argv += [f"--{flag}", value]
+        return argv
+
+    def test_a_flight_department_needs_no_profile_file(self, capsys, workspace):
+        # The whole point of a trip being the lighter entity: everything on the
+        # command line, no network definition to write first.
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("KASE", "rffs_category", 7)]))
+        code, out, _ = run(capsys, "--store", store, *self.flight(workspace))
+        assert code in (OK, ADVERSE)
+        assert "TRIP N901GX/25SEP" in out
+
+    def test_it_states_both_the_flight_date_and_the_assessment_date(self, capsys, workspace):
+        # A consumer showing only the second would present an old answer about
+        # a future date as current.
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("KASE", "rffs_category", 7)]))
+        _, out, _ = run(capsys, "--store", store, *self.flight(workspace))
+        assert "for the state in force on 2026-09-25" in out
+        assert "assessed as at" in out
+
+    def test_an_aerodrome_that_cannot_take_the_type_exits_adverse(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("KASE", "rffs_category", 2)]))
+        code, out, _ = run(capsys, "--store", store, *self.flight(workspace))
+        assert code == ADVERSE
+        assert "CRITICAL" in out
+
+    def test_the_binding_sections_are_named_with_their_consequence(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("KASE", "rffs_category", 7)]))
+        _, out, _ = run(capsys, "--store", store, *self.flight(workspace))
+        assert "open when you arrive" in out
+        assert "bite a business aviation trip" in out
+
+    def test_the_payload_carries_both_dates_and_the_consequences(self, capsys, workspace):
+        store = str(workspace / "s.db")
+        run(capsys, "--store", store, "load",
+            aerodrome_manifest(workspace, rows=[("KASE", "rffs_category", 7)]))
+        _, out, _ = run(capsys, "--store", store, *self.flight(workspace), )
+        _, emitted, _ = run(capsys, "--store", store, *self.flight(workspace), "--json")
+        payload = json.loads(emitted)
+        assert payload["aeropub"]["kind"] == "trip_assessment"
+        data = payload["data"]
+        assert data["on"] == "2026-09-25"
+        assert data["as_at"] is not None
+        assert data["sole_alternate"] is True
+        gap = data["legs"][0]["missing_sections"][0]
+        assert "section" in gap and "consequence" in gap
