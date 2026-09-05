@@ -238,6 +238,13 @@ from aeropub.holding import (
     screen_holding,
     standard_outbound_time_min,
 )
+from aeropub.diagram import (
+    Band,
+    RouteDiagram,
+    diagram_for,
+    route_html,
+    route_svg,
+)
 from aeropub.gate import (
     Attestation,
     Disposition,
@@ -334,6 +341,7 @@ __all__ = [
     "Attention",
     "Attestation",
     "Audience",
+    "Band",
     "Basis",
     "between_cycles",
     "BIZAV_SECTIONS",
@@ -382,6 +390,7 @@ __all__ = [
     "decompose",
     "DepartureArea",
     "DetectionTier",
+    "diagram_for",
     "diff_cycles",
     "diff_effective",
     "Direction",
@@ -527,7 +536,10 @@ __all__ = [
     "Role",
     "Route",
     "route_entities",
+    "route_html",
     "route_profile",
+    "route_svg",
+    "RouteDiagram",
     "RouteDossier",
     "RouteExpansion",
     "RouteSegment",

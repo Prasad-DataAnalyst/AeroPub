@@ -36,6 +36,7 @@ from aeropub.acap import ManifestError, load_aircraft, merge, template
 from aeropub.aip import AipCoverage
 from aeropub.airspace import AirspaceStructure, airspace_template, load_airspace
 from aeropub.hazards import HazardRegister, hazard_template, load_hazards
+from aeropub.diagram import diagram_for, route_html
 from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
@@ -715,6 +716,33 @@ def _cmd_fleet(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _write_profile(document, destination: str) -> None:
+    """Draw the vertical profile beside the printed dossier.
+
+    Only where a route was filed: without one there is no sequence of legs to
+    stand boxes on, and an empty drawing would look like a route with nothing
+    in it rather than a question nobody asked.
+    """
+    if document.expansion is None:
+        print(
+            "no --route was given, so there is no profile to draw",
+            file=sys.stderr,
+        )
+        return
+    drawing = diagram_for(
+        document.expansion,
+        planned_ft=document.route.planned_level_ft,
+        regions=[j.designator for j in document.route.crosses],
+        unread_regions=(
+            document.airspace.unread_regions if document.airspace else ()
+        ),
+        title=document.route.label,
+        notams=document.enroute_notams,
+    )
+    Path(destination).write_text(route_html(drawing), encoding="utf-8")
+    print(f"profile written to {destination}", file=sys.stderr)
+
+
 def _cmd_route(args: argparse.Namespace) -> int:
     """Assemble everything held about one sector, and say what is missing.
 
@@ -813,6 +841,8 @@ def _cmd_route(args: argparse.Namespace) -> int:
             navaids=navaids,
             notice_hours=args.notice_hours,
         )
+        if args.profile:
+            _write_profile(document, args.profile)
         _emit(document, args, document.render() + _emptiness_note(store, path))
         # Adverse on anything above medium, or on a route we cannot speak for.
         # An inconclusive route dossier is not a pass: most of what it did not
@@ -1217,6 +1247,14 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--procedure-template", dest="procedure_template", action="store_true",
         help="print a blank procedure transcription to fill in from a plate",
+    )
+    sector.add_argument(
+        "--profile", default=None, metavar="FILE",
+        help=(
+            "write the vertical profile as a self-contained HTML page — the "
+            "planned level as a line across the page, each leg standing on its "
+            "binding minimum, and every gap drawn as a gap"
+        ),
     )
     sector.add_argument("--reference", default=None, help="your own name for this sector")
     sector.add_argument("--on", default=None)

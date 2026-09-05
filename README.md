@@ -91,6 +91,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] ENR 5 warnings — all six subsections, plus overflight clearance lead times
 - [x] ENR 4 navaids — frequency, coverage, hours and status, with NOTAM overriding the AIP
 - [x] ENR 1.5/3.6 holding — level band, speed limit, and the entry sector with its 5° flexibility
+- [x] Route profile — the level drawn against every leg's binding minimum, gaps drawn as gaps
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -150,7 +151,18 @@ aeropub route --hazard-template  > enr5.json      # ENR 5 — what it publishes 
 aeropub route --from OTHH --to EGLL --aircraft b77w.json --crosses OBBB --crosses OIIX \
     --airspace obbb-enr2.json --navaids obbb-enr4.json --hazards obbb-enr5.json \
     --level 35000 --notice-hours 24
+
+aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+    --route "ALSEM UM688 BAYAN" --structure enr3.json --level 20000 \
+    --profile profile.html
 ```
+
+`--profile` draws the sector: the planned level as a line across the page, each leg standing on
+the *binding* minimum across every published segment it crosses, and the failing leg in red at the
+waypoint it fails at. Every gap is drawn as a gap — a direct leg and an unresolved one are open
+hatched bands, never low boxes, because a low box reads as a segment with a low minimum and that
+is the wrong conclusion. A region nobody has read is hatched rather than blank, because blank
+reads as clear.
 
 ENR 4 screens only the aids the filed route names — a national table would bury the handful this
 flight depends on. An aid published operational with a NOTAM in force against it comes back
