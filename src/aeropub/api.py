@@ -1406,6 +1406,111 @@ def route_dossier(
             }
             for trap in item.traps
         ],
+        "airspace": (
+            {
+                "conclusive": item.airspace.is_conclusive,
+                "unread_regions": list(item.airspace.unread_regions),
+                "units": list(item.airspace.units),
+                "requirements": [r.value for r in item.airspace.requirements],
+                "class_changes": [
+                    {
+                        "leaving": t.leaving,
+                        "entering": t.entering,
+                        "from_class": t.from_class.value,
+                        "to_class": t.to_class.value,
+                        "from_unit": t.from_unit,
+                        "to_unit": t.to_unit,
+                        "loses_ifr_separation": t.loses_separation,
+                    }
+                    for t in item.airspace.changes
+                ],
+                "unknown_boundaries": [
+                    {
+                        "leaving": t.leaving,
+                        "entering": t.entering,
+                        "from_reason": t.from_reason,
+                        "to_reason": t.to_reason,
+                    }
+                    for t in item.airspace.unknown_boundaries
+                ],
+                "volumes": [
+                    {
+                        "designator": v.designator,
+                        "kind": v.kind.value,
+                        "class": v.airspace_class.value,
+                        "lower_ft": v.lower_ft,
+                        "upper_ft": None if v.is_unlimited_upper else v.upper_ft,
+                        "unit": v.unit,
+                        "frequency_mhz": v.frequency_mhz,
+                        "requirements": [r.value for r in v.requirements],
+                        "source_ref": source_ref(v.source),
+                    }
+                    for v in item.airspace.volumes
+                ],
+                "note": (
+                    "Elimination by altitude only. Nothing here says a track "
+                    "enters a volume; this platform holds no geometry."
+                ),
+            }
+            if item.airspace is not None
+            else None
+        ),
+        "hazards": (
+            {
+                "conclusive": item.hazards.is_conclusive,
+                "unread_regions": list(item.hazards.unread_regions),
+                "prohibited": [h.designator for h in item.hazards.prohibited],
+                "conditional": [h.designator for h in item.hazards.conditional],
+                "advisory": [h.designator for h in item.hazards.advisory],
+                "obstacles": [h.designator for h in item.hazards.obstacles],
+                "needs_notam": [h.designator for h in item.hazards.needs_notam],
+                "entries": [
+                    {
+                        "designator": h.designator,
+                        "kind": h.kind.value,
+                        "section": h.kind.section,
+                        "region": h.region,
+                        "lower_ft": h.lower_ft,
+                        "upper_ft": None if h.upper_ft == float("inf") else h.upper_ft,
+                        "activation": h.activation.value,
+                        "hours": h.hours,
+                        "months": list(h.months),
+                        "activity": h.activity,
+                        "authority": h.authority,
+                        "source_ref": source_ref(h.source),
+                    }
+                    for h in item.hazards.candidates + item.hazards.unbounded
+                ],
+                "clearances": [
+                    {
+                        "state": c.state,
+                        "kind": c.kind.value,
+                        "required": c.required,
+                        "lead_time_hours": c.lead_time_hours,
+                        "working_days": c.working_days,
+                        "authority": c.authority,
+                        "source_ref": source_ref(c.source),
+                    }
+                    for c in item.hazards.clearances
+                ],
+                "clearance_findings": [
+                    {
+                        "state": f.clearance.state,
+                        "kind": f.clearance.kind.value,
+                        "needs_hours": f.clearance.lead_time_hours,
+                        "notice_hours": f.notice_hours,
+                        "short_by_hours": f.short_by_hours,
+                    }
+                    for f in item.hazards.clearance_findings
+                ],
+                "note": (
+                    "Elimination by altitude only. Nothing here says a route "
+                    "enters an area; this platform holds no geometry."
+                ),
+            }
+            if item.hazards is not None
+            else None
+        ),
         "not_addressed": list(item.not_addressed),
         "disclaimer": (
             "An assembly of what is held about one sector. Not a flight plan, "

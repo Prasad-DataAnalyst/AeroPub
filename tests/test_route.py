@@ -732,3 +732,117 @@ def built_traps(dossier_document):
         for item in dossier_document.open_items
         if item.what == "published constraint cannot be made"
     ]
+
+
+class TestEnrIntegration:
+    """ENR 2 and ENR 5 in the route dossier.
+
+    Two things this must not do: report a region whose airspace is held as
+    unread, and report an empty screen from regions nobody read as though it
+    were a clear one.
+    """
+
+    @staticmethod
+    def airspace():
+        from aeropub.airspace import (
+            Airspace, AirspaceClass, AirspaceStructure, AirspaceType,
+            CarriageRequirement,
+        )
+
+        return AirspaceStructure(volumes=(
+            Airspace(
+                designator="AAAA", kind=AirspaceType.FIR, source=ref(),
+                airspace_class=AirspaceClass.A, lower_ft=24500, upper_ft=66000,
+                unit="Alpha Control",
+                requirements=(CarriageRequirement.RVSM,),
+            ),
+            Airspace(
+                designator="BBBB", kind=AirspaceType.FIR, source=ref(),
+                airspace_class=AirspaceClass.G, lower_ft=0, upper_ft=66000,
+                unit="Bravo Information",
+            ),
+        ))
+
+    @staticmethod
+    def hazards():
+        from aeropub.hazards import (
+            Activation, Clearance, ClearanceKind, Hazard, HazardKind,
+            HazardRegister,
+        )
+
+        return HazardRegister(
+            hazards=(
+                Hazard(
+                    designator="AP-1", kind=HazardKind.PROHIBITED, source=ref(),
+                    region="AAAA", lower_ft=0, upper_ft=float("inf"),
+                    activation=Activation.CONTINUOUS,
+                ),
+                Hazard(
+                    designator="AD-3", kind=HazardKind.DANGER, source=ref(),
+                    region="AAAA", lower_ft=0, upper_ft=45000,
+                    activation=Activation.BY_NOTAM, activity="gunnery",
+                ),
+            ),
+            clearances=(
+                Clearance(
+                    state="AAAA", kind=ClearanceKind.OVERFLIGHT, source=ref(),
+                    lead_time_hours=72, working_days=True,
+                ),
+            ),
+        )
+
+    def built(self, **overrides):
+        fields = dict(airspace=self.airspace(), hazards=self.hazards())
+        fields.update(overrides)
+        sector = route(crosses=(AAAA, BBBB), planned_level_ft=35000)
+        return dossier(sector, **fields)
+
+    def test_the_class_change_that_loses_separation_is_an_open_item(self):
+        built = self.built()
+        assert any(
+            i.what == "IFR separation no longer provided" for i in built.open_items
+        )
+
+    def test_a_prohibited_area_not_ruled_out_by_altitude_is_high(self):
+        built = self.built()
+        found = [i for i in built.open_items if i.where == "AP-1"]
+        assert found and found[0].severity is Exposure.HIGH
+
+    def test_an_area_active_by_notam_sends_the_planner_to_the_notam(self):
+        built = self.built()
+        assert any(i.what == "active by NOTAM" for i in built.open_items)
+
+    def test_a_clearance_that_cannot_be_got_in_time_is_critical(self):
+        built = self.built(notice_hours=24)
+        found = [
+            i for i in built.open_items
+            if i.what == "clearance cannot be obtained in time"
+        ]
+        assert found and found[0].severity is Exposure.CRITICAL
+
+    def test_clearances_are_not_screened_without_a_notice(self):
+        """How much notice a flight has is not something the AIP knows."""
+        built = self.built()
+        assert not [
+            i for i in built.open_items
+            if i.what == "clearance cannot be obtained in time"
+        ]
+
+    def test_carriage_requirements_reach_the_document(self):
+        assert "RVSM" in self.built().render()
+
+    def test_absent_and_empty_print_differently(self):
+        """No ENR supplied is a smaller question than an ENR that found nothing."""
+        assert dossier(route(crosses=(AAAA,))).airspace is None
+        assert self.built().airspace is not None
+
+    def test_a_region_whose_airspace_is_held_is_not_called_unread(self):
+        """A contradiction on the page: ENR 2 read, region reported never read.
+
+        The jurisdiction reading is about ENR 1.7 values in the fact store, and
+        the item now says which reading is missing.
+        """
+        built = self.built()
+        found = [i for i in built.open_items if i.where == "AAAA" and "held" in i.what]
+        assert found
+        assert all(i.what != "never read" for i in built.open_items if i.where == "AAAA")

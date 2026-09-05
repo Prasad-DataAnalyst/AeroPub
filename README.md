@@ -87,6 +87,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Route dossiers — both ends, the alternates, and the regions between them, with the gaps counted
 - [x] ATS routes — Item 15 parsed, resolved against ENR 3, screened for level, direction and PBN
 - [x] Procedure profiles — the SID onto the route and the STAR off it, screened for energy traps
+- [x] ENR 2 airspace — class, unit, carriage requirements, and the boundary where the service changes
+- [x] ENR 5 warnings — all six subsections, plus overflight clearance lead times
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -139,7 +141,30 @@ aeropub route --procedure-template > plates.json   # transcribe a SID or STAR fr
 aeropub route --from OTHH --to EGLL --aircraft b77w.json \
     --route "ALSEM UM688 BAYAN" --structure enr3.json \
     --procedures othh-sids.json --procedures egll-stars.json
+
+aeropub route --airspace-template > enr2.json     # ENR 2 — the airspace you are inside
+aeropub route --hazard-template  > enr5.json      # ENR 5 — what it publishes as hazardous
+aeropub route --from OTHH --to EGLL --aircraft b77w.json --crosses OBBB --crosses OIIX \
+    --airspace obbb-enr2.json --hazards obbb-enr5.json --level 35000 --notice-hours 24
 ```
+
+ENR 2 answers what service you get, who to call and what you must carry — and reports the
+*boundary* rather than a table of classes, because a crew given six regions' classes has to work
+out where each one starts. A transition that loses IFR separation is called out by name. The class
+is taken from the volume that actually reaches the planned level: an FIR topping at FL195 says
+nothing about a flight at FL350.
+
+ENR 5 covers all six subsections — prohibited, restricted and danger areas; military training and
+ADIZ; other dangerous activities; en-route obstacles; sporting; bird migration — and keeps the
+three verbs apart, because a danger area forbids nothing and a prohibited area forbids everything.
+An area published as *active by NOTAM* is the AIP saying the AIP is not enough, and that list is
+the pointer to the other half of the answer. Overflight clearance lead times are screened against
+the notice a flight actually has, with working days counted as working days.
+
+Neither claims containment. This platform holds no geometry, so it says what the crossed regions
+publish and what altitude could not rule out — and an area whose vertical limits nobody read is
+never eliminated, because telling somebody an area is out of the way when nobody read how high it
+goes is the one false negative that matters.
 
 Give it the route as Item 15 states it — the string you are about to file, pasted — and it
 resolves each leg against the published ATS route structure: minimum en-route altitude on every

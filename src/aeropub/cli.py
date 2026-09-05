@@ -34,6 +34,8 @@ from pathlib import Path
 
 from aeropub.acap import ManifestError, load_aircraft, merge, template
 from aeropub.aip import AipCoverage
+from aeropub.airspace import AirspaceStructure, airspace_template, load_airspace
+from aeropub.hazards import HazardRegister, hazard_template, load_hazards
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
@@ -726,6 +728,12 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.procedure_template:
         print(procedure_template())
         return OK
+    if args.airspace_template:
+        print(airspace_template())
+        return OK
+    if args.hazard_template:
+        print(hazard_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -742,6 +750,19 @@ def _cmd_route(args: argparse.Namespace) -> int:
     procedures = tuple(
         p for path in (args.procedures or []) for p in load_procedures(path)
     )
+    airspace = None
+    if args.airspace:
+        loaded = [load_airspace(path) for path in args.airspace]
+        airspace = AirspaceStructure(
+            volumes=tuple(v for held in loaded for v in held.volumes)
+        )
+    hazards = None
+    if args.hazards:
+        loaded = [load_hazards(path) for path in args.hazards]
+        hazards = HazardRegister(
+            hazards=tuple(h for held in loaded for h in held.hazards),
+            clearances=tuple(c for held in loaded for c in held.clearances),
+        )
     filed = (
         parse_route_string(
             args.route, departure=args.departure, destination=args.destination
@@ -777,6 +798,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
             coverage=AipCoverage(),
             structure=structure,
             procedures=procedures,
+            airspace=airspace,
+            hazards=hazards,
+            notice_hours=args.notice_hours,
         )
         _emit(document, args, document.render() + _emptiness_note(store, path))
         # Adverse on anything above medium, or on a route we cannot speak for.
@@ -1132,6 +1156,37 @@ def _parser() -> argparse.ArgumentParser:
             "of the route, which STAR leaves the last — and screens both for "
             "constraints an aeroplane cannot make"
         ),
+    )
+    sector.add_argument(
+        "--airspace", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 2 extract, repeatable — the airspace you are "
+            "inside, its class, unit and carriage requirements"
+        ),
+    )
+    sector.add_argument(
+        "--hazards", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 5 extract, repeatable — prohibited, restricted "
+            "and danger areas, military and dangerous activity, sporting, "
+            "bird migration, and overflight clearance lead times"
+        ),
+    )
+    sector.add_argument(
+        "--notice-hours", dest="notice_hours", type=float, default=None,
+        metavar="HOURS",
+        help=(
+            "how much notice this flight has, for screening clearance lead "
+            "times. Omitted, the clearances are listed and not screened"
+        ),
+    )
+    sector.add_argument(
+        "--airspace-template", dest="airspace_template", action="store_true",
+        help="print a blank ENR 2 extract",
+    )
+    sector.add_argument(
+        "--hazard-template", dest="hazard_template", action="store_true",
+        help="print a blank ENR 5 extract",
     )
     sector.add_argument(
         "--structure-template", dest="structure_template", action="store_true",

@@ -52,6 +52,7 @@ from datetime import date, datetime, timezone
 from typing import Iterable
 
 from aeropub.aip import AipCoverage
+from aeropub.airspace import AirspaceStructure, AirspaceView, view_airspace
 from aeropub.ats import (
     AtsStructure,
     FiledRoute,
@@ -71,6 +72,12 @@ from aeropub.charts import (
     screen_descent,
 )
 from aeropub.currency import Currency, DataCurrency, assess_currency
+from aeropub.hazards import (
+    HazardRegister,
+    HazardScreen,
+    notams_on_hazards,
+    screen_hazards,
+)
 from aeropub.entities import named, normalise
 from aeropub.notam_register import NotamRegister
 from aeropub.operator import Exposure, OperatorProfile, Role, worst_exposure
@@ -105,11 +112,14 @@ TRANSITION_LEVEL = "transition_level"
 #: approximation of any of them would be worse than the gap: a driftdown
 #: corridor nobody can source is one somebody might still fly.
 NOT_YET_ADDRESSED: tuple[str, ...] = (
-    "terrain and vertical profile — Grid MORA, MEA, points of no return",
+    "terrain — Grid MORA and the vertical profile against it, and points of "
+    "no return",
     "driftdown escape corridors and depressurisation strategy",
-    "ATS routing — level bands, flow direction, RAD, CDR and FUA availability",
-    "PBN specification per airspace against tail capability, and RAIM prediction",
-    "HF, CPDLC and SATCOM coverage along track",
+    "route availability — RAD restrictions, conditional routes and flexible "
+    "use of airspace",
+    "RAIM prediction, and GNSS outages published under ENR 4.3",
+    "HF, CPDLC and SATCOM coverage along track — the carriage requirement is "
+    "screened, the coverage is not",
     "payload-range envelope against route length, and the critical fuel scenario",
 )
 
@@ -492,6 +502,15 @@ class RouteDossier:
     """Published constraint pairs on those procedures demanding more climb or
     descent than an aeroplane has. Arithmetic, not judgement."""
 
+    airspace: AirspaceView | None = None
+    """ENR 2 — what the crossed regions publish as airspace, and where the
+    class changes. ``None`` where no ENR 2 was supplied, which prints
+    differently from an ENR 2 that turned up nothing."""
+
+    hazards: HazardScreen | None = None
+    """ENR 5 — what those regions publish as prohibited, restricted or
+    hazardous. Same distinction: absent and empty are different answers."""
+
     enroute_notams: tuple[tuple[str, object, object], ...] = ()
     """NOTAM in force against anything on the filed route, each with the
     entity it was found against so a briefing can say where on the route it
@@ -694,6 +713,11 @@ class RouteDossier:
                 mark = "" if state.value == "in_force" else f"  [{state.value}]"
                 lines.append(f"  {entity}: {notam.identifier}{mark}")
 
+        if self.airspace is not None:
+            lines += ["", self.airspace.render()]
+        if self.hazards is not None:
+            lines += ["", self.hazards.render()]
+
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
             for boundary in self.altimetry.changes:
@@ -768,6 +792,8 @@ def _open_items(
     levels: Iterable[LevelFinding] = (),
     enroute_notams: Iterable[tuple] = (),
     traps: Iterable[GradientFinding] = (),
+    airspace: AirspaceView | None = None,
+    hazards: HazardScreen | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -820,11 +846,13 @@ def _open_items(
             items.append(
                 OpenItem(
                     where=cover.jurisdiction.designator,
-                    what="never read",
+                    what="no ENR 1.7 values held",
                     severity=Exposure.UNKNOWN,
                     why=(
-                        "the sector crosses this region and nothing has been "
-                        f"read from {cover.jurisdiction.publisher}"
+                        "no values are held for this region — the transition "
+                        "altitude and level of ENR 1.7 among them. Airspace "
+                        "and warnings are read separately and may be held "
+                        f"even where this is not ({cover.jurisdiction.publisher})"
                     ),
                 )
             )
@@ -887,6 +915,87 @@ def _open_items(
             )
         )
 
+    if airspace is not None:
+        for boundary in airspace.changes:
+            if boundary.loses_separation:
+                items.append(
+                    OpenItem(
+                        where=f"{boundary.leaving} → {boundary.entering}",
+                        what="IFR separation no longer provided",
+                        # Not a defect in anything. It is a change in who is
+                        # responsible for not hitting anything, and a crew that
+                        # does not know it has crossed it is the finding.
+                        severity=Exposure.MEDIUM,
+                        why=boundary.describe(),
+                    )
+                )
+        for volume in airspace.unbounded:
+            items.append(
+                OpenItem(
+                    where=volume.designator,
+                    what="vertical limits not held",
+                    severity=Exposure.UNKNOWN,
+                    why="could not be ruled out because nobody read how high it goes",
+                )
+            )
+
+    if hazards is not None:
+        for area in hazards.prohibited:
+            items.append(
+                OpenItem(
+                    where=area.designator,
+                    what="prohibited area not ruled out by altitude",
+                    severity=Exposure.HIGH,
+                    why=area.describe(),
+                )
+            )
+        for area in hazards.conditional:
+            items.append(
+                OpenItem(
+                    where=area.designator,
+                    what="entry subject to conditions",
+                    severity=Exposure.MEDIUM,
+                    why=area.describe()
+                    + (f" — ask {area.authority}" if area.authority else ""),
+                )
+            )
+        for area in hazards.needs_notam:
+            items.append(
+                OpenItem(
+                    where=area.designator,
+                    what="active by NOTAM",
+                    severity=Exposure.MEDIUM,
+                    why="the AIP says the AIP is not enough for this one",
+                )
+            )
+        for area in hazards.unbounded:
+            items.append(
+                OpenItem(
+                    where=area.designator,
+                    what="vertical limits not held",
+                    severity=Exposure.UNKNOWN,
+                    why="could not be ruled out because nobody read how high it goes",
+                )
+            )
+        for finding in hazards.clearance_findings:
+            items.append(
+                OpenItem(
+                    where=finding.clearance.state,
+                    what="clearance cannot be obtained in time",
+                    severity=Exposure.CRITICAL,
+                    why=finding.describe(),
+                )
+            )
+        for clearance in hazards.clearances_without_lead_time:
+            items.append(
+                OpenItem(
+                    where=clearance.state,
+                    what="clearance required, lead time not held",
+                    severity=Exposure.UNKNOWN,
+                    why=clearance.describe(),
+                )
+            )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -922,6 +1031,9 @@ def build_route_dossier(
     not_addressed: tuple[str, ...] = NOT_YET_ADDRESSED,
     structure: AtsStructure | None = None,
     procedures: Iterable[Procedure] = (),
+    airspace: AirspaceStructure | None = None,
+    hazards: HazardRegister | None = None,
+    notice_hours: float | None = None,
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
 
@@ -968,6 +1080,29 @@ def build_route_dossier(
                 register, expansion, moment, structure=structure
             )
 
+    regions = tuple(j.designator for j in route.crosses)
+    airspace_view = (
+        view_airspace(
+            airspace, regions=regions, planned_ft=route.planned_level_ft
+        )
+        if airspace is not None
+        else None
+    )
+    hazard_screen = (
+        screen_hazards(
+            hazards,
+            regions=regions,
+            planned_ft=route.planned_level_ft,
+            at=moment,
+            notice_hours=notice_hours,
+            states=tuple(j.publisher for j in route.crosses),
+        )
+        if hazards is not None
+        else None
+    )
+    if hazard_screen is not None and register is not None:
+        enroute = enroute + notams_on_hazards(register, hazard_screen, moment)
+
     held = tuple(procedures)
     departures: tuple[ProcedureLink, ...] = ()
     arrivals: tuple[ProcedureLink, ...] = ()
@@ -1003,7 +1138,8 @@ def build_route_dossier(
         jurisdictions=jurisdictions,
         altimetry=Altimetry(covers=jurisdictions),
         open_items=_open_items(
-            route, swept, jurisdictions, expansion, levels, enroute, traps
+            route, swept, jurisdictions, expansion, levels, enroute, traps,
+            airspace_view, hazard_screen,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1012,4 +1148,6 @@ def build_route_dossier(
         departures=departures,
         arrivals=arrivals,
         traps=traps,
+        airspace=airspace_view,
+        hazards=hazard_screen,
     )
