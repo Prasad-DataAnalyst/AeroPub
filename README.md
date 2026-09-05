@@ -90,6 +90,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] ENR 2 airspace — class, unit, carriage requirements, and the boundary where the service changes
 - [x] ENR 5 warnings — all six subsections, plus overflight clearance lead times
 - [x] ENR 4 navaids — frequency, coverage, hours and status, with NOTAM overriding the AIP
+- [x] ENR 1.5/3.6 holding — level band, speed limit, and the entry sector with its 5° flexibility
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it

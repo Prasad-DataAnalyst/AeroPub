@@ -29,7 +29,7 @@ says exists", and only the second is a coverage claim.
 | 1.2 | Visual flight rules | Not held. Out of scope for the operations this serves |
 | 1.3 | Instrument flight rules | Not held |
 | 1.4 | ATS airspace classification | **Built** — `airspace.py`, `AirspaceClass`. What each class answers about clearance, separation and VFR |
-| 1.5 | Holding, approach and departure procedures | **Not built.** The next piece of real value: a holding pattern has a fix, an inbound track, a turn direction, timing or distance, a level band and a speed limit, and all of it is screenable |
+| 1.5 | Holding, approach and departure procedures | **Built** — `holding.py`. Level band, speed against the published limit or the PANS-OPS table, outbound timing, and the entry sector for an arrival heading including the 5° flexibility zone |
 | 1.6 | ATS surveillance services | Not held |
 | 1.7 | **Altimeter setting procedures** | **Built** — transition altitude and level per region, reported as boundaries in `route.py` |
 | 1.8 | Regional supplementary procedures | Not held. Where a region's SUPPS differ from ICAO, a crew planning from Annex alone is wrong |
@@ -63,7 +63,7 @@ the region's name.
 | 3.3 | Area navigation routes | **Built** — `navigation_spec` on the segment |
 | 3.4 | Helicopter routes | **Built** — same model |
 | 3.5 | Other routes | **Built** |
-| 3.6 | En-route holding | **Not built** — belongs with ENR 1.5 |
+| 3.6 | En-route holding | **Built** — same model as ENR 1.5; a fix can carry an en-route hold and a missed-approach hold at once and both are held |
 
 **What it does.** Parses Item 15, resolves each leg against the published
 segments, screens the planned level for minimum, maximum, direction of
@@ -103,13 +103,10 @@ Overflight clearance lead times are screened against the notice available.
 
 ## Build order from here
 
-1. **ENR 1.5 and 3.6 holding** — fix, track, turn, timing, levels, speed.
-   Screenable against the planned level and against a speed the aeroplane can
-   actually fly. It is the last piece of ENR 3 as well as ENR 1.
-2. **ENR 4.3 GNSS** — outages and RAIM, which the PBN work already asks for.
-3. **ENR 1.10 flight planning** — filing requirements and minimum notice, which
+1. **ENR 4.3 GNSS** — outages and RAIM, which the PBN work already asks for.
+2. **ENR 1.10 flight planning** — filing requirements and minimum notice, which
    the charter variant needs beside the clearance lead times already built.
-4. **ENR 0 checklist reconciliation** — page-level, at cycle close.
+3. **ENR 0 checklist reconciliation** — page-level, at cycle close.
 
 Everything above is buildable offline from published text. None of it needs
 geometry, and none of it should acquire any: the moment this platform holds a
