@@ -97,6 +97,7 @@ from aeropub.route import Jurisdiction, Route, build_route_dossier
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
+from aeropub.atlas import atlas_html, build_atlas
 from aeropub.enroute import chart_for, chart_html
 from aeropub.checklist import (
     checklist_template,
@@ -999,6 +1000,60 @@ def _cmd_store(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_atlas(args: argparse.Namespace) -> int:
+    """Draw ENR 2, 3, 4 and 5 on one sheet."""
+    structure = None
+    if args.structure:
+        loaded = [load_ats_structure(path) for path in args.structure]
+        structure = AtsStructure(
+            segments=tuple(s for held in loaded for s in held.segments),
+            points=tuple(p for held in loaded for p in held.points),
+            procedures=tuple(p for held in loaded for p in held.procedures),
+        )
+    airspace = None
+    if args.airspace:
+        loaded = [load_airspace(path) for path in args.airspace]
+        airspace = AirspaceStructure(
+            volumes=tuple(v for held in loaded for v in held.volumes)
+        )
+    hazards = None
+    if args.hazards:
+        loaded = [load_hazards(path) for path in args.hazards]
+        hazards = HazardRegister(
+            hazards=tuple(h for held in loaded for h in held.hazards),
+            clearances=tuple(c for held in loaded for c in held.clearances),
+        )
+    aids = None
+    if args.navaids:
+        loaded = [load_navaids(path) for path in args.navaids]
+        aids = NavaidRegister(
+            navaids=tuple(n for held in loaded for n in held.navaids)
+        )
+    if not any((structure, airspace, hazards, aids)):
+        print(
+            "give at least one of --airspace (ENR 2), --structure (ENR 3), "
+            "--navaids (ENR 4) or --hazards (ENR 5)",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    drawn = build_atlas(
+        airspace=airspace,
+        structure=structure,
+        navaids=aids,
+        hazards=hazards,
+        regions=args.region or (),
+        routes=args.route or (),
+        level_ft=args.level,
+        title=args.title or "",
+    )
+    print(drawn.render())
+    if args.page:
+        Path(args.page).write_text(atlas_html(drawn), encoding="utf-8")
+        print(f"\n  written to {args.page}")
+    return OK if drawn.is_complete else ADVERSE
+
+
 def _cmd_enroute(args: argparse.Namespace) -> int:
     """Draw the published ATS route structure."""
     if args.template:
@@ -1539,6 +1594,57 @@ def _parser() -> argparse.ArgumentParser:
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
     inventory.set_defaults(handler=_cmd_store)
+
+    sheet = sub.add_parser(
+        "atlas",
+        help="draw ENR 2, 3, 4 and 5 on one map",
+        description=(
+            "The whole en-route picture: the regions you are inside (ENR 2), "
+            "the routes through them (ENR 3), the points those routes are "
+            "made of (ENR 4) and the areas you may not enter (ENR 5), over a "
+            "public-domain coastline. Which State published a thing is read "
+            "from the document that published it, never from the country "
+            "under the point. Nothing answers whether a point is inside an "
+            "area."
+        ),
+    )
+    sheet.add_argument(
+        "--airspace", action="append", metavar="FILE",
+        help="path to an ENR 2 extract, repeatable — FIR, UIR, TMA, CTR",
+    )
+    sheet.add_argument(
+        "--structure", action="append", metavar="FILE",
+        help="path to an ENR 3 extract, repeatable — the ATS routes",
+    )
+    sheet.add_argument(
+        "--navaids", action="append", metavar="FILE",
+        help="path to an ENR 4 extract, repeatable — aids and their positions",
+    )
+    sheet.add_argument(
+        "--hazards", action="append", metavar="FILE",
+        help="path to an ENR 5 extract, repeatable — P, R, D and danger areas",
+    )
+    sheet.add_argument(
+        "--region", action="append", metavar="FIR",
+        help="scope the sheet to one region, repeatable",
+    )
+    sheet.add_argument(
+        "--route", action="append", metavar="DESIGNATOR",
+        help="scope the routes drawn to these, repeatable",
+    )
+    sheet.add_argument(
+        "--level", type=float, default=None, metavar="FEET",
+        help=(
+            "draw what is available at this level; anything publishing no "
+            "band is drawn anyway, because not knowing the floor is not the "
+            "same as the floor being satisfied"
+        ),
+    )
+    sheet.add_argument("--title", default="", help="a title for the sheet")
+    sheet.add_argument(
+        "--page", metavar="FILE", help="write the sheet as a standalone page"
+    )
+    sheet.set_defaults(handler=_cmd_atlas)
 
     chart = sub.add_parser(
         "enroute",

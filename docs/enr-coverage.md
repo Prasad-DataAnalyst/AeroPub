@@ -72,9 +72,14 @@ all of them.
 **What it does.** Reports the *boundary* rather than a table of classes, names
 the transition where IFR separation stops being provided, and takes the class
 from the volume that reaches the planned level rather than the one that shares
-the region's name.
+the region's name. Each volume can now carry the lateral limits the State
+walks, so an FIR, a CTA or a TMA can be **drawn** — see `atlas.py`.
 
-**What it does not.** No geometry, so never a containment verdict.
+**What it does not.** Still never a containment verdict, and holding the
+published edge does not change that. A boundary partly described in words
+("thence along the State boundary") is drawn as the pieces the AIP gave
+coordinates for, dashed and unfilled, because a filled shape reads as a
+definite extent and the extent is what the prose withheld.
 
 ## ENR 3 — ATS routes
 
@@ -144,12 +149,30 @@ a finding.
 **What it does.** Screens by altitude only, keeps the three verbs apart, and
 surfaces the by-NOTAM list as the pointer to the other half of the answer.
 Overflight clearance lead times are screened against the notice available.
+Each area can carry its published boundary — most are a circle or a short
+coordinate list, so ENR 5 is the part of the AIP whose geometry is usually
+*complete* — and is drawn on the atlas.
 
 ## ENR 6 — En-route charts
 
 | Subsection | Content | Status |
 |---|---|---|
 | ENR 6 | En-route charts | **Built** — `enroute.py` draws the chart *from* ENR 3: every airway with its binding level band, direction, navigation specification and controlling unit, plotted on the coordinates ENR 4 publishes. `ChartKind.ENROUTE` still reconciles a State's own chart like any other. Nothing extracts route structure from a chart, and nothing should: ENR 3 is the authority and the chart is the picture of it |
+
+## The atlas
+
+`atlas.py` puts ENR 2, 3, 4 and 5 on one sheet over a public-domain coastline
+(`basemap.py`), with a layer switch for each and a detail panel that answers,
+for anything clicked: which FIR, which class and limits, which unit and
+frequency, which route with its band and specification, which point and which
+airways run through it — and, for every one of them, **which document
+published it**. That last is how "which State" is answered. Never the country
+under the point: an FIR is not a country, they run over the high seas and are
+delegated between States, and the coastline layer is geography that is never
+asked an aeronautical question.
+
+Nothing on the atlas answers whether a point is inside an area. Putting a route
+and an FIR on the same sheet does not make one contain the other.
 
 ## Build order from here
 
