@@ -97,6 +97,7 @@ from aeropub.route import Jurisdiction, Route, build_route_dossier
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
+from aeropub.enroute import chart_for, chart_html
 from aeropub.checklist import (
     checklist_template,
     holdings_template,
@@ -998,6 +999,46 @@ def _cmd_store(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_enroute(args: argparse.Namespace) -> int:
+    """Draw the published ATS route structure."""
+    if args.template:
+        print(structure_template())
+        return OK
+    if not args.structure:
+        print(
+            "give one or more ENR 3 extracts, or --template for a blank one",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    loaded = [load_ats_structure(path) for path in args.structure]
+    structure = AtsStructure(
+        segments=tuple(s for held in loaded for s in held.segments),
+        points=tuple(p for held in loaded for p in held.points),
+        procedures=tuple(p for held in loaded for p in held.procedures),
+    )
+    aids = None
+    if args.navaids:
+        read = [load_navaids(path) for path in args.navaids]
+        aids = NavaidRegister(
+            navaids=tuple(n for held in read for n in held.navaids)
+        )
+
+    chart = chart_for(
+        structure,
+        regions=args.region or (),
+        routes=args.route or (),
+        navaids=aids,
+        level_ft=args.level,
+        closed_routes=args.closed or (),
+    )
+    print(chart.render())
+    if args.page:
+        Path(args.page).write_text(chart_html(chart), encoding="utf-8")
+        print(f"\n  written to {args.page}")
+    return OK if chart.is_conclusive else ADVERSE
+
+
 def _cmd_checklist(args: argparse.Namespace) -> int:
     """Reconcile a State's own checklist against what we hold."""
     if args.template:
@@ -1498,6 +1539,52 @@ def _parser() -> argparse.ArgumentParser:
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
     inventory.set_defaults(handler=_cmd_store)
+
+    chart = sub.add_parser(
+        "enroute",
+        help="draw the published ATS route structure",
+        description=(
+            "ENR 3 is what a State publishes its route network as, and this "
+            "draws it: every airway, its level band, its direction and its "
+            "navigation specification, plotted on the coordinates ENR 4 "
+            "publishes. A point with no published position is listed, never "
+            "placed."
+        ),
+    )
+    chart.add_argument(
+        "structure", nargs="*", help="paths to ENR 3 extracts"
+    )
+    chart.add_argument(
+        "--region", action="append", metavar="FIR",
+        help="scope the chart to one region, repeatable",
+    )
+    chart.add_argument(
+        "--route", action="append", metavar="DESIGNATOR",
+        help="scope the chart to named airways, repeatable",
+    )
+    chart.add_argument(
+        "--navaids", action="append", metavar="FILE",
+        help="path to an ENR 4 extract, repeatable — positions and detail",
+    )
+    chart.add_argument(
+        "--level", type=float, default=None, metavar="FEET",
+        help=(
+            "draw the airways whose published band contains this level; the "
+            "rest are set aside with a reason, and any airway publishing no "
+            "band is drawn anyway"
+        ),
+    )
+    chart.add_argument(
+        "--closed", action="append", metavar="ROUTE",
+        help="an airway known closed, repeatable",
+    )
+    chart.add_argument(
+        "--page", metavar="FILE", help="write the chart as a standalone page"
+    )
+    chart.add_argument(
+        "--template", action="store_true", help="print a blank ENR 3 extract"
+    )
+    chart.set_defaults(handler=_cmd_enroute)
 
     audit = sub.add_parser(
         "checklist",

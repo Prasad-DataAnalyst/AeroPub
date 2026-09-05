@@ -92,6 +92,14 @@ segments, screens the planned level for minimum, maximum, direction of
 cruising levels and navigation specification, and lands NOTAM on every point
 and airway.
 
+**And draws it.** `enroute.py` turns the whole held structure into a chart —
+scoped to a region or to named airways, filtered to a level. The floor
+reported for an airway is the *binding* one, the highest minimum across its
+segments: the lowest would be a level available on part of it and not the
+rest, which is the number that gets a flight planned onto it. An airway
+publishing no band is never filtered out by a level, because not knowing the
+floor is not the same as the floor being satisfied.
+
 ## ENR 4 — Radio navigation aids and significant points
 
 | Subsection | Content | Status |
@@ -141,7 +149,7 @@ Overflight clearance lead times are screened against the notice available.
 
 | Subsection | Content | Status |
 |---|---|---|
-| ENR 6 | En-route charts | **Partial** — `ChartKind.ENROUTE` exists in the chart register and reconciles like any other chart. Nothing extracts route structure from the chart itself, and nothing should: ENR 3 is the authority for that and the chart is the picture of it |
+| ENR 6 | En-route charts | **Built** — `enroute.py` draws the chart *from* ENR 3: every airway with its binding level band, direction, navigation specification and controlling unit, plotted on the coordinates ENR 4 publishes. `ChartKind.ENROUTE` still reconciles a State's own chart like any other. Nothing extracts route structure from a chart, and nothing should: ENR 3 is the authority and the chart is the picture of it |
 
 ## Build order from here
 

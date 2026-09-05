@@ -100,6 +100,15 @@ class Airway:
     gaps: int = 0
     closed: bool = False
     notams: int = 0
+    detail: str = ""
+    """What ENR 3 publishes about it — levels, direction, navigation
+    specification, controlling unit. Shown when the airway is clicked, because
+    an airway on a chart with no numbers against it is a line."""
+
+    one_way: bool = False
+    """Whether the published direction of cruising levels is single. Drawn
+    with a direction marker, since a one-way airway flown the other way is not
+    a longer route."""
 
     @property
     def is_drawable(self) -> bool:
@@ -180,6 +189,8 @@ def plan_view(
     navaids: Iterable[str] = (),
     aerodromes: Iterable[str] = (),
     details: Mapping[str, str] | None = None,
+    airway_details: Mapping[str, str] | None = None,
+    one_way: Iterable[str] = (),
     title: str = "",
     steps: int = 24,
 ) -> PlanView:
@@ -195,6 +206,10 @@ def plan_view(
     on_route = [normalise(p) for p in route_points if str(p).strip()]
     shut = {normalise(r) for r in closed_routes if str(r).strip()}
     described = {normalise(k): v for k, v in (details or {}).items()}
+    airway_described = {
+        normalise(k): v for k, v in (airway_details or {}).items()
+    }
+    single = {normalise(r) for r in one_way if str(r).strip()}
 
     counted: dict[str, int] = {}
     for entry in notams:
@@ -256,6 +271,8 @@ def plan_view(
                 gaps=len(here) - len(found),
                 closed=canonical in shut,
                 notams=counted.get(f"ATS:{canonical}", 0),
+                detail=airway_described.get(canonical, ""),
+                one_way=canonical in single,
             )
         )
 
@@ -301,6 +318,25 @@ def _escape(text: str) -> str:
     )
 
 
+def _arrow(placed: list[tuple[float, float]]) -> str:
+    """A direction marker at the midpoint of a drawn airway."""
+    middle = len(placed) // 2
+    (x1, y1), (x2, y2) = placed[max(middle - 1, 0)], placed[min(middle, len(placed) - 1)]
+    if (x1, y1) == (x2, y2):
+        (x1, y1), (x2, y2) = placed[0], placed[-1]
+    dx, dy = x2 - x1, y2 - y1
+    length = (dx * dx + dy * dy) ** 0.5 or 1.0
+    ux, uy = dx / length, dy / length
+    cx, cy = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    tip_x, tip_y = cx + ux * 6.0, cy + uy * 6.0
+    left_x, left_y = cx - ux * 3.0 - uy * 3.5, cy - uy * 3.0 + ux * 3.5
+    right_x, right_y = cx - ux * 3.0 + uy * 3.5, cy - uy * 3.0 - ux * 3.5
+    return (
+        f'<polygon points="{tip_x:.1f},{tip_y:.1f} {left_x:.1f},{left_y:.1f} '
+        f'{right_x:.1f},{right_y:.1f}" class="pv-arrow"/>'
+    )
+
+
 def plan_svg(view: PlanView, *, width: float = 960.0, height: float = 620.0) -> str:
     """Draw the plan view as one ``<svg>`` element over the projected window."""
     if view.bounds is None:
@@ -342,14 +378,37 @@ def plan_svg(view: PlanView, *, width: float = 960.0, height: float = 620.0) -> 
     for airway in view.airways:
         if not airway.is_drawable:
             continue
-        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in map(to_xy, airway.positions))
+        placed = [to_xy(position) for position in airway.positions]
+        points = " ".join(f"{x:.1f},{y:.1f}" for x, y in placed)
         classes = "pv-airway" + (" pv-shut" if airway.closed else "")
+        payload = _escape(
+            json.dumps(
+                {
+                    "name": airway.route,
+                    "kind": "airway",
+                    "position": f"{len(airway.positions)} points plotted"
+                    + (f", {airway.gaps} not held" if airway.gaps else ""),
+                    "notams": airway.notams,
+                    "detail": airway.detail
+                    or "no ENR 3 detail held for this airway",
+                }
+            )
+        )
+        out.append(
+            f'<g class="pv-airway-group" tabindex="0" role="button" '
+            f'data-info="{payload}" aria-label="{_escape(airway.route)}">'
+        )
         out.append(f'<polyline points="{points}" class="{classes}"/>')
-        head_x, head_y = to_xy(airway.positions[0])
+        if airway.one_way and len(placed) >= 2:
+            # A one-way airway flown the other way is not a longer route, so
+            # the direction is drawn rather than left to the detail panel.
+            out.append(_arrow(placed))
+        head_x, head_y = placed[0]
         out.append(
             f'<text x="{head_x + 8:.1f}" y="{head_y - 8:.1f}" class="pv-airway-label">'
             f"{_escape(airway.route)}{' CLOSED' if airway.closed else ''}</text>"
         )
+        out.append("</g>")
     out.append("</g>")
 
     out.append('<g class="pv-layer" data-layer="route">')
@@ -435,6 +494,10 @@ PLAN_VIEW_CSS = """
 .pv-label, .pv-airway-label, .pv-note { font: 11px/1.3 system-ui, sans-serif;
   fill: var(--pv-ink); }
 .pv-airway-label { fill: var(--pv-muted); font-weight: 600; }
+.pv-arrow { fill: var(--pv-line); stroke: none; }
+.pv-airway-group { cursor: pointer; }
+.pv-airway-group:focus-visible .pv-airway, .pv-airway-group:hover .pv-airway {
+  stroke-width: 3; stroke: var(--pv-track); }
 .pv-point { cursor: pointer; }
 .pv-point:focus { outline: none; }
 .pv-point:focus .pv-mark, .pv-point:hover .pv-mark { stroke-width: 3; }
@@ -507,16 +570,31 @@ _PLAN_VIEW_JS = """
   });
 
   var panel = document.querySelector('.pv-panel');
+  function row(list, term, value) {
+    var dt = document.createElement('dt');
+    dt.textContent = term;
+    var dd = document.createElement('dd');
+    dd.textContent = value;
+    list.appendChild(dt);
+    list.appendChild(dd);
+  }
   function show(info) {
     if (!panel) return;
-    panel.innerHTML =
-      '<h3>' + info.name + '</h3><dl>' +
-      '<dt>type</dt><dd>' + info.kind + '</dd>' +
-      '<dt>position</dt><dd>' + info.position + '</dd>' +
-      (info.notams ? '<dt>NOTAM</dt><dd>' + info.notams + ' in force</dd>' : '') +
-      '</dl>';
+    // Built as nodes rather than markup: every value here is text read out
+    // of a publication, and a designator carrying angle brackets would
+    // otherwise be rendered as markup instead of shown.
+    panel.textContent = '';
+    var heading = document.createElement('h3');
+    heading.textContent = info.name;
+    panel.appendChild(heading);
+    var list = document.createElement('dl');
+    row(list, 'type', info.kind);
+    row(list, 'position', info.position);
+    if (info.detail) row(list, 'published', info.detail);
+    if (info.notams) row(list, 'NOTAM', info.notams + ' in force');
+    panel.appendChild(list);
   }
-  document.querySelectorAll('.pv-point').forEach(function (node) {
+  document.querySelectorAll('[data-info]').forEach(function (node) {
     function open() { show(JSON.parse(node.dataset.info)); }
     node.addEventListener('click', open);
     node.addEventListener('focus', open);
