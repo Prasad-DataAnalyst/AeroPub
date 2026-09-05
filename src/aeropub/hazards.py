@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 from aeropub.airspace import describe_limits, read_limit
+from aeropub.boundary import Boundary, read_boundary_manifest
 from aeropub.entities import named, normalise
 from aeropub.facts import SourceRef
 from aeropub.manifest import (
@@ -252,6 +253,15 @@ class Hazard:
     """Top elevation of an en-route obstacle, above mean sea level. Only
     meaningful for ENR 5.4, and left unset everywhere else."""
 
+    boundary: Boundary | None = None
+    """The lateral limits, as the State walks them. Most danger and restricted
+    areas are published as a circle or a short coordinate list, so this is the
+    one part of ENR 5 that usually *is* fully published.
+
+    Held for drawing. It does not become a containment test here any more than
+    it does in :mod:`aeropub.boundary`: the screen above eliminates by altitude
+    and says so, and a drawn area is a drawn area."""
+
     remarks: str = ""
 
     def __post_init__(self) -> None:
@@ -260,6 +270,8 @@ class Hazard:
         object.__setattr__(self, "months", tuple(sorted(set(self.months))))
         if not self.designator:
             raise ValueError("Hazard.designator must be a non-empty string")
+        if self.boundary is not None and not isinstance(self.boundary, Boundary):
+            raise TypeError("Hazard.boundary must be a Boundary")
         if not isinstance(self.kind, HazardKind):
             raise TypeError("Hazard.kind must be a HazardKind")
         if not isinstance(self.activation, Activation):
@@ -854,6 +866,15 @@ def load_hazards(path: Path | str) -> HazardRegister:
                 f"{where}: region is required — which flight information "
                 "region this lies in. Without it no route can surface it."
             )
+        boundary = None
+        if row.get("boundary") is not None:
+            try:
+                boundary = read_boundary_manifest(
+                    row["boundary"], where=f"{where}: boundary"
+                )
+            except ValueError as error:
+                raise ManifestError(str(error)) from None
+
         try:
             hazards.append(
                 Hazard(
@@ -872,6 +893,7 @@ def load_hazards(path: Path | str) -> HazardRegister:
                     elevation_ft=read_limit(
                         row.get("elevation"), where=where, field="elevation"
                     ),
+                    boundary=boundary,
                     remarks=str(row.get("remarks", "")).strip(),
                 )
             )
@@ -949,6 +971,12 @@ _HAZARD_TEMPLATE = {
             "activity": "",
             "authority": "",
             "elevation": None,
+            "boundary": {
+                "described_as": "",
+                "points": [],
+                "edges": [],
+                "circle": None,
+            },
             "remarks": "",
             "locator": "",
         }

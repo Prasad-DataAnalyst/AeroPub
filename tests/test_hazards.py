@@ -416,6 +416,76 @@ def manifest(**overrides) -> dict:
     return payload
 
 
+class TestBoundaries:
+    """ENR 5 is the one part of the AIP where the lateral limits usually *are*
+    fully published: most danger and restricted areas are a circle or a short
+    coordinate list."""
+
+    def test_a_circle_is_the_common_published_form(self, tmp_path, document):
+        payload = manifest()
+        payload["hazards"][0]["boundary"] = {
+            "described_as": "a circle of 5 NM radius centred on 251500N 0510000E",
+            "circle": {
+                "latitude": "251500N",
+                "longitude": "0510000E",
+                "radius_nm": 5,
+            },
+        }
+        held = load_hazards(write(tmp_path, payload))
+        found = held.hazards[0].boundary
+        assert found is not None and found.is_closed
+        assert found.circle.radius_nm == 5.0
+
+    def test_a_coordinate_list_closes(self, tmp_path, document):
+        payload = manifest()
+        payload["hazards"][0]["boundary"] = {
+            "points": [
+                {"latitude": "251500N", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+                {"latitude": "250000N", "longitude": "0530000E"},
+            ]
+        }
+        held = load_hazards(write(tmp_path, payload))
+        assert held.hazards[0].boundary.is_closed
+
+    def test_an_area_partly_described_in_words_does_not_close(
+        self, tmp_path, document
+    ):
+        payload = manifest()
+        payload["hazards"][0]["boundary"] = {
+            "described_as": (
+                "251500N 0510000E - thence along the coastline to "
+                "250000N 0505000E"
+            )
+        }
+        held = load_hazards(write(tmp_path, payload))
+        found = held.hazards[0].boundary
+        assert not found.is_closed
+        assert found.narrative_edges
+
+    def test_an_area_with_no_boundary_read_holds_none(self, tmp_path, document):
+        """And that is never taken for an area that does not exist."""
+        held = load_hazards(write(tmp_path, manifest()))
+        assert held.hazards[1].boundary is None
+
+    def test_a_bad_radius_is_refused_by_name(self, tmp_path, document):
+        payload = manifest()
+        payload["hazards"][0]["boundary"] = {
+            "circle": {
+                "latitude": "251500N",
+                "longitude": "0510000E",
+                "radius_nm": "five miles",
+            }
+        }
+        with pytest.raises(ManifestError, match="radius_nm"):
+            load_hazards(write(tmp_path, payload))
+
+    def test_holding_the_edge_does_not_add_a_containment_test(self):
+        from aeropub.hazards import Hazard
+
+        assert not hasattr(Hazard, "contains")
+
+
 class TestLoading:
     def test_a_register_loads_with_every_entry_cited(self, tmp_path, document):
         held = load_hazards(write(tmp_path, manifest()))

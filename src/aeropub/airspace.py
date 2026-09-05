@@ -46,6 +46,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from aeropub.boundary import Boundary, read_boundary_manifest
 from aeropub.entities import named, normalise
 from aeropub.facts import SourceRef
 from aeropub.manifest import (
@@ -252,6 +253,17 @@ class Airspace:
     frequency_mhz: float | None = None
     hours: str = ""
     requirements: tuple[CarriageRequirement, ...] = ()
+
+    boundary: Boundary | None = None
+    """The lateral limits, as the State walks them. ``None`` where the
+    description was not read — which is most of them until somebody reads it,
+    and is why nothing downstream may take an absent boundary for an absent
+    airspace.
+
+    It is here for *drawing*, and for nothing else. This class already refuses
+    to answer whether a route is laterally inside a volume, and holding the
+    published edge does not change that: see :mod:`aeropub.boundary`."""
+
     remarks: str = ""
 
     def __post_init__(self) -> None:
@@ -259,6 +271,8 @@ class Airspace:
         object.__setattr__(self, "region", normalise(self.region))
         if not self.designator:
             raise ValueError("Airspace.designator must be a non-empty string")
+        if self.boundary is not None and not isinstance(self.boundary, Boundary):
+            raise TypeError("Airspace.boundary must be a Boundary")
         if not isinstance(self.kind, AirspaceType):
             raise TypeError("Airspace.kind must be an AirspaceType")
         if not isinstance(self.airspace_class, AirspaceClass):
@@ -786,6 +800,15 @@ def load_airspace(path: Path | str) -> AirspaceStructure:
         else:
             frequency = None
 
+        boundary = None
+        if row.get("boundary") is not None:
+            try:
+                boundary = read_boundary_manifest(
+                    row["boundary"], where=f"{where}: boundary"
+                )
+            except ValueError as error:
+                raise ManifestError(str(error)) from None
+
         try:
             volumes.append(
                 Airspace(
@@ -801,6 +824,7 @@ def load_airspace(path: Path | str) -> AirspaceStructure:
                     frequency_mhz=frequency,
                     hours=str(row.get("hours", "")).strip(),
                     requirements=tuple(requirements),
+                    boundary=boundary,
                     remarks=str(row.get("remarks", "")).strip(),
                 )
             )
@@ -833,6 +857,12 @@ _AIRSPACE_TEMPLATE = {
             "frequency_mhz": None,
             "hours": "",
             "requirements": [],
+            "boundary": {
+                "described_as": "",
+                "points": [],
+                "edges": [],
+                "circle": None,
+            },
             "remarks": "",
             "locator": "",
         }

@@ -313,6 +313,129 @@ def manifest(**overrides) -> dict:
     return payload
 
 
+class TestBoundaries:
+    """ENR 2 walks the edge of each volume. Holding it is for drawing, and
+    holding it changes nothing about what this module refuses to answer."""
+
+    def test_a_coordinate_list_loads_as_a_closed_boundary(self, tmp_path, document):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "described_as": "251500N 0510000E - 254500N 0522000E - 250000N 0530000E",
+            "points": [
+                {"latitude": "251500N", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+                {"latitude": "250000N", "longitude": "0530000E"},
+            ],
+        }
+        held = load_airspace(write(tmp_path, payload))
+        found = held.volume("AAAA").boundary
+        assert found is not None and found.is_closed
+        assert len(found.outline()) == 4
+
+    def test_a_circle_loads_as_a_circle(self, tmp_path, document):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "circle": {
+                "latitude": "251500N",
+                "longitude": "0510000E",
+                "radius_nm": 5,
+            }
+        }
+        held = load_airspace(write(tmp_path, payload))
+        found = held.volume("AAAA").boundary
+        assert found is not None and found.circle is not None
+        assert found.circle.radius_nm == 5.0
+
+    def test_words_alone_are_read_as_far_as_they_can_be(self, tmp_path, document):
+        """A State that publishes only prose still gets what is readable read,
+        and the rest becomes a visible gap."""
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "described_as": (
+                "251500N 0510000E - thence along the State boundary to "
+                "250000N 0505000E"
+            )
+        }
+        held = load_airspace(write(tmp_path, payload))
+        found = held.volume("AAAA").boundary
+        assert found is not None
+        assert found.narrative_edges
+        assert not found.is_closed
+
+    def test_an_edge_override_makes_an_arc(self, tmp_path, document):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "points": [
+                {"latitude": "251500N", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+                {"latitude": "250000N", "longitude": "0530000E"},
+            ],
+            "edges": [
+                {
+                    "to_point": 2,
+                    "kind": "arc",
+                    "centre_latitude": "252000N",
+                    "centre_longitude": "0515000E",
+                    "radius_nm": 30,
+                    "clockwise": True,
+                }
+            ],
+        }
+        held = load_airspace(write(tmp_path, payload))
+        found = held.volume("AAAA").boundary
+        assert found is not None and found.arc_count == 1
+
+    def test_an_edge_naming_a_point_that_is_not_there_is_refused(
+        self, tmp_path, document
+    ):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "points": [
+                {"latitude": "251500N", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+                {"latitude": "250000N", "longitude": "0530000E"},
+            ],
+            "edges": [{"to_point": 9, "kind": "great_circle"}],
+        }
+        with pytest.raises(ManifestError, match="not a point"):
+            load_airspace(write(tmp_path, payload))
+
+    def test_a_coordinate_of_prose_is_refused(self, tmp_path, document):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "points": [
+                {"latitude": "see chart", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+                {"latitude": "250000N", "longitude": "0530000E"},
+            ]
+        }
+        with pytest.raises(ManifestError, match="latitude"):
+            load_airspace(write(tmp_path, payload))
+
+    def test_two_points_are_refused_as_a_boundary(self, tmp_path, document):
+        payload = manifest()
+        payload["volumes"][0]["boundary"] = {
+            "points": [
+                {"latitude": "251500N", "longitude": "0510000E"},
+                {"latitude": "254500N", "longitude": "0522000E"},
+            ]
+        }
+        with pytest.raises(ManifestError, match="three points"):
+            load_airspace(write(tmp_path, payload))
+
+    def test_a_volume_with_no_boundary_holds_none(self, tmp_path, document):
+        """Most of them, until somebody reads it. Absent boundary is never
+        absent airspace."""
+        held = load_airspace(write(tmp_path, manifest()))
+        assert held.volume("AAAA").boundary is None
+
+    def test_holding_the_edge_does_not_add_a_containment_test(self):
+        """The point of the whole exercise."""
+        from aeropub.airspace import Airspace
+
+        assert not hasattr(Airspace, "contains")
+
+
 class TestLoading:
     def test_a_structure_loads_with_every_volume_cited(self, tmp_path, document):
         held = load_airspace(write(tmp_path, manifest()))

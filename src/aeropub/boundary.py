@@ -605,16 +605,26 @@ def read_boundary_manifest(
     if circle is not None:
         if not isinstance(circle, Mapping):
             raise ValueError(f"{where}: boundary.circle must be an object")
+        values = {}
+        for field, is_latitude in (("latitude", True), ("longitude", False)):
+            try:
+                values[field] = parse_coordinate(
+                    circle.get(field), is_latitude=is_latitude
+                )
+            except (CoordinateError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"{where}: boundary.circle {field} {error}"
+                ) from None
+        centre = Position(
+            latitude=values["latitude"], longitude=values["longitude"]
+        )
         try:
-            centre = Position(
-                latitude=parse_coordinate(circle.get("latitude"), is_latitude=True),
-                longitude=parse_coordinate(
-                    circle.get("longitude"), is_latitude=False
-                ),
-            )
             radius = float(circle.get("radius_nm"))
-        except (CoordinateError, TypeError, ValueError) as error:
-            raise ValueError(f"{where}: boundary.circle {error}") from None
+        except (TypeError, ValueError):
+            raise ValueError(
+                f"{where}: boundary.circle radius_nm "
+                f"{circle.get('radius_nm')!r} is not a number"
+            ) from None
         return Boundary(
             circle=Circle(centre=centre, radius_nm=radius), published_as=described
         )
@@ -634,17 +644,22 @@ def read_boundary_manifest(
     for index, point in enumerate(points):
         if not isinstance(point, Mapping):
             raise ValueError(f"{where}: boundary.points[{index}] must be an object")
-        try:
-            read.append(
-                Position(
-                    latitude=parse_coordinate(point.get("latitude"), is_latitude=True),
-                    longitude=parse_coordinate(
-                        point.get("longitude"), is_latitude=False
-                    ),
+        # Read one field at a time so the message names the column. A boundary
+        # table is forty rows of two coordinates, and "one of these is wrong"
+        # is not a finding somebody can act on.
+        values: dict[str, float] = {}
+        for field, is_latitude in (("latitude", True), ("longitude", False)):
+            try:
+                values[field] = parse_coordinate(
+                    point.get(field), is_latitude=is_latitude
                 )
-            )
-        except (CoordinateError, TypeError, ValueError) as error:
-            raise ValueError(f"{where}: boundary.points[{index}] {error}") from None
+            except (CoordinateError, TypeError, ValueError) as error:
+                raise ValueError(
+                    f"{where}: boundary.points[{index}] {field} {error}"
+                ) from None
+        read.append(
+            Position(latitude=values["latitude"], longitude=values["longitude"])
+        )
     if len(read) < 3:
         raise ValueError(
             f"{where}: a boundary needs at least three points. Two points are "
