@@ -50,6 +50,11 @@ from aeropub.gnss import (
     load_gnss,
 )
 from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
+from aeropub.planning import (
+    PlanningRegister,
+    load_planning,
+    planning_template,
+)
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
@@ -819,6 +824,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.gnss_template:
         print(gnss_template())
         return OK
+    if args.planning_template:
+        print(planning_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -855,6 +863,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
         loaded = [load_gnss(path) for path in args.gnss]
         gnss = GnssRegister(
             services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    planning = None
+    if args.planning:
+        loaded = [load_planning(path) for path in args.planning]
+        planning = PlanningRegister(
+            rules=tuple(r for held in loaded for r in held.rules),
             covers=frozenset().union(*(held.covers for held in loaded)),
         )
 
@@ -905,6 +921,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
             navaids=navaids,
             gnss=gnss,
             capabilities=capabilities,
+            planning=planning,
+            item18=args.item18 or "",
+            slip_minutes=args.slip_minutes,
             notice_hours=args.notice_hours,
         )
         if args.profile:
@@ -1334,6 +1353,33 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--gnss-template", dest="gnss_template", action="store_true",
         help="print a blank ENR 4.3 extract",
+    )
+    sector.add_argument(
+        "--planning", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 1.10 extract, repeatable — filing deadlines, "
+            "repetitive-plan acceptance, required Item 18 indicators and the "
+            "EOBT slip a delay message covers"
+        ),
+    )
+    sector.add_argument(
+        "--item18", metavar="TEXT",
+        help=(
+            "Item 18 as filed, checked against the indicators each State "
+            "crossed requires"
+        ),
+    )
+    sector.add_argument(
+        "--slip-minutes", dest="slip_minutes", type=float, default=None,
+        metavar="MINUTES",
+        help=(
+            "how far EOBT has slipped, for screening against the delay "
+            "tolerance each State publishes"
+        ),
+    )
+    sector.add_argument(
+        "--planning-template", dest="planning_template", action="store_true",
+        help="print a blank ENR 1.10 extract",
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

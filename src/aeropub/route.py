@@ -79,6 +79,13 @@ from aeropub.gnss import (
     view_gnss,
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
+from aeropub.planning import (
+    PlanKind,
+    PlanningRegister,
+    PlanningView,
+    Timeliness,
+    view_planning,
+)
 from aeropub.hazards import (
     HazardRegister,
     HazardScreen,
@@ -517,6 +524,11 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    planning: PlanningView | None = None
+    """ENR 1.10 — whether this plan can still be filed in each State crossed,
+    which Item 18 indicators they require, and what a slip in EOBT costs.
+    ``None`` where no ENR 1.10 was supplied."""
+
     gnss: GnssView | None = None
     """ENR 4.3 — what each region approves, what it requires before departure,
     and which approach lines the plates offer that the State does not
@@ -750,6 +762,8 @@ class RouteDossier:
             lines += ["", self.hazards.render()]
         if self.gnss is not None:
             lines += ["", self.gnss.render()]
+        if self.planning is not None:
+            lines += ["", self.planning.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -829,6 +843,7 @@ def _open_items(
     hazards: HazardScreen | None = None,
     navaids: Iterable[NavaidUse] = (),
     gnss: GnssView | None = None,
+    planning: PlanningView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1105,6 +1120,80 @@ def _open_items(
                 )
             )
 
+    if planning is not None:
+        for region in planning.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.10 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "there may be a filing deadline here and there may "
+                        "not, and neither reading is available from what is "
+                        "held"
+                    ),
+                )
+            )
+        for finding in planning.late:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what="too late to file the flight plan",
+                    # Nothing about the aeroplane or the route fixes this. It
+                    # is the one finding that is already true when it is read.
+                    severity=Exposure.CRITICAL,
+                    why=finding.describe(),
+                )
+            )
+        for finding in planning.early:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what="too early to file the flight plan",
+                    # File later, not never — but a plan sent now is a plan
+                    # the ATS unit will not have.
+                    severity=Exposure.MEDIUM,
+                    why=finding.describe(),
+                )
+            )
+        for finding in planning.item18:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what=f"Item 18 {finding.indicator}/ required and not filed",
+                    severity=Exposure.HIGH,
+                    why=finding.describe(),
+                )
+            )
+        for finding in planning.delays:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what="EOBT slip past what a delay message covers",
+                    severity=Exposure.HIGH,
+                    why=finding.describe(),
+                )
+            )
+        for rule in planning.repetitive_refused:
+            items.append(
+                OpenItem(
+                    where=rule.region,
+                    what="repetitive flight plans not accepted",
+                    severity=Exposure.MEDIUM,
+                    why="one individual plan per flight is required here",
+                )
+            )
+        for finding in planning.filing:
+            if finding.timeliness is Timeliness.NO_WINDOW_PUBLISHED:
+                items.append(
+                    OpenItem(
+                        where=finding.region,
+                        what="no filing deadline published",
+                        severity=Exposure.UNKNOWN,
+                        why=finding.describe(),
+                    )
+                )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -1145,6 +1234,9 @@ def build_route_dossier(
     navaids: NavaidRegister | None = None,
     gnss: GnssRegister | None = None,
     capabilities: Iterable[ApproachCapability] = (),
+    planning: PlanningRegister | None = None,
+    item18: str = "",
+    slip_minutes: float | None = None,
     notice_hours: float | None = None,
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
@@ -1227,6 +1319,19 @@ def build_route_dossier(
         else None
     )
 
+    planning_view = (
+        view_planning(
+            planning,
+            regions=regions,
+            notice_hours=notice_hours,
+            item18=item18,
+            slip_minutes=slip_minutes,
+            plan_kind=PlanKind.INDIVIDUAL,
+        )
+        if planning is not None
+        else None
+    )
+
     aids: tuple[NavaidUse, ...] = ()
     if navaids is not None and expansion is not None:
         # Only the points the route actually names. Screening every aid in the
@@ -1281,7 +1386,7 @@ def build_route_dossier(
         altimetry=Altimetry(covers=jurisdictions),
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
-            airspace_view, hazard_screen, aids, gnss_view,
+            airspace_view, hazard_screen, aids, gnss_view, planning_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1294,4 +1399,5 @@ def build_route_dossier(
         hazards=hazard_screen,
         navaids=aids,
         gnss=gnss_view,
+        planning=planning_view,
     )

@@ -34,11 +34,25 @@ says exists", and only the second is a coverage claim.
 | 1.7 | **Altimeter setting procedures** | **Built** — transition altitude and level per region, reported as boundaries in `route.py` |
 | 1.8 | Regional supplementary procedures | Not held. Where a region's SUPPS differ from ICAO, a crew planning from Annex alone is wrong |
 | 1.9 | ATFM and airspace management | Not held. Slots and CTOT are operational rather than published-state, and belong with a live feed |
-| 1.10 | Flight planning | **Not built.** Filing requirements, repetitive plans, minimum notice — the charter variant needs it |
+| 1.10 | Flight planning | **Built** — `planning.py`. Filing window (both ends), repetitive-plan acceptance, required Item 18 indicators against the Item 18 as filed, and the EOBT slip a delay message covers |
 | 1.11 | Addressing of flight plan messages | Not held |
 | 1.12 | Interception of civil aircraft | Not held. Procedural, and worth carrying for the conflict-zone case |
 | 1.13 | Unlawful interference | Not held |
 | 1.14 | Air traffic incidents | Not held |
+
+**What ENR 1.10 does.** Everything else here is about the air; this is about
+the paperwork, and for a non-scheduled operation the paperwork is what stops
+the flight. It takes the same `notice_hours` the overflight-clearance screen
+takes, so one number answers both questions — whether the clearance can still
+be obtained and whether the plan can still be filed. A window has two ends: a
+plan filed earlier than the State accepts is a plan the ATS unit will not have.
+
+**The Item 18 parser splits on a closed list.** Anything shaped like `XXX/`
+would find a key inside a remark — `RMK/CONTACT OPS ON/OFF FREQ` splits at
+`ON/` — and an invented indicator makes a required one read as *present*,
+which is a false pass. Tokens outside the recognised set are reported, not
+acted on, because regional indicators exist and the list does not claim to be
+all of them.
 
 ## ENR 2 — ATS airspace
 
@@ -123,11 +137,13 @@ Overflight clearance lead times are screened against the notice available.
 
 ## Build order from here
 
-1. **ENR 1.10 flight planning** — filing requirements and minimum notice, which
-   the charter variant needs beside the clearance lead times already built.
-2. **ENR 0 checklist reconciliation** — page-level, at cycle close.
-3. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
+1. **ENR 0 checklist reconciliation** — page-level, at cycle close. The
+   difference between "we hold everything we fetched" and "we hold everything
+   the State says exists".
+2. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
    differ from the Annex, a crew planning from the Annex alone is wrong.
+3. **ENR 1.6 ATS surveillance services** — what service is actually provided,
+   which the airspace class implies and does not state.
 
 Everything above is buildable offline from published text.
 
