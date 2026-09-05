@@ -69,6 +69,7 @@ __all__ = [
     "mercator",
     "parse_coordinate",
     "parse_position",
+    "unmercator",
 ]
 
 #: Mean Earth radius in nautical miles, from the IUGG mean radius of
@@ -416,9 +417,26 @@ def mercator(position: Position) -> tuple[float, float]:
     return (x, y)
 
 
+def unmercator(x: float, y: float) -> Position:
+    """Back from unit Mercator coordinates to a position.
+
+    The inverse of :func:`mercator`, and needed by anything that starts from a
+    projected window and has to ask a question in degrees — clipping a
+    coastline to the window being drawn, or turning a click on a map back into
+    a place.
+    """
+    latitude = math.degrees(2.0 * math.atan(math.exp(y * math.pi)) - math.pi / 2.0)
+    return Position(latitude=latitude, longitude=x * 180.0)
+
+
 @dataclass(frozen=True, slots=True)
 class Bounds:
-    """The projected extent of a set of positions."""
+    """The projected extent of a set of positions.
+
+    **Projected**, not degrees: ``x`` is longitude over 180 and ``y`` is the
+    Mercator ordinate, so comparing either against a latitude is a category
+    error. :func:`unmercator` is how you ask this box a question in degrees.
+    """
 
     min_x: float
     min_y: float

@@ -21,9 +21,11 @@ dev = ["pytest>=8.0"]
 where = ["src"]
 
 [tool.setuptools.package-data]
-# The print template ships with the package: a renderer that cannot find
-# its template is a deployment that looks fine until somebody prints.
-aeropub = ["templates/*.html"]
+# The print template and the coastline ship with the package: a renderer
+# that cannot find its template is a deployment that looks fine until
+# somebody prints, and a map that has to fetch its own coastline is blank
+# behind a firewall.
+aeropub = ["templates/*.html", "data/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
