@@ -86,6 +86,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Chart studies — the plate that should have moved and did not, and the one that moved unexplained
 - [x] Route dossiers — both ends, the alternates, and the regions between them, with the gaps counted
 - [x] ATS routes — Item 15 parsed, resolved against ENR 3, screened for level, direction and PBN
+- [x] Procedure profiles — the SID onto the route and the STAR off it, screened for energy traps
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -133,6 +134,11 @@ aeropub route --structure-template > enr3.json    # fill it in from the State's 
 aeropub route --from OTHH --to EGLL --aircraft b77w.json \
     --route "N0480F350 ALSEM UM688 BAYAN DCT KIA L604 RASKI" \
     --structure enr3.json --level 35000 --holds "RNAV 5"
+
+aeropub route --procedure-template > plates.json   # transcribe a SID or STAR from its plate
+aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+    --route "ALSEM UM688 BAYAN" --structure enr3.json \
+    --procedures othh-sids.json --procedures egll-stars.json
 ```
 
 Give it the route as Item 15 states it — the string you are about to file, pasted — and it
@@ -141,6 +147,12 @@ segment crossed (the *highest* one binds, not the first), direction of cruising 
 navigation specification, and every NOTAM in force against any point or airway on the route.
 A leg flown direct is shown and never counted as a gap: there is no published segment behind a
 DCT, which is a decision the operator made rather than something the State failed to publish.
+
+Give it the procedures too and it closes the profile: which SID reaches the first point of the
+route, which STAR leaves the last, and whether either publishes a pair of constraints an
+aeroplane cannot make. That last is division rather than judgement — the height between two
+published constraints over the distance between them, against what the aeroplane actually has —
+and it finds energy traps sitting in plain sight on plates thousands of crews fly.
 
 A route dossier's headline is not a risk score. It is how much of the route the platform can
 speak for — places read, out of places crossed. A sector whose two ends are read and whose five

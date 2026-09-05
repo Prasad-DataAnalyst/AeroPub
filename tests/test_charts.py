@@ -20,7 +20,9 @@ a test source, and none of it is a claim about a real procedure.
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -29,18 +31,29 @@ from aeropub.charts import (
     IMPLICATIONS,
     Chart,
     ChartKind,
+    Constraint,
+    ConstraintKind,
+    Procedure,
+    ProcedureKind,
+    ProcedureLeg,
     ChartRegister,
     ChartReview,
     Minimum,
     Requirement,
     chart_kinds_for,
     compare_minima,
+    connecting_procedures,
     expectations,
+    load_procedures,
+    procedure_template,
     review_charts,
+    screen_climb,
+    screen_descent,
     serves,
     usable,
 )
 from aeropub.facts import Fact, Precedence
+from aeropub.manifest import ManifestError
 from aeropub.provenance import SourceRef
 from aeropub.suitability import Assessment
 
@@ -463,3 +476,290 @@ class TestCapability:
     def test_a_requirement_cannot_be_built_without_a_citation(self):
         with pytest.raises(TypeError):
             Requirement(code="RNP AR APCH", source=None)
+
+
+# --------------------------------------------------------------------------
+# Procedures — the arithmetic behind the plate
+# --------------------------------------------------------------------------
+
+
+def constraint(kind: ConstraintKind, lower=None, upper=None, speed=None) -> Constraint:
+    return Constraint(
+        kind=kind, source=ref(locator="constraint"),
+        lower_ft=lower, upper_ft=upper, speed_kt=speed,
+    )
+
+
+def procedure(kind: ProcedureKind, designator: str, *legs, **overrides) -> Procedure:
+    fields = dict(
+        aerodrome=AD, kind=kind, designator=designator, source=ref(), legs=legs
+    )
+    fields.update(overrides)
+    return Procedure(**fields)
+
+
+class TestConstraints:
+    def test_the_four_kinds_bind_in_different_directions(self):
+        """Confusing them produces a finding that is exactly backwards."""
+        above = constraint(ConstraintKind.AT_OR_ABOVE, 8000)
+        assert above.floor_ft == 8000
+        assert above.ceiling_ft is None
+
+        below = constraint(ConstraintKind.AT_OR_BELOW, upper=8000)
+        assert below.ceiling_ft == 8000
+        assert below.floor_ft is None
+
+    def test_an_at_constraint_is_both_a_floor_and_a_ceiling(self):
+        exact = constraint(ConstraintKind.AT, 8000)
+        assert exact.floor_ft == exact.ceiling_ft == 8000
+
+    def test_a_window_removes_the_crews_discretion_in_both_directions(self):
+        window = constraint(ConstraintKind.WINDOW, 8000, 10000)
+        assert window.floor_ft == 8000
+        assert window.ceiling_ft == 10000
+
+    def test_half_a_window_is_refused(self):
+        """Reading it as a window would invent a limit nobody published."""
+        with pytest.raises(ValueError, match="both bounds"):
+            constraint(ConstraintKind.WINDOW, 8000)
+
+    def test_an_at_constraint_needs_an_altitude(self):
+        with pytest.raises(ValueError, match="constrains nothing"):
+            constraint(ConstraintKind.AT)
+
+    def test_an_inverted_window_is_refused(self):
+        with pytest.raises(ValueError, match="above upper"):
+            constraint(ConstraintKind.WINDOW, 10000, 8000)
+
+    def test_a_constraint_cannot_be_built_without_a_citation(self):
+        with pytest.raises(TypeError):
+            Constraint(kind=ConstraintKind.AT, source=None, lower_ft=8000)
+
+
+class TestDescentScreening:
+    """The energy trap, found by division rather than by feel."""
+
+    @pytest.fixture
+    def trapped(self) -> Procedure:
+        # Forced at or above 12000 at BAYAN, at or below 7000 thirteen miles
+        # later. Five thousand feet in thirteen miles is 385 ft/NM.
+        return procedure(
+            ProcedureKind.STAR, "BAYA2B",
+            ProcedureLeg(fix="BAYAN", constraint=constraint(ConstraintKind.AT_OR_ABOVE, 12000)),
+            ProcedureLeg(fix="MIDLE", distance_nm=5.0),
+            ProcedureLeg(fix="KUKLA", distance_nm=8.0,
+                         constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=7000)),
+        )
+
+    def test_a_floor_followed_by_a_ceiling_is_the_binding_pair(self, trapped):
+        found = screen_descent(trapped)
+        assert len(found) == 1
+        assert (found[0].start, found[0].end) == ("BAYAN", "KUKLA")
+
+    def test_the_required_gradient_is_the_arithmetic_not_a_judgement(self, trapped):
+        found = screen_descent(trapped)[0]
+        assert found.distance_nm == 13.0
+        assert round(found.required_ft_per_nm) == 385
+        assert found.is_trap
+
+    def test_the_distance_accumulates_across_unconstrained_fixes(self, trapped):
+        """MIDLE carries no constraint and still counts toward the distance."""
+        assert screen_descent(trapped)[0].distance_nm == 13.0
+
+    def test_more_capability_clears_the_trap(self, trapped):
+        """Speedbrake is a real answer, and the screen must accept it."""
+        assert screen_descent(trapped, capability_ft_per_nm=500) == ()
+
+    def test_a_ceiling_followed_by_a_ceiling_is_not_a_trap(self):
+        """Only a floor takes the crew's room away."""
+        loose = procedure(
+            ProcedureKind.STAR, "LOOS1A",
+            ProcedureLeg(fix="AAAAA", constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=12000)),
+            ProcedureLeg(fix="BBBBB", distance_nm=5.0,
+                         constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=7000)),
+        )
+        assert screen_descent(loose) == ()
+
+    def test_an_unmeasured_leg_breaks_the_chain_rather_than_guessing(self):
+        """A gradient over an unknown distance is arithmetic with a hole in it."""
+        broken = procedure(
+            ProcedureKind.STAR, "BROK1A",
+            ProcedureLeg(fix="AAAAA", constraint=constraint(ConstraintKind.AT_OR_ABOVE, 12000)),
+            ProcedureLeg(fix="BBBBB",
+                         constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=7000)),
+        )
+        assert screen_descent(broken) == ()
+
+    def test_an_untranscribed_procedure_screens_to_nothing_not_to_nothing_wrong(self):
+        empty = procedure(ProcedureKind.STAR, "NONE1A")
+        assert not empty.is_transcribed
+        assert screen_descent(empty) == ()
+
+    def test_a_climbing_pair_is_not_reported_as_a_descent_trap(self):
+        climbing = procedure(
+            ProcedureKind.STAR, "CLMB1A",
+            ProcedureLeg(fix="AAAAA", constraint=constraint(ConstraintKind.AT_OR_ABOVE, 7000)),
+            ProcedureLeg(fix="BBBBB", distance_nm=5.0,
+                         constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=12000)),
+        )
+        assert screen_descent(climbing) == ()
+
+
+class TestClimbScreening:
+    def test_a_crossing_restriction_demanding_more_than_standard_is_found(self):
+        """It binds exactly when an engine has failed and the margin is spent."""
+        steep = procedure(
+            ProcedureKind.SID, "ALSE1A",
+            ProcedureLeg(fix=AD, constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=1000)),
+            ProcedureLeg(fix="ALSEM", distance_nm=6.0,
+                         constraint=constraint(ConstraintKind.AT_OR_ABOVE, 4000)),
+        )
+        found = screen_climb(steep)
+        assert len(found) == 1
+        assert round(found[0].required_ft_per_nm) == 500
+        assert not found[0].descending
+
+    def test_the_gradient_is_also_reported_the_way_a_chart_prints_it(self):
+        steep = procedure(
+            ProcedureKind.SID, "ALSE1A",
+            ProcedureLeg(fix=AD, constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=1000)),
+            ProcedureLeg(fix="ALSEM", distance_nm=6.0,
+                         constraint=constraint(ConstraintKind.AT_OR_ABOVE, 4000)),
+        )
+        assert round(screen_climb(steep)[0].required_percent, 2) == 8.23
+
+    def test_a_gentle_climb_is_not_a_finding(self):
+        gentle = procedure(
+            ProcedureKind.SID, "EASY1A",
+            ProcedureLeg(fix=AD, constraint=constraint(ConstraintKind.AT_OR_BELOW, upper=1000)),
+            ProcedureLeg(fix="ALSEM", distance_nm=20.0,
+                         constraint=constraint(ConstraintKind.AT_OR_ABOVE, 4000)),
+        )
+        assert screen_climb(gentle) == ()
+
+
+class TestConnecting:
+    def test_a_sid_joins_at_its_terminal_fix(self):
+        """That is the direction it is flown."""
+        sid = procedure(
+            ProcedureKind.SID, "ALSE1A",
+            ProcedureLeg(fix=AD),
+            ProcedureLeg(fix="ALSEM", distance_nm=6.0),
+        )
+        assert sid.terminates_at == "ALSEM"
+        assert sid.joins("ALSEM")
+        assert not sid.joins(AD)
+
+    def test_a_star_joins_at_its_first_fix(self):
+        star = procedure(
+            ProcedureKind.STAR, "BAYA2B",
+            ProcedureLeg(fix="BAYAN"),
+            ProcedureLeg(fix="FINAL", distance_nm=20.0),
+        )
+        assert star.begins_at == "BAYAN"
+        assert star.joins("BAYAN")
+        assert not star.joins("FINAL")
+
+    def test_an_arrival_is_never_connected_to_a_departure_point(self):
+        star = procedure(
+            ProcedureKind.STAR, "BAYA2B", ProcedureLeg(fix="BAYAN")
+        )
+        assert connecting_procedures(
+            [star], aerodrome=AD, point="BAYAN", departure=True
+        ) == ()
+
+    def test_a_procedure_at_another_aerodrome_never_connects(self):
+        elsewhere = procedure(
+            ProcedureKind.SID, "ALSE1A", ProcedureLeg(fix="ALSEM"),
+            aerodrome="YYYY",
+        )
+        assert connecting_procedures(
+            [elsewhere], aerodrome=AD, point="ALSEM", departure=True
+        ) == ()
+
+    def test_no_connection_is_a_coverage_answer_not_a_statement(self):
+        """Almost every aerodrome has a published way onto the structure."""
+        assert connecting_procedures(
+            [], aerodrome=AD, point="ALSEM", departure=True
+        ) == ()
+
+
+class TestProcedureLoading:
+    @staticmethod
+    def payload(**overrides) -> dict:
+        base = {
+            "source": {
+                "source_id": "EXAMPLE",
+                "document": "Terminal procedures",
+                "document_path": "source.txt",
+                "retrieved_at": "2026-09-01T12:00:00Z",
+            },
+            "aerodrome": AD,
+            "procedures": [
+                {
+                    "kind": "star",
+                    "designator": "BAYA2B",
+                    "locator": "BAYAN TWO BRAVO",
+                    "legs": [
+                        {"fix": "BAYAN",
+                         "constraint": {"kind": "at_or_above", "lower_ft": 12000}},
+                        {"fix": "KUKLA", "distance_nm": 13.0,
+                         "constraint": {"kind": "at_or_below", "upper_ft": 7000}},
+                    ],
+                }
+            ],
+        }
+        base.update(overrides)
+        return base
+
+    @pytest.fixture
+    def document(self, tmp_path: Path) -> Path:
+        path = tmp_path / "source.txt"
+        path.write_text("a plate, standing in for one somebody read\n", encoding="utf-8")
+        return path
+
+    def write(self, tmp_path: Path, payload: dict) -> Path:
+        path = tmp_path / "procedures.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_procedures_load_with_every_constraint_cited(self, tmp_path, document):
+        found = load_procedures(self.write(tmp_path, self.payload()))
+        assert len(found) == 1
+        assert found[0].legs[0].constraint.source.locator == "BAYAN TWO BRAVO"
+        assert len(found[0].legs[0].constraint.source.content_hash) == 64
+
+    def test_a_loaded_procedure_screens(self, tmp_path, document):
+        found = load_procedures(self.write(tmp_path, self.payload()))
+        assert len(screen_descent(found[0])) == 1
+
+    def test_a_fix_with_no_constraint_is_not_a_fix_constrained_to_nothing(
+        self, tmp_path, document
+    ):
+        payload = self.payload()
+        del payload["procedures"][0]["legs"][0]["constraint"]
+        found = load_procedures(self.write(tmp_path, payload))
+        assert found[0].legs[0].constraint is None
+        assert screen_descent(found[0]) == ()
+
+    def test_an_unknown_constraint_kind_is_refused(self, tmp_path, document):
+        payload = self.payload()
+        payload["procedures"][0]["legs"][0]["constraint"]["kind"] = "roughly"
+        with pytest.raises(ManifestError, match="constraint.kind"):
+            load_procedures(self.write(tmp_path, payload))
+
+    def test_a_procedure_needs_a_locator(self, tmp_path, document):
+        payload = self.payload()
+        del payload["procedures"][0]["locator"]
+        with pytest.raises(ManifestError, match="locator"):
+            load_procedures(self.write(tmp_path, payload))
+
+    def test_an_unreadable_distance_is_refused_not_rounded(self, tmp_path, document):
+        payload = self.payload()
+        payload["procedures"][0]["legs"][1]["distance_nm"] = "about 13"
+        with pytest.raises(ManifestError, match="not a number"):
+            load_procedures(self.write(tmp_path, payload))
+
+    def test_the_template_round_trips_as_json(self):
+        blank = json.loads(procedure_template())
+        assert blank["procedures"][0]["kind"] == "sid"

@@ -621,3 +621,114 @@ class TestFiledRoute:
     def test_no_filed_route_is_a_smaller_question_than_an_unresolved_one(self):
         """They print differently, and must."""
         assert dossier(route(crosses=())).expansion is None
+
+
+class TestDepartureAndArrivalProfile:
+    """The other half of a route: getting on and off the airway structure.
+
+    Which SID reaches the first point of the filed route and which STAR leaves
+    the last is a question with a published answer. Screening those two — and
+    only those two — is what turns a route string into a flyable profile.
+    """
+
+    @staticmethod
+    def procedures():
+        from aeropub.charts import (
+            Constraint, ConstraintKind, Procedure, ProcedureKind, ProcedureLeg,
+        )
+
+        def limit(kind, lower=None, upper=None):
+            return Constraint(kind=kind, source=ref(), lower_ft=lower, upper_ft=upper)
+
+        return (
+            Procedure(
+                aerodrome="XXXX", kind=ProcedureKind.SID, designator="ALSE1A",
+                source=ref(),
+                legs=(
+                    ProcedureLeg(
+                        fix="XXXX",
+                        constraint=limit(ConstraintKind.AT_OR_BELOW, upper=1000),
+                    ),
+                    ProcedureLeg(
+                        fix="ALSEM", distance_nm=6.0,
+                        constraint=limit(ConstraintKind.AT_OR_ABOVE, 4000),
+                    ),
+                ),
+            ),
+            Procedure(
+                aerodrome="YYYY", kind=ProcedureKind.STAR, designator="BAYA2B",
+                source=ref(),
+                legs=(
+                    ProcedureLeg(
+                        fix="BAYAN",
+                        constraint=limit(ConstraintKind.AT_OR_ABOVE, 12000),
+                    ),
+                    ProcedureLeg(fix="MIDLE", distance_nm=5.0),
+                    ProcedureLeg(
+                        fix="KUKLA", distance_nm=8.0,
+                        constraint=limit(ConstraintKind.AT_OR_BELOW, upper=7000),
+                    ),
+                ),
+            ),
+        )
+
+    def built(self, **overrides):
+        from aeropub.ats import parse_route_string
+
+        fields = dict(procedures=self.procedures())
+        fields.update(overrides)
+        sector = route(
+            filed=parse_route_string(
+                "ALSEM UM688 BAYAN", departure="XXXX", destination="YYYY"
+            ),
+            crosses=(),
+        )
+        return dossier(sector, **fields)
+
+    def test_the_sid_reaching_the_first_point_is_found(self):
+        built = self.built()
+        assert [link.procedure.designator for link in built.departures] == ["ALSE1A"]
+
+    def test_the_star_leaving_the_last_point_is_found(self):
+        built = self.built()
+        assert [link.procedure.designator for link in built.arrivals] == ["BAYA2B"]
+
+    def test_both_are_screened_and_the_traps_reach_the_open_items(self):
+        built = self.built()
+        assert len(built.traps) == 2
+        assert {i.where for i in built.open_items if i.what.startswith("published")} == {
+            "ALSE1A", "BAYA2B"
+        }
+
+    def test_a_trap_is_high_not_a_question(self):
+        """A crew that flies it arrives high or low and finds out late."""
+        found = [i for i in built_traps(self.built()) if True]
+        assert all(i.severity is Exposure.HIGH for i in found)
+
+    def test_no_held_procedure_reads_as_a_coverage_gap_not_as_none_existing(self):
+        built = self.built(procedures=())
+        assert built.departures == ()
+        assert "the plates have not been read" in built.render()
+
+    def test_procedures_at_another_aerodrome_are_not_linked(self):
+        from aeropub.charts import Procedure, ProcedureKind, ProcedureLeg
+
+        elsewhere = Procedure(
+            aerodrome="ZZZZ", kind=ProcedureKind.SID, designator="ALSE1A",
+            source=ref(), legs=(ProcedureLeg(fix="ALSEM"),),
+        )
+        assert self.built(procedures=(elsewhere,)).departures == ()
+
+    def test_no_filed_route_means_no_profile_to_screen(self):
+        """There is no first point to reach when there is no route."""
+        built = dossier(route(crosses=()), procedures=self.procedures())
+        assert built.departures == ()
+        assert built.traps == ()
+
+
+def built_traps(dossier_document):
+    return [
+        item
+        for item in dossier_document.open_items
+        if item.what == "published constraint cannot be made"
+    ]

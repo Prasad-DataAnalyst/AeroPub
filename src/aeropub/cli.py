@@ -39,7 +39,13 @@ from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
 from aeropub.bulletin import between_cycles
 from aeropub.changes import diff_cycles
-from aeropub.charts import load_register, register_template, review_charts
+from aeropub.charts import (
+    load_procedures,
+    load_register,
+    procedure_template,
+    register_template,
+    review_charts,
+)
 from aeropub.credentials import CredentialStore, describe as describe_secret
 from aeropub.currency import Currency, assess_currency
 from aeropub.dossier import build
@@ -717,6 +723,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.structure_template:
         print(structure_template())
         return OK
+    if args.procedure_template:
+        print(procedure_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -730,6 +739,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
             points=tuple(p for held in loaded for p in held.points),
             procedures=tuple(p for held in loaded for p in held.procedures),
         )
+    procedures = tuple(
+        p for path in (args.procedures or []) for p in load_procedures(path)
+    )
     filed = (
         parse_route_string(
             args.route, departure=args.departure, destination=args.destination
@@ -764,6 +776,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             register=NotamRegister(),
             coverage=AipCoverage(),
             structure=structure,
+            procedures=procedures,
         )
         _emit(document, args, document.render() + _emptiness_note(store, path))
         # Adverse on anything above medium, or on a route we cannot speak for.
@@ -1112,8 +1125,21 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sector.add_argument(
+        "--procedures", action="append", metavar="FILE",
+        help=(
+            "path to a procedure transcription, repeatable. Gives the "
+            "departure and arrival profile — which SID reaches the first point "
+            "of the route, which STAR leaves the last — and screens both for "
+            "constraints an aeroplane cannot make"
+        ),
+    )
+    sector.add_argument(
         "--structure-template", dest="structure_template", action="store_true",
         help="print a blank ENR 3 extract to fill in from a State's route table",
+    )
+    sector.add_argument(
+        "--procedure-template", dest="procedure_template", action="store_true",
+        help="print a blank procedure transcription to fill in from a plate",
     )
     sector.add_argument("--reference", default=None, help="your own name for this sector")
     sector.add_argument("--on", default=None)

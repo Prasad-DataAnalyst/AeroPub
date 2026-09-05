@@ -62,6 +62,14 @@ from aeropub.ats import (
     parse_route_string,
     screen_levels,
 )
+from aeropub.charts import (
+    GradientFinding,
+    Procedure,
+    ProcedureLink,
+    connecting_procedures,
+    screen_climb,
+    screen_descent,
+)
 from aeropub.currency import Currency, DataCurrency, assess_currency
 from aeropub.entities import named, normalise
 from aeropub.notam_register import NotamRegister
@@ -473,6 +481,17 @@ class RouteDossier:
     print differently."""
 
     levels: tuple[LevelFinding, ...] = ()
+    departures: tuple[ProcedureLink, ...] = ()
+    """Held procedures joining the departure aerodrome to the first point of
+    the filed route. Empty is a coverage answer: almost every aerodrome has a
+    published way onto the airway structure, so an empty list means nobody has
+    read the plates, not that no route exists."""
+
+    arrivals: tuple[ProcedureLink, ...] = ()
+    traps: tuple[GradientFinding, ...] = ()
+    """Published constraint pairs on those procedures demanding more climb or
+    descent than an aeroplane has. Arithmetic, not judgement."""
+
     enroute_notams: tuple[tuple[str, object, object], ...] = ()
     """NOTAM in force against anything on the filed route, each with the
     entity it was found against so a briefing can say where on the route it
@@ -623,6 +642,43 @@ class RouteDossier:
             for leg in self.expansion.direct:
                 lines.append(f"   · {leg.leg.describe()} — flown direct")
 
+        if self.expansion is not None and self.expansion.route.points:
+            first = self.expansion.route.points[0]
+            last = self.expansion.route.points[-1]
+            lines += ["", "PROFILE — getting on and off the airway structure"]
+            if self.departures:
+                for link in self.departures:
+                    lines.append(f"  {link.describe()}")
+            else:
+                lines.append(
+                    f"  no held procedure joins {self.route.departure} to "
+                    f"{first} — the plates have not been read, which is not "
+                    "the same as none existing"
+                )
+            if self.arrivals:
+                for link in self.arrivals:
+                    lines.append(f"  {link.describe()}")
+            else:
+                lines.append(
+                    f"  no held procedure joins {last} to "
+                    f"{self.route.destination} — same coverage gap, other end"
+                )
+
+        if self.traps:
+            lines += [
+                "",
+                "ENERGY — published constraints an aeroplane cannot make",
+            ]
+            for trap in self.traps:
+                lines.append(f"  !! {trap.describe()}")
+            lines += [
+                "",
+                "  Division, not judgement: the height between two published "
+                "constraints over",
+                "  the distance between them, against what the aeroplane "
+                "actually has.",
+            ]
+
         if self.levels:
             lines += ["", "LEVELS — the planned level against what is published"]
             for finding in self.levels:
@@ -711,6 +767,7 @@ def _open_items(
     expansion: RouteExpansion | None = None,
     levels: Iterable[LevelFinding] = (),
     enroute_notams: Iterable[tuple] = (),
+    traps: Iterable[GradientFinding] = (),
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -818,6 +875,18 @@ def _open_items(
             )
         )
 
+    for trap in traps:
+        items.append(
+            OpenItem(
+                where=trap.procedure,
+                what="published constraint cannot be made",
+                # Not a question. A crew that flies it arrives high or low on a
+                # procedure the State published as flyable, and finds out late.
+                severity=Exposure.HIGH,
+                why=trap.describe(),
+            )
+        )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -852,6 +921,7 @@ def build_route_dossier(
     coverage: AipCoverage | None = None,
     not_addressed: tuple[str, ...] = NOT_YET_ADDRESSED,
     structure: AtsStructure | None = None,
+    procedures: Iterable[Procedure] = (),
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
 
@@ -898,6 +968,33 @@ def build_route_dossier(
                 register, expansion, moment, structure=structure
             )
 
+    held = tuple(procedures)
+    departures: tuple[ProcedureLink, ...] = ()
+    arrivals: tuple[ProcedureLink, ...] = ()
+    traps: tuple[GradientFinding, ...] = ()
+    if expansion is not None and expansion.route.points:
+        departures = connecting_procedures(
+            held,
+            aerodrome=route.departure,
+            point=expansion.route.points[0],
+            departure=True,
+        )
+        arrivals = connecting_procedures(
+            held,
+            aerodrome=route.destination,
+            point=expansion.route.points[-1],
+            departure=False,
+        )
+        # Screened only on the procedures this route actually uses. Screening
+        # every plate at the aerodrome would bury the two that matter under
+        # findings about procedures nobody is flying today.
+        found: list[GradientFinding] = []
+        for link in departures:
+            found.extend(screen_climb(link.procedure))
+        for link in arrivals:
+            found.extend(screen_descent(link.procedure))
+        traps = tuple(found)
+
     return RouteDossier(
         route=route,
         as_at=moment,
@@ -906,10 +1003,13 @@ def build_route_dossier(
         jurisdictions=jurisdictions,
         altimetry=Altimetry(covers=jurisdictions),
         open_items=_open_items(
-            route, swept, jurisdictions, expansion, levels, enroute
+            route, swept, jurisdictions, expansion, levels, enroute, traps
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
         levels=levels,
         enroute_notams=enroute,
+        departures=departures,
+        arrivals=arrivals,
+        traps=traps,
     )

@@ -71,19 +71,34 @@ __all__ = [
     "Chart",
     "chart_kinds_for",
     "ChartKind",
+    "Constraint",
+    "ConstraintKind",
     "ChartRegister",
     "ChartReview",
     "compare_minima",
+    "connecting_procedures",
     "Discrepancy",
     "Expectation",
+    "FEET_PER_NM",
+    "GradientFinding",
     "expectations",
     "IMPLICATIONS",
+    "load_procedures",
     "load_register",
     "MinimaChange",
     "Minimum",
+    "Procedure",
+    "ProcedureKind",
+    "ProcedureLeg",
+    "ProcedureLink",
+    "procedure_template",
     "register_template",
     "Requirement",
+    "STANDARD_CLIMB_GRADIENT",
+    "STANDARD_DESCENT_GRADIENT",
     "review_charts",
+    "screen_climb",
+    "screen_descent",
     "serves",
     "Unexplained",
     "Usability",
@@ -1119,3 +1134,610 @@ def register_template() -> str:
     than a chart with no minima.
     """
     return json.dumps(_REGISTER_TEMPLATE, indent=2)
+
+
+# --------------------------------------------------------------------------
+# Procedures — the structure behind the plate
+# --------------------------------------------------------------------------
+#
+# A SID or STAR is not only a picture. It is a sequence of fixes with level
+# and speed constraints between them, and those constraints are arithmetic:
+# how much height must be lost between two fixes, over how far, is a division
+# anybody can do and almost nobody does before the aeroplane is already high.
+#
+# That is what makes this worth building. An energy trap is not a subtle
+# judgement — it is a published descent requirement steeper than an aeroplane
+# can achieve at idle, sitting in plain sight on a chart that thousands of
+# crews fly. The screen below finds them by doing the division.
+
+
+#: Feet lost per nautical mile at a nominal three-degree idle descent. Three
+#: degrees is the design gradient of nearly every published descent path and
+#: works out at almost exactly 318 ft/NM; 300 is the round figure planners use
+#: and sits on the conservative side of it, so a trap reported here is a trap
+#: on a more generous assumption too.
+STANDARD_DESCENT_GRADIENT = 300.0
+
+#: Feet gained per nautical mile at the standard 3.3% procedure design
+#: gradient. The same figure :mod:`aeropub.obstacles` works in, expressed the
+#: way a chart prints a climb requirement.
+STANDARD_CLIMB_GRADIENT = 200.0
+
+#: One nautical mile in feet, for turning a ft/NM gradient into the percentage
+#: a departure chart prints alongside it.
+FEET_PER_NM = 6076.115
+
+
+class ConstraintKind(str, Enum):
+    """How a published level constraint binds.
+
+    Four kinds, because they bind in different directions and confusing them
+    is how a screen produces a finding that is exactly backwards. An
+    at-or-above constraint costs a descending aeroplane nothing and everything
+    to a climbing one.
+    """
+
+    AT = "at"
+    AT_OR_ABOVE = "at_or_above"
+    AT_OR_BELOW = "at_or_below"
+    WINDOW = "window"
+    """Both, at once — "between 8000 and 10000". The one that traps, because
+    it removes the crew's discretion in both directions."""
+
+
+@dataclass(frozen=True, slots=True)
+class Constraint:
+    """One published level constraint at one fix."""
+
+    kind: ConstraintKind
+    source: SourceRef
+    lower_ft: float | None = None
+    upper_ft: float | None = None
+    speed_kt: float | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, ConstraintKind):
+            raise TypeError("Constraint.kind must be a ConstraintKind")
+        if not isinstance(self.source, SourceRef):
+            raise TypeError("Constraint.source must be a SourceRef")
+        if self.kind is ConstraintKind.AT and self.lower_ft is None:
+            raise ValueError(
+                "an AT constraint needs the altitude it is at. A constraint "
+                "with no altitude constrains nothing and would silently drop "
+                "out of every screen."
+            )
+        if self.kind is ConstraintKind.WINDOW and (
+            self.lower_ft is None or self.upper_ft is None
+        ):
+            raise ValueError(
+                "a WINDOW constraint needs both bounds — half a window is one "
+                "of the other three kinds, and reading it as a window would "
+                "invent a limit the State did not publish"
+            )
+        if (
+            self.lower_ft is not None
+            and self.upper_ft is not None
+            and self.lower_ft > self.upper_ft
+        ):
+            raise ValueError(
+                f"lower {self.lower_ft} is above upper {self.upper_ft}"
+            )
+
+    @property
+    def ceiling_ft(self) -> float | None:
+        """The highest a compliant aeroplane may be here.
+
+        ``None`` where nothing caps it — an at-or-above constraint places no
+        ceiling, and treating its altitude as one would manufacture a descent
+        requirement that does not exist.
+        """
+        if self.kind is ConstraintKind.AT:
+            return self.lower_ft
+        if self.kind in (ConstraintKind.AT_OR_BELOW, ConstraintKind.WINDOW):
+            return self.upper_ft
+        return None
+
+    @property
+    def floor_ft(self) -> float | None:
+        """The lowest a compliant aeroplane may be here."""
+        if self.kind is ConstraintKind.AT:
+            return self.lower_ft
+        if self.kind in (ConstraintKind.AT_OR_ABOVE, ConstraintKind.WINDOW):
+            return self.lower_ft
+        return None
+
+    def describe(self) -> str:
+        if self.kind is ConstraintKind.AT:
+            text = f"at {self.lower_ft:.0f}"
+        elif self.kind is ConstraintKind.AT_OR_ABOVE:
+            text = f"at or above {self.lower_ft:.0f}"
+        elif self.kind is ConstraintKind.AT_OR_BELOW:
+            text = f"at or below {self.upper_ft:.0f}"
+        else:
+            text = f"between {self.lower_ft:.0f} and {self.upper_ft:.0f}"
+        if self.speed_kt is not None:
+            text += f", {self.speed_kt:.0f} kt"
+        return text
+
+
+@dataclass(frozen=True, slots=True)
+class ProcedureLeg:
+    """One fix on a procedure, and how far it is from the one before."""
+
+    fix: str
+    distance_nm: float | None = None
+    """Track distance from the previous fix. ``None`` on the first leg, and on
+    any leg the chart does not print — an unmeasured leg cannot be screened,
+    and guessing a distance would produce a gradient nobody published."""
+
+    constraint: Constraint | None = None
+    track_deg: float | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "fix", normalise(self.fix))
+        if not self.fix:
+            raise ValueError("ProcedureLeg.fix must be a non-empty string")
+
+
+class ProcedureKind(str, Enum):
+    SID = "sid"
+    STAR = "star"
+    APPROACH = "approach"
+    ODP = "odp"
+
+    @property
+    def is_departure(self) -> bool:
+        return self in (ProcedureKind.SID, ProcedureKind.ODP)
+
+
+@dataclass(frozen=True, slots=True)
+class Procedure:
+    """A departure or arrival procedure as a sequence of constrained fixes.
+
+    Held beside the :class:`Chart` rather than inside it, because a chart is
+    what the State publishes and this is what somebody transcribed from it.
+    A procedure with no legs is one nobody has read, and it screens to nothing
+    rather than to nothing wrong.
+    """
+
+    aerodrome: str
+    kind: ProcedureKind
+    designator: str
+    source: SourceRef
+    runways: tuple[str, ...] = ()
+    legs: tuple[ProcedureLeg, ...] = ()
+    climb_gradient_ft_per_nm: float | None = None
+    """A gradient the chart prints as a requirement, above the standard. Held
+    as published; the screen below also derives one from the constraints,
+    and the two are reported separately because they are different claims."""
+
+    transition: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "aerodrome", normalise(self.aerodrome))
+        object.__setattr__(self, "designator", normalise(self.designator))
+        object.__setattr__(self, "runways", tuple(normalise(r) for r in self.runways))
+        if not self.aerodrome:
+            raise ValueError("Procedure.aerodrome must be a non-empty string")
+        if not self.designator:
+            raise ValueError("Procedure.designator must be a non-empty string")
+        if not isinstance(self.kind, ProcedureKind):
+            raise TypeError("Procedure.kind must be a ProcedureKind")
+        if not isinstance(self.source, SourceRef):
+            raise TypeError("Procedure.source must be a SourceRef")
+
+    @property
+    def fixes(self) -> tuple[str, ...]:
+        return tuple(leg.fix for leg in self.legs)
+
+    @property
+    def is_transcribed(self) -> bool:
+        return bool(self.legs)
+
+    @property
+    def terminates_at(self) -> str:
+        """The last fix — where a SID hands over to the en-route structure."""
+        return self.legs[-1].fix if self.legs else ""
+
+    @property
+    def begins_at(self) -> str:
+        """The first fix — where a STAR takes over from the en-route structure."""
+        return self.legs[0].fix if self.legs else ""
+
+    def joins(self, point: str) -> bool:
+        """Whether this procedure connects the aerodrome to that point.
+
+        A SID joins at its terminal fix and a STAR at its first: that is the
+        direction each is flown, and matching either end against either would
+        connect an arrival to a departure point.
+        """
+        wanted = normalise(point)
+        if not wanted:
+            return False
+        if self.kind.is_departure:
+            return self.terminates_at == wanted
+        return self.begins_at == wanted
+
+
+@dataclass(frozen=True, slots=True)
+class GradientFinding:
+    """A published pair of constraints demanding a gradient.
+
+    One finding type for both directions, because the arithmetic is the same
+    and only the sign differs: a descent requirement is height to lose over
+    distance, a climb requirement is height to gain over distance, and both
+    are compared against what an aeroplane can actually do.
+    """
+
+    procedure: str
+    start: str
+    end: str
+    from_ft: float
+    to_ft: float
+    distance_nm: float
+    capability_ft_per_nm: float
+    descending: bool
+
+    @property
+    def required_ft_per_nm(self) -> float:
+        return abs(self.to_ft - self.from_ft) / self.distance_nm
+
+    @property
+    def exceeds_by(self) -> float:
+        return self.required_ft_per_nm - self.capability_ft_per_nm
+
+    @property
+    def is_trap(self) -> bool:
+        return self.required_ft_per_nm > self.capability_ft_per_nm
+
+    @property
+    def required_percent(self) -> float:
+        """The same gradient the way a departure chart prints it."""
+        return self.required_ft_per_nm / FEET_PER_NM * 100.0
+
+    def describe(self) -> str:
+        verb = "lose" if self.descending else "gain"
+        return (
+            f"{self.procedure} {self.start} to {self.end}: "
+            f"{verb} {abs(self.to_ft - self.from_ft):.0f} ft in "
+            f"{self.distance_nm:.1f} NM — {self.required_ft_per_nm:.0f} ft/NM "
+            f"against {self.capability_ft_per_nm:.0f} available"
+            + (f", short by {self.exceeds_by:.0f}" if self.is_trap else "")
+        )
+
+
+def screen_descent(
+    procedure: Procedure,
+    *,
+    capability_ft_per_nm: float = STANDARD_DESCENT_GRADIENT,
+) -> tuple[GradientFinding, ...]:
+    """Find published constraint pairs an aeroplane cannot descend between.
+
+    The energy trap the plan names, done by arithmetic rather than by feel.
+    Between two fixes, the binding pair is the *lowest* the aeroplane may be at
+    the earlier one and the *highest* it may be at the later: a floor followed
+    by a ceiling. Anything else leaves the crew room, and only this pair takes
+    it away.
+
+    Unmeasured legs produce nothing and cannot: a gradient over an unknown
+    distance is not a smaller finding, it is arithmetic with a hole in it.
+    """
+    findings: list[GradientFinding] = []
+    held: list[tuple[str, Constraint, float]] = []
+    running = 0.0
+    for index, leg in enumerate(procedure.legs):
+        if index and leg.distance_nm is None:
+            # The chain of distances is broken here; nothing after this fix
+            # can be measured back to anything before it.
+            held = []
+            running = 0.0
+            if leg.constraint is not None:
+                held.append((leg.fix, leg.constraint, running))
+            continue
+        running += leg.distance_nm or 0.0
+        if leg.constraint is None:
+            continue
+        ceiling = leg.constraint.ceiling_ft
+        if ceiling is not None:
+            for fix, earlier, at in held:
+                floor = earlier.floor_ft
+                distance = running - at
+                if floor is None or distance <= 0 or floor <= ceiling:
+                    continue
+                findings.append(
+                    GradientFinding(
+                        procedure=procedure.designator,
+                        start=fix,
+                        end=leg.fix,
+                        from_ft=floor,
+                        to_ft=ceiling,
+                        distance_nm=distance,
+                        capability_ft_per_nm=capability_ft_per_nm,
+                        descending=True,
+                    )
+                )
+        held.append((leg.fix, leg.constraint, running))
+    return tuple(f for f in findings if f.is_trap)
+
+
+def screen_climb(
+    procedure: Procedure,
+    *,
+    capability_ft_per_nm: float = STANDARD_CLIMB_GRADIENT,
+) -> tuple[GradientFinding, ...]:
+    """Find published constraint pairs demanding more climb than is standard.
+
+    The mirror of the descent screen, and the reason a departure needs one: a
+    crossing restriction that quietly requires more than the standard 3.3% is
+    a performance limitation nobody filed a gradient note about, and it binds
+    exactly when an engine has failed and the margin was already spent.
+    """
+    findings: list[GradientFinding] = []
+    held: list[tuple[str, Constraint, float]] = []
+    running = 0.0
+    for index, leg in enumerate(procedure.legs):
+        if index and leg.distance_nm is None:
+            held = []
+            running = 0.0
+            if leg.constraint is not None:
+                held.append((leg.fix, leg.constraint, running))
+            continue
+        running += leg.distance_nm or 0.0
+        if leg.constraint is None:
+            continue
+        floor = leg.constraint.floor_ft
+        if floor is not None:
+            for fix, earlier, at in held:
+                ceiling = earlier.ceiling_ft
+                distance = running - at
+                if ceiling is None or distance <= 0 or ceiling >= floor:
+                    continue
+                findings.append(
+                    GradientFinding(
+                        procedure=procedure.designator,
+                        start=fix,
+                        end=leg.fix,
+                        from_ft=ceiling,
+                        to_ft=floor,
+                        distance_nm=distance,
+                        capability_ft_per_nm=capability_ft_per_nm,
+                        descending=False,
+                    )
+                )
+        held.append((leg.fix, leg.constraint, running))
+    return tuple(f for f in findings if f.is_trap)
+
+
+@dataclass(frozen=True, slots=True)
+class ProcedureLink:
+    """A procedure that joins this aerodrome to the filed route.
+
+    The departure and arrival half of a route profile. Which SID gets an
+    aeroplane from the runway to the first point of the filed route is a
+    question with a published answer, and answering it is what turns a route
+    string into a flyable profile.
+    """
+
+    procedure: Procedure
+    point: str
+
+    @property
+    def is_departure(self) -> bool:
+        return self.procedure.kind.is_departure
+
+    def describe(self) -> str:
+        end = "to" if self.is_departure else "from"
+        return (
+            f"{self.procedure.designator} ({self.procedure.kind.value.upper()}) "
+            f"{end} {self.point}"
+        )
+
+
+def connecting_procedures(
+    procedures: Iterable[Procedure],
+    *,
+    aerodrome: str,
+    point: str,
+    departure: bool,
+) -> tuple[ProcedureLink, ...]:
+    """Which held procedures join this aerodrome to this point.
+
+    Empty is a coverage answer and not a statement that none exists. Almost
+    every aerodrome has a published way onto the airway structure; an empty
+    result here means we have not read the procedures, and the caller must
+    render it that way.
+    """
+    where = normalise(aerodrome)
+    wanted = normalise(point)
+    return tuple(
+        ProcedureLink(procedure=p, point=wanted)
+        for p in procedures
+        if p.aerodrome == where
+        and p.kind.is_departure is departure
+        and p.joins(wanted)
+    )
+
+
+def _constraint(
+    block: object, *, document: SourceRef, where: str, locator: str
+) -> Constraint | None:
+    """Read one level constraint, or ``None`` where the fix carries none.
+
+    A fix with no constraint is not a fix constrained to nothing: it is a fix
+    the crew may cross at any level the procedure otherwise allows, and it
+    correctly drops out of both gradient screens.
+    """
+    if block is None:
+        return None
+    if not isinstance(block, Mapping):
+        raise ManifestError(f"{where}: constraint must be an object")
+    try:
+        kind = ConstraintKind(str(block.get("kind", "")).strip().lower())
+    except ValueError:
+        raise ManifestError(
+            f"{where}: constraint.kind must be one of "
+            f"{', '.join(k.value for k in ConstraintKind)}. Which direction a "
+            "constraint binds in decides whether it traps a descent or a "
+            "climb, so there is no safe default."
+        ) from None
+    try:
+        return Constraint(
+            kind=kind,
+            source=sub_source(
+                document, str(block.get("locator", "")).strip() or locator
+            ),
+            lower_ft=_number(block.get("lower_ft"), where=where, field="lower_ft"),
+            upper_ft=_number(block.get("upper_ft"), where=where, field="upper_ft"),
+            speed_kt=_number(block.get("speed_kt"), where=where, field="speed_kt"),
+        )
+    except ValueError as error:
+        raise ManifestError(f"{where}: {error}") from None
+
+
+def load_procedures(path: Path | str) -> tuple[Procedure, ...]:
+    """Read procedures transcribed from one State's plates.
+
+    One document, one citation, as everywhere else. The legs are the point: a
+    procedure with no legs is one nobody has read, and it screens to nothing
+    rather than to nothing wrong.
+    """
+    path = Path(path)
+    manifest = read_manifest(path)
+    document = document_source(
+        manifest.get("source"),
+        base=path.parent,
+        where=f"{path}: source",
+        parser_id=CHART_PARSER_ID,
+    )
+    aerodrome = str(manifest.get("aerodrome", "")).strip()
+    if not aerodrome:
+        raise ManifestError(
+            f"{path}: aerodrome is required — a procedure with no aerodrome "
+            "names a departure from everywhere."
+        )
+
+    rows = manifest.get("procedures", [])
+    if not isinstance(rows, list):
+        raise ManifestError(f"{path}: procedures must be a list")
+
+    found: list[Procedure] = []
+    for index, row in enumerate(rows):
+        where = f"{path}: procedures[{index}]"
+        if not isinstance(row, Mapping):
+            raise ManifestError(f"{where}: must be an object")
+        designator = str(row.get("designator", "")).strip()
+        if not designator:
+            raise ManifestError(f"{where}: designator is required")
+        locator = str(row.get("locator", "")).strip()
+        if not locator:
+            raise ManifestError(
+                f"{where}: {designator} needs a locator — which plate, and "
+                "where on it, this was transcribed from."
+            )
+        try:
+            kind = ProcedureKind(str(row.get("kind", "")).strip().lower())
+        except ValueError:
+            raise ManifestError(
+                f"{where}: kind must be one of "
+                f"{', '.join(k.value for k in ProcedureKind)}"
+            ) from None
+
+        listed = row.get("legs", [])
+        if not isinstance(listed, list):
+            raise ManifestError(f"{where}: legs must be a list of fixes")
+        legs: list[ProcedureLeg] = []
+        for position, entry in enumerate(listed):
+            place = f"{where}: legs[{position}]"
+            if isinstance(entry, str):
+                entry = {"fix": entry}
+            if not isinstance(entry, Mapping):
+                raise ManifestError(f"{place}: must be a fix or an object")
+            try:
+                legs.append(
+                    ProcedureLeg(
+                        fix=str(entry.get("fix", "")),
+                        distance_nm=_number(
+                            entry.get("distance_nm"), where=place, field="distance_nm"
+                        ),
+                        constraint=_constraint(
+                            entry.get("constraint"),
+                            document=document,
+                            where=place,
+                            locator=locator,
+                        ),
+                        track_deg=_number(
+                            entry.get("track_deg"), where=place, field="track_deg"
+                        ),
+                    )
+                )
+            except ValueError as error:
+                raise ManifestError(f"{place}: {error}") from None
+
+        try:
+            found.append(
+                Procedure(
+                    aerodrome=aerodrome,
+                    kind=kind,
+                    designator=designator,
+                    source=sub_source(document, locator),
+                    runways=tuple(str(r) for r in row.get("runways", [])),
+                    legs=tuple(legs),
+                    climb_gradient_ft_per_nm=_number(
+                        row.get("climb_gradient_ft_per_nm"),
+                        where=where,
+                        field="climb_gradient_ft_per_nm",
+                    ),
+                    transition=str(row.get("transition", "")).strip(),
+                )
+            )
+        except (ValueError, TypeError) as error:
+            raise ManifestError(f"{where}: {error}") from None
+    return tuple(found)
+
+
+_PROCEDURE_TEMPLATE = {
+    "source": {
+        "source_id": "",
+        "document": "",
+        "document_path": "",
+        "retrieved_at": "",
+        "published_at": "",
+        "original_url": "",
+    },
+    "aerodrome": "",
+    "procedures": [
+        {
+            "kind": "sid",
+            "designator": "",
+            "runways": [],
+            "transition": "",
+            "climb_gradient_ft_per_nm": None,
+            "locator": "",
+            "legs": [
+                {
+                    "fix": "",
+                    "distance_nm": None,
+                    "track_deg": None,
+                    "constraint": {
+                        "kind": "at_or_above",
+                        "lower_ft": None,
+                        "upper_ft": None,
+                        "speed_kt": None,
+                    },
+                }
+            ],
+        }
+    ],
+}
+
+
+def procedure_template() -> str:
+    """A blank procedure transcription.
+
+    ``distance_nm`` is the track distance from the *previous* fix, and leaving
+    it out is not a smaller entry: an unmeasured leg cannot be screened, and a
+    guessed distance produces a gradient nobody published. ``constraint`` may
+    be omitted entirely where a fix carries none — which is different from a
+    fix constrained to nothing, and drops out of the screens correctly.
+    """
+    return json.dumps(_PROCEDURE_TEMPLATE, indent=2)

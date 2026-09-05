@@ -1368,6 +1368,44 @@ def route_dossier(
             }
             for entity, notam, state in item.enroute_notams
         ],
+        "profile": {
+            "departures": [
+                {
+                    "designator": link.procedure.designator,
+                    "kind": link.procedure.kind.value,
+                    "point": link.point,
+                    "runways": list(link.procedure.runways),
+                    "source_ref": source_ref(link.procedure.source),
+                }
+                for link in item.departures
+            ],
+            "arrivals": [
+                {
+                    "designator": link.procedure.designator,
+                    "kind": link.procedure.kind.value,
+                    "point": link.point,
+                    "runways": list(link.procedure.runways),
+                    "source_ref": source_ref(link.procedure.source),
+                }
+                for link in item.arrivals
+            ],
+        },
+        "energy": [
+            {
+                "procedure": trap.procedure,
+                "start": trap.start,
+                "end": trap.end,
+                "from_ft": trap.from_ft,
+                "to_ft": trap.to_ft,
+                "distance_nm": trap.distance_nm,
+                "required_ft_per_nm": trap.required_ft_per_nm,
+                "required_percent": trap.required_percent,
+                "capability_ft_per_nm": trap.capability_ft_per_nm,
+                "descending": trap.descending,
+                "short_by_ft_per_nm": trap.exceeds_by,
+            }
+            for trap in item.traps
+        ],
         "not_addressed": list(item.not_addressed),
         "disclaimer": (
             "An assembly of what is held about one sector. Not a flight plan, "
