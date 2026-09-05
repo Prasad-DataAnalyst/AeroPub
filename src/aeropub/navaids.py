@@ -56,6 +56,7 @@ from typing import Iterable, Mapping
 
 from aeropub.entities import aerodrome_of, named, normalise
 from aeropub.facts import SourceRef
+from aeropub.geo import CoordinateError, Position, parse_coordinate
 from aeropub.manifest import (
     ManifestError,
     document_source,
@@ -190,6 +191,8 @@ class Navaid:
     status: NavaidStatus = NavaidStatus.UNKNOWN
     hours: str = ""
     magnetic_variation: float | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     serves: tuple[str, ...] = ()
     """Fixes, airways or procedures published as depending on this aid. What
     turns an outage into a list of consequences instead of a single row."""
@@ -213,6 +216,18 @@ class Navaid:
     @property
     def key(self) -> str:
         return named(NAVAID, self.ident)
+
+    @property
+    def position(self) -> Position | None:
+        """Where it is, or ``None`` where the coordinates were not read.
+
+        An aid without a held position is not drawn at a guessed one. Its
+        published coverage is a radius about a point, and a radius about the
+        wrong point is a circle over the wrong country.
+        """
+        if self.latitude is None or self.longitude is None:
+            return None
+        return Position(latitude=self.latitude, longitude=self.longitude)
 
     @property
     def is_usable(self) -> bool | None:
@@ -451,6 +466,23 @@ def _number(value: object, *, where: str, field: str) -> float | None:
         ) from None
 
 
+def _coordinate(
+    value: object, *, where: str, field: str, is_latitude: bool
+) -> float | None:
+    """Read a published coordinate, or nothing where none is given.
+
+    Absent is common and fine. Present and unreadable is not: a coordinate
+    that resolved to a number it does not mean puts an aid somewhere nobody
+    published, and its coverage circle over the wrong country.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return parse_coordinate(value, is_latitude=is_latitude)
+    except CoordinateError as error:
+        raise ManifestError(f"{where}: {field} {error}") from None
+
+
 def load_navaids(path: Path | str) -> NavaidRegister:
     """Read one ENR 4 extract, with every aid cited to it."""
     path = Path(path)
@@ -530,6 +562,14 @@ def load_navaids(path: Path | str) -> NavaidRegister:
                         where=where,
                         field="magnetic_variation",
                     ),
+                    latitude=_coordinate(
+                        row.get("latitude"), where=where, field="latitude",
+                        is_latitude=True,
+                    ),
+                    longitude=_coordinate(
+                        row.get("longitude"), where=where, field="longitude",
+                        is_latitude=False,
+                    ),
                     serves=tuple(str(s) for s in row.get("serves", [])),
                     remarks=str(row.get("remarks", "")).strip(),
                 )
@@ -564,6 +604,8 @@ _NAVAID_TEMPLATE = {
             "status": "operational",
             "hours": "",
             "magnetic_variation": None,
+            "latitude": None,
+            "longitude": None,
             "serves": [],
             "remarks": "",
             "locator": "",

@@ -84,7 +84,7 @@ __all__ = [
     "ObstacleChange",
     "ObstacleReview",
     "Penetration",
-    "Position",
+    "TrackOffset",
     "compare_cycles",
     "decompose",
     "penetrates_ois",
@@ -119,8 +119,12 @@ FEET_PER_METRE = 3.280839895
 
 
 @dataclass(frozen=True, slots=True)
-class Position:
+class TrackOffset:
     """An obstacle resolved relative to the departure track.
+
+    Not a geographic position and deliberately not named like one: it is an
+    offset from a runway end, in metres, along and across the extended
+    centreline. :class:`aeropub.geo.Position` is the latitude and longitude.
 
     ``along_track_m`` is the distance beyond the DER measured along the extended
     centreline, and it is the one the gradient arithmetic needs — an obstacle
@@ -149,7 +153,7 @@ class Position:
 
 def decompose(
     *, distance_m: float, bearing_deg: float, runway_bearing_deg: float
-) -> Position:
+) -> TrackOffset:
     """Resolve a radial position into along-track and lateral components.
 
     Plain trigonometry on the angle between the obstacle's bearing from the DER
@@ -158,7 +162,7 @@ def decompose(
     wants.
     """
     offset = math.radians(bearing_deg - runway_bearing_deg)
-    return Position(
+    return TrackOffset(
         along_track_m=distance_m * math.cos(offset),
         lateral_m=distance_m * math.sin(offset),
     )
@@ -202,7 +206,7 @@ class DepartureArea:
             width = min(width, self.max_half_width_m)
         return width
 
-    def contains(self, position: Position) -> bool:
+    def contains(self, position: TrackOffset) -> bool:
         """Whether a resolved position falls inside the area."""
         if position.is_behind:
             return False
@@ -327,7 +331,7 @@ class Obstacle:
             and self.distance_from_der_m > 0
         )
 
-    def position(self, runway_bearing_deg: float | None) -> Position | None:
+    def position(self, runway_bearing_deg: float | None) -> TrackOffset | None:
         """Resolve against a runway bearing, or ``None`` if it cannot be.
 
         Without a bearing for the obstacle or for the runway there is nothing
@@ -338,7 +342,7 @@ class Obstacle:
         if not self.is_measurable:
             return None
         if self.bearing_from_der_deg is None or runway_bearing_deg is None:
-            return Position(along_track_m=self.distance_from_der_m, lateral_m=0.0)
+            return TrackOffset(along_track_m=self.distance_from_der_m, lateral_m=0.0)
         return decompose(
             distance_m=self.distance_from_der_m,
             bearing_deg=self.bearing_from_der_deg,
@@ -571,7 +575,7 @@ class ObstacleReview:
             obstacle, runway_bearing_deg=self.runway_bearing_deg
         )
 
-    def position_of(self, obstacle: Obstacle) -> Position | None:
+    def position_of(self, obstacle: Obstacle) -> TrackOffset | None:
         return obstacle.position(self.runway_bearing_deg)
 
     def contains(self, obstacle: Obstacle) -> bool | None:

@@ -360,3 +360,31 @@ class TestLoading:
         blank = json.loads(navaid_template())
         assert blank["navaids"][0]["coverage_nm"] is None
         assert blank["navaids"][0]["serves"] == []
+
+
+class TestPublishedCoordinates:
+    """ENR 4.1 prints a coordinate column for every aid."""
+
+    def test_an_aid_with_held_coordinates_has_a_position(self):
+        held = navaid(
+            "ALP", NavaidKind.VOR_DME, latitude=25.2731, longitude=51.6081
+        )
+        assert held.position is not None
+
+    def test_an_aid_without_them_is_unplottable(self):
+        """Its coverage is a radius about a point, and a radius about the
+        wrong point is a circle over the wrong country."""
+        assert navaid("ZZZ", NavaidKind.VOR).position is None
+
+    def test_the_loader_reads_the_form_an_aip_prints(self, tmp_path, document):
+        payload = manifest()
+        payload["navaids"][0]["latitude"] = "251530N"
+        payload["navaids"][0]["longitude"] = "0513015E"
+        held = load_navaids(write(tmp_path, payload))
+        assert held.navaid("ALP").position is not None
+
+    def test_a_coordinate_cell_of_prose_is_refused(self, tmp_path, document):
+        payload = manifest()
+        payload["navaids"][0]["longitude"] = "see chart"
+        with pytest.raises(ManifestError, match="longitude"):
+            load_navaids(write(tmp_path, payload))

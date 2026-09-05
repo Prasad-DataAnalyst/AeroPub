@@ -30,7 +30,7 @@ from aeropub.obstacles import (
     DepartureArea,
     Obstacle,
     Penetration,
-    Position,
+    TrackOffset,
     compare_cycles,
     decompose,
     penetrates_ois,
@@ -406,12 +406,12 @@ class TestDepartureArea:
 
     def test_containment_at_the_boundary_is_inclusive(self):
         at = 2.1 * METRES_PER_NM
-        edge = Position(along_track_m=at, lateral_m=PANS_OPS_STRAIGHT.half_width_at(at))
+        edge = TrackOffset(along_track_m=at, lateral_m=PANS_OPS_STRAIGHT.half_width_at(at))
         assert PANS_OPS_STRAIGHT.contains(edge)
 
     def test_an_obstacle_behind_the_der_is_never_inside(self):
         assert not PANS_OPS_STRAIGHT.contains(
-            Position(along_track_m=-100.0, lateral_m=0.0)
+            TrackOffset(along_track_m=-100.0, lateral_m=0.0)
         )
 
     def test_the_area_names_itself_in_its_description(self):

@@ -546,3 +546,51 @@ class TestLoading:
         blank = json.loads(structure_template())
         assert blank["segments"][0]["direction"] == "both"
         assert "procedures" in blank
+
+
+class TestPublishedCoordinates:
+    """ENR 4.4 prints a coordinate column, and it is read as printed."""
+
+    def test_a_point_with_held_coordinates_has_a_position(self):
+        held = SignificantPoint(
+            designator="ALSEM", source=ref(), latitude=25.2731, longitude=51.6081
+        )
+        assert held.position is not None
+        assert held.position.describe().endswith("E")
+
+    def test_a_point_without_them_is_unplottable_rather_than_placed(self):
+        """A point drawn in the wrong place is worse than a point not drawn:
+        one is a gap and the other is a map."""
+        assert SignificantPoint(designator="BAYAN", source=ref()).position is None
+
+    def test_half_a_pair_is_still_unplottable(self):
+        half = SignificantPoint(
+            designator="BAYAN", source=ref(), latitude=25.2731
+        )
+        assert half.position is None
+
+    def test_the_loader_reads_the_form_an_aip_prints(self, tmp_path, document):
+        payload = manifest()
+        payload["points"][0]["latitude"] = "251530N"
+        payload["points"][0]["longitude"] = "0513015E"
+        held = load_ats_structure(write(tmp_path, "enr3.json", payload))
+        found = held.point("ALSEM")
+        assert found.latitude == pytest.approx(25.258333, abs=1e-6)
+        assert found.longitude == pytest.approx(51.504167, abs=1e-6)
+
+    def test_a_coordinate_cell_of_prose_is_refused(self, tmp_path, document):
+        """A number here puts a waypoint somewhere nobody published."""
+        payload = manifest()
+        payload["points"][0]["latitude"] = "as depicted"
+        with pytest.raises(ManifestError, match="latitude"):
+            load_ats_structure(write(tmp_path, "enr3.json", payload))
+
+    def test_a_transposed_pair_is_refused(self, tmp_path, document):
+        payload = manifest()
+        payload["points"][0]["latitude"] = "0513015E"
+        with pytest.raises(ManifestError, match="longitude where a latitude"):
+            load_ats_structure(write(tmp_path, "enr3.json", payload))
+
+    def test_no_coordinates_at_all_is_not_an_error(self, tmp_path, document):
+        held = load_ats_structure(write(tmp_path, "enr3.json", manifest()))
+        assert held.point("ALSEM").position is None

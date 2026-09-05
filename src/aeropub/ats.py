@@ -65,6 +65,7 @@ from typing import Iterable, Mapping
 
 from aeropub.entities import named, normalise
 from aeropub.facts import SourceRef
+from aeropub.geo import CoordinateError, Position, parse_coordinate
 from aeropub.manifest import (
     ManifestError,
     document_source,
@@ -422,6 +423,7 @@ class SignificantPoint:
     longitude: float | None = None
     reporting: str = ""
     """Compulsory or on-request, as published."""
+    """Compulsory or on-request, as published."""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "designator", normalise(self.designator))
@@ -434,6 +436,19 @@ class SignificantPoint:
     def key(self) -> str:
         kind = NAVAID if self.kind is PointKind.NAVAID else FIX
         return named(kind, self.designator)
+
+    @property
+    def position(self) -> Position | None:
+        """Where it is, or ``None`` where the coordinates were not read.
+
+        ``None`` is the answer that keeps a plan view honest: a point without
+        a held position is not drawn at a guessed one, it is listed as
+        unplottable. A point drawn in the wrong place is worse than a point
+        not drawn — one is a gap and the other is a map.
+        """
+        if self.latitude is None or self.longitude is None:
+            return None
+        return Position(latitude=self.latitude, longitude=self.longitude)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1082,6 +1097,24 @@ def _number(value: object, *, where: str, field: str) -> float | None:
         ) from None
 
 
+def _coordinate(
+    value: object, *, where: str, field: str, is_latitude: bool
+) -> float | None:
+    """Read a published coordinate, or nothing where none is given.
+
+    Absent is fine and common — a point held without a position is simply not
+    plottable. Present and unreadable is not: a coordinate cell that says "as
+    depicted" must refuse rather than resolve to a number, because a number
+    here puts a waypoint somewhere nobody published.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return parse_coordinate(value, is_latitude=is_latitude)
+    except CoordinateError as error:
+        raise ManifestError(f"{where}: {field} {error}") from None
+
+
 def _direction(value: object, *, where: str) -> CruisingLevels:
     try:
         return CruisingLevels(str(value).strip().lower() or "both")
@@ -1176,9 +1209,13 @@ def load_ats_structure(path: Path | str) -> AtsStructure:
                     ),
                     name=str(row.get("name", "")),
                     kind=kind,
-                    latitude=_number(row.get("latitude"), where=where, field="latitude"),
-                    longitude=_number(
-                        row.get("longitude"), where=where, field="longitude"
+                    latitude=_coordinate(
+                        row.get("latitude"), where=where, field="latitude",
+                        is_latitude=True,
+                    ),
+                    longitude=_coordinate(
+                        row.get("longitude"), where=where, field="longitude",
+                        is_latitude=False,
                     ),
                     reporting=str(row.get("reporting", "")),
                 )
