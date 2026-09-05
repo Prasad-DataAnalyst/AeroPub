@@ -72,6 +72,7 @@ from aeropub.charts import (
     screen_descent,
 )
 from aeropub.currency import Currency, DataCurrency, assess_currency
+from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
 from aeropub.hazards import (
     HazardRegister,
     HazardScreen,
@@ -511,6 +512,11 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    navaids: tuple[NavaidUse, ...] = ()
+    """ENR 4 — the aids the filed route names, and what is known about each.
+    An aid the register has never seen is listed as such rather than dropped:
+    a screen that dropped it would get shorter as coverage got worse."""
+
     enroute_notams: tuple[tuple[str, object, object], ...] = ()
     """NOTAM in force against anything on the filed route, each with the
     entity it was found against so a briefing can say where on the route it
@@ -713,6 +719,21 @@ class RouteDossier:
                 mark = "" if state.value == "in_force" else f"  [{state.value}]"
                 lines.append(f"  {entity}: {notam.identifier}{mark}")
 
+        if self.navaids:
+            lines += ["", "NAVIGATION AIDS — what the route names"]
+            for use in self.navaids:
+                mark = {True: "  ", False: "!!", None: " ·"}[use.is_usable]
+                lines.append(f"  {mark} {use.describe()}")
+            unheld = [u.ident for u in self.navaids if not u.is_held]
+            if unheld:
+                lines += [
+                    "",
+                    f"  {', '.join(unheld)} are named by the route and are not "
+                    "in the held ENR 4.",
+                    "  Nothing is known about their frequency, coverage or "
+                    "hours.",
+                ]
+
         if self.airspace is not None:
             lines += ["", self.airspace.render()]
         if self.hazards is not None:
@@ -794,6 +815,7 @@ def _open_items(
     traps: Iterable[GradientFinding] = (),
     airspace: AirspaceView | None = None,
     hazards: HazardScreen | None = None,
+    navaids: Iterable[NavaidUse] = (),
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -915,6 +937,31 @@ def _open_items(
             )
         )
 
+    for use in navaids:
+        if use.is_usable is True:
+            continue
+        items.append(
+            OpenItem(
+                where=use.ident,
+                what=(
+                    "not in the held ENR 4"
+                    if not use.is_held
+                    else (
+                        "NOTAM in force"
+                        if use.notams
+                        else f"published {use.navaid.status.value.replace('_', ' ')}"
+                    )
+                ),
+                # A navaid that cannot be relied on is not a question about the
+                # route — it is a question about every procedure built on it,
+                # and the route is only where it surfaced.
+                severity=(
+                    Exposure.HIGH if use.is_usable is False else Exposure.UNKNOWN
+                ),
+                why=use.describe(),
+            )
+        )
+
     if airspace is not None:
         for boundary in airspace.changes:
             if boundary.loses_separation:
@@ -1033,6 +1080,7 @@ def build_route_dossier(
     procedures: Iterable[Procedure] = (),
     airspace: AirspaceStructure | None = None,
     hazards: HazardRegister | None = None,
+    navaids: NavaidRegister | None = None,
     notice_hours: float | None = None,
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
@@ -1103,6 +1151,24 @@ def build_route_dossier(
     if hazard_screen is not None and register is not None:
         enroute = enroute + notams_on_hazards(register, hazard_screen, moment)
 
+    aids: tuple[NavaidUse, ...] = ()
+    if navaids is not None and expansion is not None:
+        # Only the points the route actually names. Screening every aid in the
+        # register would bury the handful this flight depends on under a
+        # national table.
+        used_by: dict[str, list[str]] = {}
+        for leg in expansion.legs:
+            for point in (leg.leg.start, leg.leg.end):
+                if not leg.leg.is_direct:
+                    used_by.setdefault(point, []).append(leg.leg.via)
+        aids = screen_navaids(
+            navaids,
+            expansion.route.points,
+            notams=register,
+            at=moment,
+            used_by=used_by,
+        )
+
     held = tuple(procedures)
     departures: tuple[ProcedureLink, ...] = ()
     arrivals: tuple[ProcedureLink, ...] = ()
@@ -1139,7 +1205,7 @@ def build_route_dossier(
         altimetry=Altimetry(covers=jurisdictions),
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
-            airspace_view, hazard_screen,
+            airspace_view, hazard_screen, aids,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1150,4 +1216,5 @@ def build_route_dossier(
         traps=traps,
         airspace=airspace_view,
         hazards=hazard_screen,
+        navaids=aids,
     )

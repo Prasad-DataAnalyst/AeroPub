@@ -36,6 +36,7 @@ from aeropub.acap import ManifestError, load_aircraft, merge, template
 from aeropub.aip import AipCoverage
 from aeropub.airspace import AirspaceStructure, airspace_template, load_airspace
 from aeropub.hazards import HazardRegister, hazard_template, load_hazards
+from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
@@ -734,6 +735,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.hazard_template:
         print(hazard_template())
         return OK
+    if args.navaid_template:
+        print(navaid_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -755,6 +759,12 @@ def _cmd_route(args: argparse.Namespace) -> int:
         loaded = [load_airspace(path) for path in args.airspace]
         airspace = AirspaceStructure(
             volumes=tuple(v for held in loaded for v in held.volumes)
+        )
+    navaids = None
+    if args.navaids:
+        loaded = [load_navaids(path) for path in args.navaids]
+        navaids = NavaidRegister(
+            navaids=tuple(n for held in loaded for n in held.navaids)
         )
     hazards = None
     if args.hazards:
@@ -800,6 +810,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             procedures=procedures,
             airspace=airspace,
             hazards=hazards,
+            navaids=navaids,
             notice_hours=args.notice_hours,
         )
         _emit(document, args, document.render() + _emptiness_note(store, path))
@@ -1171,6 +1182,17 @@ def _parser() -> argparse.ArgumentParser:
             "and danger areas, military and dangerous activity, sporting, "
             "bird migration, and overflight clearance lead times"
         ),
+    )
+    sector.add_argument(
+        "--navaids", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 4 extract, repeatable — the aids the route names, "
+            "their frequency, coverage, hours and status"
+        ),
+    )
+    sector.add_argument(
+        "--navaid-template", dest="navaid_template", action="store_true",
+        help="print a blank ENR 4 extract",
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

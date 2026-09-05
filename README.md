@@ -89,6 +89,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] Procedure profiles — the SID onto the route and the STAR off it, screened for energy traps
 - [x] ENR 2 airspace — class, unit, carriage requirements, and the boundary where the service changes
 - [x] ENR 5 warnings — all six subsections, plus overflight clearance lead times
+- [x] ENR 4 navaids — frequency, coverage, hours and status, with NOTAM overriding the AIP
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -143,10 +144,21 @@ aeropub route --from OTHH --to EGLL --aircraft b77w.json \
     --procedures othh-sids.json --procedures egll-stars.json
 
 aeropub route --airspace-template > enr2.json     # ENR 2 — the airspace you are inside
+aeropub route --navaid-template  > enr4.json      # ENR 4 — the aids the route names
 aeropub route --hazard-template  > enr5.json      # ENR 5 — what it publishes as hazardous
 aeropub route --from OTHH --to EGLL --aircraft b77w.json --crosses OBBB --crosses OIIX \
-    --airspace obbb-enr2.json --hazards obbb-enr5.json --level 35000 --notice-hours 24
+    --airspace obbb-enr2.json --navaids obbb-enr4.json --hazards obbb-enr5.json \
+    --level 35000 --notice-hours 24
 ```
+
+ENR 4 screens only the aids the filed route names — a national table would bury the handful this
+flight depends on. An aid published operational with a NOTAM in force against it comes back
+*unknown*, not usable: the AIP must not answer a question the NOTAM has reopened. An aid the
+register has never seen is listed as unheld rather than dropped, because a screen that dropped it
+would get shorter as coverage got worse.
+
+[`docs/enr-coverage.md`](docs/enr-coverage.md) is the audit: every ENR subsection, what the
+platform does with it, and what is left.
 
 ENR 2 answers what service you get, who to call and what you must carry — and reports the
 *boundary* rather than a table of classes, because a crew given six regions' classes has to work

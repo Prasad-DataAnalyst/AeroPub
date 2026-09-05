@@ -846,3 +846,66 @@ class TestEnrIntegration:
         found = [i for i in built.open_items if i.where == "AAAA" and "held" in i.what]
         assert found
         assert all(i.what != "never read" for i in built.open_items if i.where == "AAAA")
+
+
+class TestNavaidIntegration:
+    """ENR 4 in the route dossier — only the aids the route actually names."""
+
+    @staticmethod
+    def navaids():
+        from aeropub.navaids import Navaid, NavaidKind, NavaidRegister, NavaidStatus
+
+        return NavaidRegister(navaids=(
+            Navaid(
+                ident="ALSEM", kind=NavaidKind.VOR_DME, source=ref(), region="AAAA",
+                frequency_mhz=113.9, coverage_nm=200,
+                status=NavaidStatus.OPERATIONAL,
+            ),
+            Navaid(
+                ident="BAYAN", kind=NavaidKind.NDB, source=ref(), region="AAAA",
+                frequency_mhz=0.375, status=NavaidStatus.ON_TEST,
+            ),
+            Navaid(
+                ident="ELSEW", kind=NavaidKind.VOR, source=ref(), region="AAAA",
+                status=NavaidStatus.WITHDRAWN,
+            ),
+        ))
+
+    def built(self, text="ALSEM UM688 BAYAN", **overrides):
+        from aeropub.ats import parse_route_string
+
+        fields = dict(navaids=self.navaids())
+        fields.update(overrides)
+        sector = route(
+            filed=parse_route_string(text, departure="XXXX", destination="YYYY"),
+            crosses=(),
+        )
+        return dossier(sector, **fields)
+
+    def test_only_the_aids_the_route_names_are_screened(self):
+        """A national table would bury the handful this flight depends on."""
+        built = self.built()
+        assert {u.ident for u in built.navaids} == {"ALSEM", "BAYAN"}
+
+    def test_an_aid_on_test_is_high_and_named(self):
+        built = self.built()
+        found = [i for i in built.open_items if i.where == "BAYAN"]
+        assert found and found[0].severity is Exposure.HIGH
+        assert "on test" in found[0].what
+
+    def test_a_usable_aid_raises_nothing(self):
+        built = self.built()
+        assert not [i for i in built.open_items if i.where == "ALSEM"]
+
+    def test_an_aid_not_held_is_listed_rather_than_dropped(self):
+        built = self.built("ALSEM UM688 ZZZZZ")
+        assert "ZZZZZ" in {u.ident for u in built.navaids}
+        assert "not in the held ENR 4" in built.render()
+
+    def test_no_filed_route_means_no_aids_to_screen(self):
+        assert dossier(route(crosses=()), navaids=self.navaids()).navaids == ()
+
+    def test_what_uses_an_aid_travels_into_the_document(self):
+        assert "used by UM688" in self.built(
+            structure=TestFiledRoute.structure()
+        ).render()

@@ -1406,6 +1406,22 @@ def route_dossier(
             }
             for trap in item.traps
         ],
+        "navaids": [
+            {
+                "ident": use.ident,
+                "held": use.is_held,
+                "usable": use.is_usable,
+                "used_by": list(use.used_by),
+                "kind": use.navaid.kind.value if use.navaid else None,
+                "frequency_mhz": use.navaid.frequency_mhz if use.navaid else None,
+                "coverage_nm": use.navaid.coverage_nm if use.navaid else None,
+                "status": use.navaid.status.value if use.navaid else None,
+                "hours": use.navaid.hours if use.navaid else "",
+                "notams": [n.identifier for n, _ in use.notams],
+                "source_ref": source_ref(use.navaid.source) if use.navaid else None,
+            }
+            for use in item.navaids
+        ],
         "airspace": (
             {
                 "conclusive": item.airspace.is_conclusive,
