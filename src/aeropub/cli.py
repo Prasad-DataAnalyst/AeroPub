@@ -42,6 +42,7 @@ from aeropub.diagram import (
     network_html,
     route_html,
 )
+from aeropub.planview import plan_html, plan_view
 from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
@@ -748,6 +749,44 @@ def _write_profile(document, destination: str) -> None:
     print(f"profile written to {destination}", file=sys.stderr)
 
 
+def _write_plan(document, structure, navaids, destination: str) -> None:
+    """Draw the plan view from every position that has been read.
+
+    Positions come from ENR 4 — the significant points in the route structure
+    and the aids in the navaid register. A name with no held position is not
+    placed anywhere; it is listed under the drawing, which is the whole
+    discipline of the view.
+    """
+    positions: dict[str, object] = {}
+    if structure is not None:
+        for point in structure.points:
+            if point.position is not None:
+                positions[point.designator] = point.position
+    if navaids is not None:
+        for aid in navaids:
+            if aid.position is not None:
+                positions.setdefault(aid.ident, aid.position)
+
+    drawing = plan_view(
+        positions=positions,
+        route_points=(
+            document.expansion.route.points
+            if document.expansion is not None
+            else ()
+        ),
+        airways={
+            route: structure.points_on(route)
+            for route in (structure.routes if structure is not None else ())
+        },
+        navaids=[aid.ident for aid in (navaids or ())],
+        aerodromes=[document.route.departure, document.route.destination],
+        notams=document.enroute_notams,
+        title=document.route.label,
+    )
+    Path(destination).write_text(plan_html(drawing), encoding="utf-8")
+    print(f"plan view written to {destination}", file=sys.stderr)
+
+
 def _cmd_route(args: argparse.Namespace) -> int:
     """Assemble everything held about one sector, and say what is missing.
 
@@ -848,6 +887,8 @@ def _cmd_route(args: argparse.Namespace) -> int:
         )
         if args.profile:
             _write_profile(document, args.profile)
+        if args.plan:
+            _write_plan(document, structure, navaids, args.plan)
         if args.network:
             if structure is None:
                 print(
@@ -1291,6 +1332,15 @@ def _parser() -> argparse.ArgumentParser:
             "airway, its points in published order, and a connector wherever "
             "an airway meets another. Connectivity only: no coordinates are "
             "held, so it is not a map"
+        ),
+    )
+    sector.add_argument(
+        "--plan", default=None, metavar="FILE",
+        help=(
+            "write the plan view as a self-contained HTML page — published "
+            "positions, the great-circle track between them, pan, zoom and "
+            "click for detail. A point with no held position is listed rather "
+            "than placed"
         ),
     )
     sector.add_argument(

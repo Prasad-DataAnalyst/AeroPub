@@ -93,6 +93,8 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] ENR 1.5/3.6 holding — level band, speed limit, and the entry sector with its 5° flexibility
 - [x] Route profile — the level drawn against every leg's binding minimum, gaps drawn as gaps
 - [x] Route network — airways as lanes, interchanges drawn, and where the alternative starts when one shuts
+- [x] Coordinates — read as published, great-circle track, published-vs-computed distance check
+- [x] Plan view — positions, the track that actually joins them, pan, zoom and click for detail
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -156,7 +158,23 @@ aeropub route --from OTHH --to EGLL --aircraft b77w.json --crosses OBBB --crosse
 aeropub route --from OTHH --to EGLL --aircraft b77w.json \
     --route "ALSEM UM688 BAYAN" --structure enr3.json --level 20000 \
     --profile profile.html --network network.html --closed L604
+
+aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+    --route "ALSEM UM688 BAYAN" --structure enr3.json --navaids enr4.json \
+    --plan plan.html
 ```
+
+`--plan` is the map, and it exists only because ENR 4 publishes coordinates. Reading them is
+reading the AIP; nothing is derived from survey. It draws the points and aids that have a held
+position, the airways between them, and each route leg as a **great circle** — the straight line
+between two points on a Mercator sheet is a different route, not a simpler one. Pan, zoom, layer
+toggles and click-for-detail, in inline script with no library.
+
+A point with no held position is **listed, never placed**: a waypoint at a guessed position is the
+one output worse than no drawing at all, because a gap announces itself and a wrong position does
+not. An airway drawn through fewer points than it publishes carries the missing count, because it
+is then a different shape from the published airway. And it is not a chart: no terrain, no airspace
+boundaries, no obstacles — everything absent is absent because nobody read it.
 
 `--network` draws the structure rather than one route: one lane per airway, its points as stops in
 published order, a connector wherever a point carries more than one airway, and the FIR each lane

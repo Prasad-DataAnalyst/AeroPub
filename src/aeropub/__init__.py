@@ -265,6 +265,15 @@ from aeropub.geo import (
     parse_coordinate,
     parse_position,
 )
+from aeropub.planview import (
+    Airway,
+    PlanView,
+    PlottedPoint,
+    RouteLeg,
+    plan_html,
+    plan_svg,
+    plan_view,
+)
 from aeropub.gate import (
     Attestation,
     Disposition,
@@ -347,6 +356,7 @@ __all__ = [
     "AirspaceStructure",
     "AirspaceType",
     "AirspaceView",
+    "Airway",
     "alternatives_to",
     "Altimetry",
     "AltimetryChange",
@@ -539,6 +549,11 @@ __all__ = [
     "PavementVerdict",
     "penetrates_ois",
     "Penetration",
+    "plan_html",
+    "plan_svg",
+    "plan_view",
+    "PlanView",
+    "PlottedPoint",
     "Position",
     "Precedence",
     "Procedure",
@@ -579,6 +594,7 @@ __all__ = [
     "RouteDiagram",
     "RouteDossier",
     "RouteExpansion",
+    "RouteLeg",
     "RouteSegment",
     "RuntimeReport",
     "scope_of",
