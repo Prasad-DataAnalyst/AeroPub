@@ -92,6 +92,7 @@ Early. Following the build order in [`docs/plan.md`](docs/plan.md) section 32, "
 - [x] ENR 4 navaids — frequency, coverage, hours and status, with NOTAM overriding the AIP
 - [x] ENR 1.5/3.6 holding — level band, speed limit, and the entry sector with its 5° flexibility
 - [x] Route profile — the level drawn against every leg's binding minimum, gaps drawn as gaps
+- [x] Route network — airways as lanes, interchanges drawn, and where the alternative starts when one shuts
 - [ ] A verified layout profile for a first State (needs one page, from a networked machine)
 
 ## Using it
@@ -154,8 +155,18 @@ aeropub route --from OTHH --to EGLL --aircraft b77w.json --crosses OBBB --crosse
 
 aeropub route --from OTHH --to EGLL --aircraft b77w.json \
     --route "ALSEM UM688 BAYAN" --structure enr3.json --level 20000 \
-    --profile profile.html
+    --profile profile.html --network network.html --closed L604
 ```
+
+`--network` draws the structure rather than one route: one lane per airway, its points as stops in
+published order, a connector wherever a point carries more than one airway, and the FIR each lane
+lies in. When a route is closed the page names the interchanges on it — where a plan can change
+airway without a direct leg, which is the question a planner has the moment a NOTAM shuts a route.
+
+A closure is stated with `--closed`, never inferred from a NOTAM: a NOTAM against an airway may
+close it, restrict a level band on it, or say something else entirely, and deciding which from the
+mere presence of one would be reading a message the drawing has not read. There is no geography in
+it and there must not be — the platform holds no coordinates, so it draws connectivity and says so.
 
 `--profile` draws the sector: the planned level as a line across the page, each leg standing on
 the *binding* minimum across every published segment it crosses, and the failing leg in red at the

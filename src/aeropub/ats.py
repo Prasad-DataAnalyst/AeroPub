@@ -466,9 +466,14 @@ class RouteSegment:
     distance_nm: float | None = None
     airspace_class: str = ""
     controlling_unit: str = ""
+    region: str = ""
+    """The flight information region this segment lies in. ENR 3 is published
+    per State, so a segment knows its region for free — and without it a route
+    structure cannot be grouped by whose airspace each part of it is in, which
+    is the first thing anybody wants to see on a picture of a network."""
 
     def __post_init__(self) -> None:
-        for field in ("route", "start", "end", "airspace_class"):
+        for field in ("route", "start", "end", "airspace_class", "region"):
             object.__setattr__(self, field, normalise(getattr(self, field)))
         object.__setattr__(
             self, "navigation_spec", normalise(self.navigation_spec)
@@ -536,7 +541,57 @@ class AtsStructure:
 
     def on(self, route: str) -> tuple[RouteSegment, ...]:
         wanted = normalise(route)
+        if not wanted:
+            return ()
         return tuple(s for s in self.segments if s.route == wanted)
+
+    def in_region(self, region: str) -> tuple[RouteSegment, ...]:
+        wanted = normalise(region)
+        if not wanted:
+            return ()
+        return tuple(s for s in self.segments if s.region == wanted)
+
+    @property
+    def regions(self) -> tuple[str, ...]:
+        return tuple(sorted({s.region for s in self.segments if s.region}))
+
+    def routes_through(self, point: str) -> tuple[str, ...]:
+        """Every airway published as passing through this point.
+
+        The interchange question, and the one a route structure drawing exists
+        to answer: where a point carries more than one airway, it is somewhere
+        a plan can change airway without a direct leg.
+        """
+        wanted = normalise(point)
+        if not wanted:
+            return ()
+        return tuple(sorted({
+            s.route for s in self.segments if wanted in (s.start, s.end)
+        }))
+
+    def points_on(self, route: str) -> tuple[str, ...]:
+        """Every point on one airway, in published order.
+
+        Walked rather than sorted: the order an airway is published in is the
+        order it is flown, and sorting the designators alphabetically would
+        draw a route that goes back on itself.
+        """
+        segments = self.on(route)
+        if not segments:
+            return ()
+        forward = {s.start: s for s in segments}
+        ends = {s.end for s in segments}
+        starts = [s.start for s in segments if s.start not in ends]
+        at = starts[0] if starts else segments[0].start
+        walked = [at]
+        seen = {at}
+        while at in forward:
+            at = forward[at].end
+            if at in seen:
+                break
+            walked.append(at)
+            seen.add(at)
+        return tuple(walked)
 
     def point(self, designator: str) -> SignificantPoint | None:
         wanted = normalise(designator)
@@ -1091,6 +1146,7 @@ def load_ats_structure(path: Path | str) -> AtsStructure:
                     ),
                     airspace_class=str(row.get("airspace_class", "")),
                     controlling_unit=str(row.get("controlling_unit", "")),
+                    region=str(row.get("region", manifest.get("region", ""))),
                 )
             )
         except (ValueError, TypeError) as error:
@@ -1150,6 +1206,7 @@ _STRUCTURE_TEMPLATE = {
         "published_at": "",
         "original_url": "",
     },
+    "region": "",
     "segments": [
         {
             "route": "",
@@ -1166,6 +1223,7 @@ _STRUCTURE_TEMPLATE = {
             "distance_nm": None,
             "airspace_class": "",
             "controlling_unit": "",
+            "region": "",
             "locator": "",
         }
     ],

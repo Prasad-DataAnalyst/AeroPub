@@ -52,9 +52,17 @@ from aeropub.ats import ATS_ROUTE, FIX, NAVAID, Resolution, RouteExpansion
 from aeropub.entities import normalise
 
 __all__ = [
+    "CLOSED",
     "Band",
+    "Lane",
+    "NetworkDiagram",
+    "OPEN",
     "RouteDiagram",
+    "UNKNOWN_STATUS",
     "diagram_for",
+    "network_for",
+    "network_html",
+    "network_svg",
     "route_html",
     "route_svg",
 ]
@@ -531,6 +539,338 @@ def route_html(diagram: RouteDiagram) -> str:
         + "\nbody{margin:0;padding:24px;font:14px/1.5 system-ui,sans-serif}"
         + ".rp-flag{font-weight:600}</style>\n"
         + route_svg(diagram)
+        + "\n"
+        + "\n".join(notes)
+    )
+
+
+# --------------------------------------------------------------------------
+# The network — airways, the points on them, and where they meet
+# --------------------------------------------------------------------------
+#
+# The profile above answers "can I fly this route at this level". This answers
+# a different question: "what is the structure, and what is shut".
+#
+# There is no geography here and there must not be. The platform holds no
+# coordinates, so a map would be an invention. What it holds is connectivity —
+# which airway passes through which point, in what published order — and
+# connectivity draws perfectly well as a schematic. A transit diagram makes the
+# same trade: it abandons geography to make interchanges legible, and nobody
+# mistakes it for a map.
+#
+# The interchange is the point of the drawing. A point carrying two airways is
+# somewhere a plan can change airway without a direct leg, and when an airway
+# closes it is where the alternative starts. That is the question a planner has
+# the moment a NOTAM shuts a route, and it is invisible in a table.
+
+
+#: What can be said about an airway's availability.
+OPEN = "open"
+CLOSED = "closed"
+UNKNOWN_STATUS = "unknown"
+
+_LANE_TOP = 84.0
+_LANE_GAP = 68.0
+_STOP_LEFT = 132.0
+_STOP_GAP = 104.0
+
+
+@dataclass(frozen=True, slots=True)
+class Lane:
+    """One airway, and the points published on it in flown order."""
+
+    route: str
+    points: tuple[str, ...] = ()
+    region: str = ""
+    status: str = UNKNOWN_STATUS
+    lowest_ft: float | None = None
+    highest_ft: float | None = None
+    notams: int = 0
+
+    @property
+    def is_closed(self) -> bool:
+        return self.status == CLOSED
+
+    def label(self) -> str:
+        parts = [self.route]
+        if self.lowest_ft is not None:
+            parts.append(_flight_level(self.lowest_ft) + "+")
+        return "  ".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
+class NetworkDiagram:
+    """The route structure as connectivity, with no geography claimed."""
+
+    lanes: tuple[Lane, ...] = ()
+    interchanges: tuple[str, ...] = ()
+    """Points carrying more than one airway. Where a plan can change airway
+    without a direct leg — and where the alternative starts when one shuts."""
+
+    highlight: tuple[str, ...] = ()
+    """Points on the filed route, marked so the route can be found inside the
+    structure it is flown through."""
+
+    title: str = ""
+
+    @property
+    def points(self) -> tuple[str, ...]:
+        found: list[str] = []
+        for lane in self.lanes:
+            for point in lane.points:
+                if point not in found:
+                    found.append(point)
+        return tuple(found)
+
+    @property
+    def closed(self) -> tuple[Lane, ...]:
+        return tuple(lane for lane in self.lanes if lane.is_closed)
+
+    @property
+    def regions(self) -> tuple[str, ...]:
+        return tuple(sorted({lane.region for lane in self.lanes if lane.region}))
+
+
+def network_for(
+    structure,
+    *,
+    closed_routes: Iterable[str] = (),
+    notams: Iterable[tuple] = (),
+    highlight: Iterable[str] = (),
+    title: str = "",
+) -> NetworkDiagram:
+    """Turn a published route structure into the lanes a schematic needs.
+
+    ``closed_routes`` is what somebody has established is shut — from a NOTAM
+    read, or from a State's own withdrawal notice. It is passed in rather than
+    inferred: a NOTAM against an airway may close it, may restrict a level band
+    on it, or may say something else entirely, and deciding which from the
+    presence of a NOTAM would be reading a message this module has not read.
+    Airways carrying a NOTAM nobody has interpreted are marked as carrying one,
+    which is a different and honest statement.
+    """
+    shut = {normalise(r) for r in closed_routes if str(r).strip()}
+    counted: dict[str, int] = {}
+    for entry in notams:
+        key = normalise(entry[0]) if entry else ""
+        if key:
+            counted[key] = counted.get(key, 0) + 1
+
+    lanes: list[Lane] = []
+    for route in structure.routes:
+        segments = structure.on(route)
+        floors = [s.floor_ft for s in segments if s.floor_ft is not None]
+        ceilings = [
+            s.maa_ft if s.maa_ft is not None else s.upper_limit_ft
+            for s in segments
+        ]
+        ceilings = [c for c in ceilings if c is not None and c != float("inf")]
+        regions = {s.region for s in segments if s.region}
+        lanes.append(
+            Lane(
+                route=route,
+                points=structure.points_on(route),
+                region=regions.pop() if len(regions) == 1 else "",
+                status=CLOSED if route in shut else UNKNOWN_STATUS,
+                lowest_ft=min(floors) if floors else None,
+                highest_ft=max(ceilings) if ceilings else None,
+                notams=counted.get(normalise(f"{ATS_ROUTE}:{route}"), 0),
+            )
+        )
+
+    seen: dict[str, int] = {}
+    for lane in lanes:
+        for point in lane.points:
+            seen[point] = seen.get(point, 0) + 1
+    interchanges = tuple(sorted(p for p, count in seen.items() if count > 1))
+
+    return NetworkDiagram(
+        lanes=tuple(lanes),
+        interchanges=interchanges,
+        highlight=tuple(normalise(p) for p in highlight if str(p).strip()),
+        title=title,
+    )
+
+
+def network_svg(diagram: NetworkDiagram) -> str:
+    """Draw the route structure as a schematic.
+
+    One lane per airway, its points as stops in published order, and a
+    vertical connector wherever a point appears on more than one lane. No
+    geography: the platform holds no coordinates, and a drawing that implied
+    any would be an invention.
+    """
+    if not diagram.lanes:
+        return (
+            '<svg class="route-network" viewBox="0 0 640 120" width="100%" '
+            'role="img" aria-label="No route structure held" '
+            'xmlns="http://www.w3.org/2000/svg">'
+            '<text x="24" y="60" class="rn-note">No ATS route structure has '
+            "been read. Nothing is drawn, which is a coverage gap and not an "
+            "empty network.</text></svg>"
+        )
+
+    columns = max(len(lane.points) for lane in diagram.lanes)
+    width = _STOP_LEFT + _STOP_GAP * max(1, columns - 1) + 120.0
+    height = _LANE_TOP + _LANE_GAP * len(diagram.lanes) + 76.0
+
+    # Every point gets one column, shared across lanes, so a point on two
+    # airways lines up vertically and the interchange is drawn rather than
+    # asserted.
+    column_of: dict[str, int] = {}
+    for lane in diagram.lanes:
+        for index, point in enumerate(lane.points):
+            column_of.setdefault(point, index)
+
+    def x_for(point: str) -> float:
+        return _STOP_LEFT + _STOP_GAP * column_of.get(point, 0)
+
+    out: list[str] = [
+        f'<svg class="route-network" viewBox="0 0 {width:.0f} {height:.0f}" '
+        f'width="100%" role="img" '
+        f'aria-label="ATS route structure schematic{": " + _escape(diagram.title) if diagram.title else ""}" '
+        'xmlns="http://www.w3.org/2000/svg">',
+        "<defs>",
+        '<pattern id="rn-hatch" width="8" height="8" patternUnits="userSpaceOnUse" '
+        'patternTransform="rotate(45)">'
+        '<rect width="8" height="8" class="rn-hatch-bg"/>'
+        '<line x1="0" y1="0" x2="0" y2="8" class="rn-hatch-line"/>'
+        "</pattern>",
+        "</defs>",
+    ]
+    if diagram.title:
+        out.append(f'<text x="24" y="30" class="rn-title">{_escape(diagram.title)}</text>')
+
+    # Interchange connectors first, so the lanes are drawn over them.
+    for point in diagram.interchanges:
+        rows = [
+            _LANE_TOP + _LANE_GAP * index
+            for index, lane in enumerate(diagram.lanes)
+            if point in lane.points
+        ]
+        if len(rows) > 1:
+            x = x_for(point)
+            out.append(
+                f'<line x1="{x:.1f}" y1="{min(rows):.1f}" x2="{x:.1f}" '
+                f'y2="{max(rows):.1f}" class="rn-interchange"/>'
+            )
+
+    for index, lane in enumerate(diagram.lanes):
+        y = _LANE_TOP + _LANE_GAP * index
+        if not lane.points:
+            continue
+        first, last = x_for(lane.points[0]), x_for(lane.points[-1])
+        classes = "rn-lane" + (" rn-closed" if lane.is_closed else "")
+        out.append(
+            f'<line x1="{first:.1f}" y1="{y:.1f}" x2="{last:.1f}" y2="{y:.1f}" '
+            f'class="{classes}"/>'
+        )
+        out.append(
+            f'<text x="{_STOP_LEFT - 22:.0f}" y="{y + 4:.1f}" class="rn-route" '
+            f'text-anchor="end">{_escape(lane.label())}</text>'
+        )
+        if lane.region:
+            out.append(
+                f'<text x="{_STOP_LEFT - 22:.0f}" y="{y + 18:.1f}" '
+                f'class="rn-region" text-anchor="end">{_escape(lane.region)}</text>'
+            )
+        if lane.is_closed:
+            out.append(
+                f'<text x="{last + 14:.1f}" y="{y + 4:.1f}" class="rn-shut">'
+                "CLOSED</text>"
+            )
+        elif lane.notams:
+            out.append(
+                f'<text x="{last + 14:.1f}" y="{y + 4:.1f}" class="rn-notam">'
+                f"{lane.notams} NOTAM</text>"
+            )
+
+        for point in lane.points:
+            x = x_for(point)
+            interchange = point in diagram.interchanges
+            marked = point in diagram.highlight
+            radius = 7.0 if interchange else 4.5
+            stop = "rn-stop"
+            if interchange:
+                stop += " rn-node"
+            if marked:
+                stop += " rn-filed"
+            out.append(
+                f'<circle cx="{x:.1f}" cy="{y:.1f}" r="{radius:.1f}" '
+                f'class="{stop}"/>'
+            )
+            if index == 0 or point not in [
+                p for earlier in diagram.lanes[:index] for p in earlier.points
+            ]:
+                out.append(
+                    f'<text x="{x:.1f}" y="{y - 14:.1f}" class="rn-point" '
+                    f'text-anchor="middle">{_escape(point)}</text>'
+                )
+
+    out.append(
+        f'<text x="24" y="{height - 22:.0f}" class="rn-note">'
+        "Connectivity only — this platform holds no coordinates, so nothing "
+        "here is a map. A larger dot is a point on more than one airway.</text>"
+    )
+    out.append("</svg>")
+    return "\n".join(out)
+
+
+ROUTE_NETWORK_CSS = """
+.route-network { --rn-ink: #16202b; --rn-muted: #5b6b7a; --rn-lane: #7d97a8;
+  --rn-node: #1b6ca8; --rn-filed: #1b6ca8; --rn-closed: #c0392b;
+  --rn-hatch: #eef2f5; --rn-hatch-line: #b3bfc9; --rn-card: #ffffff; }
+@media (prefers-color-scheme: dark) {
+  .route-network:not([data-theme="light"]) { --rn-ink: #e6edf3;
+    --rn-muted: #93a4b3; --rn-lane: #6d8ba1; --rn-node: #63b3ed;
+    --rn-filed: #63b3ed; --rn-closed: #e5705f; --rn-hatch: #1b242c;
+    --rn-hatch-line: #3b4855; --rn-card: #161e26; } }
+.rn-title { font: 600 15px/1.3 system-ui, sans-serif; fill: var(--rn-ink); }
+.rn-note, .rn-region { font: 11px/1.3 system-ui, sans-serif;
+  fill: var(--rn-muted); }
+.rn-route { font: 600 12px/1.3 system-ui, sans-serif; fill: var(--rn-ink); }
+.rn-point { font: 11px/1.3 system-ui, sans-serif; fill: var(--rn-ink); }
+.rn-lane { stroke: var(--rn-lane); stroke-width: 4; stroke-linecap: round; }
+.rn-closed { stroke: var(--rn-closed); stroke-dasharray: 9 6; }
+.rn-interchange { stroke: var(--rn-lane); stroke-width: 2; opacity: .55; }
+.rn-stop { fill: var(--rn-card); stroke: var(--rn-lane); stroke-width: 2; }
+.rn-node { stroke: var(--rn-node); stroke-width: 2.5; }
+.rn-filed { fill: var(--rn-filed); }
+.rn-shut, .rn-notam { font: 600 11px/1.3 system-ui, sans-serif;
+  fill: var(--rn-closed); }
+.rn-hatch-bg { fill: var(--rn-hatch); }
+.rn-hatch-line { stroke: var(--rn-hatch-line); stroke-width: 1.5; }
+"""
+
+
+def network_html(diagram: NetworkDiagram) -> str:
+    """The schematic as a whole page, for opening on its own."""
+    notes: list[str] = []
+    if diagram.closed:
+        shut = ", ".join(lane.route for lane in diagram.closed)
+        alternatives = sorted({
+            point
+            for lane in diagram.closed
+            for point in lane.points
+            if point in diagram.interchanges
+        })
+        notes.append(
+            "<p><strong>"
+            + _escape(f"{shut} closed.")
+            + "</strong> "
+            + _escape(
+                "The interchanges on it are "
+                + (", ".join(alternatives) if alternatives else "none held")
+                + " — where a plan can change airway without a direct leg."
+            )
+            + "</p>"
+        )
+    return (
+        "<style>"
+        + ROUTE_NETWORK_CSS
+        + "\nbody{margin:0;padding:24px;font:14px/1.5 system-ui,sans-serif}"
+        "</style>\n"
+        + network_svg(diagram)
         + "\n"
         + "\n".join(notes)
     )

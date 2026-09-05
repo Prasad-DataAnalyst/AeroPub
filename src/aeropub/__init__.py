@@ -240,8 +240,13 @@ from aeropub.holding import (
 )
 from aeropub.diagram import (
     Band,
+    Lane,
+    NetworkDiagram,
     RouteDiagram,
     diagram_for,
+    network_for,
+    network_html,
+    network_svg,
     route_html,
     route_svg,
 )
@@ -438,6 +443,7 @@ __all__ = [
     "Impact",
     "Jurisdiction",
     "JurisdictionCover",
+    "Lane",
     "LateArrival",
     "LegAssessment",
     "Lens",
@@ -474,6 +480,10 @@ __all__ = [
     "NavaidUse",
     "ndjson",
     "Network",
+    "network_for",
+    "network_html",
+    "network_svg",
+    "NetworkDiagram",
     "NetworkEntry",
     "NetworkSweep",
     "Notam",

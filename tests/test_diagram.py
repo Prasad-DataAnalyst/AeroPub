@@ -34,7 +34,16 @@ from aeropub.ats import (
     expand,
     parse_route_string,
 )
-from aeropub.diagram import Band, RouteDiagram, diagram_for, route_html, route_svg
+from aeropub.diagram import (
+    Band,
+    RouteDiagram,
+    diagram_for,
+    network_for,
+    network_html,
+    network_svg,
+    route_html,
+    route_svg,
+)
 from aeropub.provenance import SourceRef
 
 NOW = datetime(2026, 10, 5, 6, 0, tzinfo=timezone.utc)
@@ -55,7 +64,7 @@ def ref() -> SourceRef:
 def segment(route: str, start: str, end: str, **overrides) -> RouteSegment:
     fields = dict(
         route=route, start=start, end=end, source=ref(),
-        direction=CruisingLevels.ODD,
+        direction=CruisingLevels.ODD, distance_nm=100.0,
     )
     fields.update(overrides)
     return RouteSegment(**fields)
@@ -265,3 +274,113 @@ class TestDrawing:
         page = route_html(drawn())
         assert "prefers-color-scheme: dark" in page
         assert "--rp-ink" in page
+
+
+# --------------------------------------------------------------------------
+# The network schematic
+# --------------------------------------------------------------------------
+
+
+NETWORK = AtsStructure(segments=(
+    segment("UM688", "ALSEM", "MIDLE", mea_ft=15000, region="ALFA FIR"),
+    segment("UM688", "MIDLE", "KUKLA", mea_ft=24000, region="ALFA FIR"),
+    segment("UM688", "KUKLA", "VELOX", mea_ft=22000, region="ALFA FIR"),
+    segment("L604", "KUKLA", "RASKI", mea_ft=18000, region="BRAVO FIR"),
+    segment("L604", "RASKI", "TOPRA", mea_ft=16000, region="BRAVO FIR"),
+    segment("N191", "MIDLE", "RASKI", mea_ft=11000, region="BRAVO FIR"),
+))
+
+
+class TestStructureLookups:
+    def test_the_points_on_an_airway_come_out_in_flown_order(self):
+        """Sorting the designators would draw a route that goes back on
+        itself."""
+        assert NETWORK.points_on("UM688") == ("ALSEM", "MIDLE", "KUKLA", "VELOX")
+
+    def test_an_airway_nobody_holds_has_no_points(self):
+        assert NETWORK.points_on("ZZ99") == ()
+
+    def test_a_point_reports_every_airway_through_it(self):
+        assert NETWORK.routes_through("KUKLA") == ("L604", "UM688")
+
+    def test_a_point_on_one_airway_reports_one(self):
+        assert NETWORK.routes_through("ALSEM") == ("UM688",)
+
+    def test_segments_can_be_found_by_region(self):
+        assert {s.route for s in NETWORK.in_region("ALFA FIR")} == {"UM688"}
+
+    def test_an_empty_query_returns_nothing_rather_than_everything(self):
+        assert NETWORK.routes_through("") == ()
+        assert NETWORK.in_region("  ") == ()
+        assert NETWORK.on("") == ()
+
+
+class TestNetwork:
+    def test_every_airway_becomes_a_lane(self):
+        found = network_for(NETWORK)
+        assert {lane.route for lane in found.lanes} == {"UM688", "L604", "N191"}
+
+    def test_a_lane_carries_its_region_and_its_lowest_minimum(self):
+        lane = next(l for l in network_for(NETWORK).lanes if l.route == "UM688")
+        assert lane.region == "ALFA FIR"
+        assert lane.lowest_ft == 15000
+
+    def test_a_lane_spanning_two_regions_names_neither(self):
+        """Naming one would put half an airway in the wrong State's airspace."""
+        spread = AtsStructure(segments=(
+            segment("Q1", "AAAAA", "BBBBB", region="ALFA FIR"),
+            segment("Q1", "BBBBB", "CCCCC", region="BRAVO FIR"),
+        ))
+        assert network_for(spread).lanes[0].region == ""
+
+    def test_the_interchanges_are_the_points_on_more_than_one_airway(self):
+        found = network_for(NETWORK)
+        assert found.interchanges == ("KUKLA", "MIDLE", "RASKI")
+
+    def test_a_closure_is_passed_in_and_never_inferred_from_a_notam(self):
+        """A NOTAM against an airway may close it, may restrict a level band
+        on it, or may say something else. Deciding which from the presence of
+        a NOTAM would be reading a message this module has not read."""
+        found = network_for(NETWORK, notams=[("ATS:L604", None, None)])
+        lane = next(l for l in found.lanes if l.route == "L604")
+        assert not lane.is_closed
+        assert lane.notams == 1
+
+    def test_a_stated_closure_is_drawn_as_closed(self):
+        found = network_for(NETWORK, closed_routes=["L604"])
+        assert [lane.route for lane in found.closed] == ["L604"]
+        assert "rn-closed" in network_svg(found)
+        assert "CLOSED" in network_svg(found)
+
+    def test_a_closure_names_where_the_alternative_starts(self):
+        """The question a planner has the moment a NOTAM shuts a route."""
+        page = network_html(network_for(NETWORK, closed_routes=["L604"]))
+        assert "L604 closed" in page
+        assert "KUKLA" in page and "RASKI" in page
+        assert "change airway without a direct leg" in page
+
+    def test_the_filed_route_is_marked_inside_the_structure(self):
+        found = network_for(NETWORK, highlight=["ALSEM", "MIDLE"])
+        assert "rn-filed" in network_svg(found)
+
+    def test_an_interchange_is_drawn_with_a_connector(self):
+        assert "rn-interchange" in network_svg(network_for(NETWORK))
+
+    def test_an_empty_structure_says_it_is_a_coverage_gap(self):
+        """Nothing drawn must not read as an empty network."""
+        svg = network_svg(network_for(AtsStructure()))
+        assert "coverage gap" in svg
+        assert svg.startswith("<svg") and svg.endswith("</svg>")
+
+    def test_the_drawing_refuses_the_map_claim(self):
+        svg = network_svg(network_for(NETWORK))
+        assert "holds no coordinates" in svg
+        assert "nothing here is a map" in svg
+
+    def test_the_drawing_carries_an_accessible_label(self):
+        assert 'role="img"' in network_svg(network_for(NETWORK, title="ALFA"))
+
+    def test_both_themes_are_defined(self):
+        page = network_html(network_for(NETWORK))
+        assert "prefers-color-scheme: dark" in page
+        assert "--rn-ink" in page

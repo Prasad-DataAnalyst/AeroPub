@@ -36,7 +36,12 @@ from aeropub.acap import ManifestError, load_aircraft, merge, template
 from aeropub.aip import AipCoverage
 from aeropub.airspace import AirspaceStructure, airspace_template, load_airspace
 from aeropub.hazards import HazardRegister, hazard_template, load_hazards
-from aeropub.diagram import diagram_for, route_html
+from aeropub.diagram import (
+    diagram_for,
+    network_for,
+    network_html,
+    route_html,
+)
 from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
@@ -843,6 +848,29 @@ def _cmd_route(args: argparse.Namespace) -> int:
         )
         if args.profile:
             _write_profile(document, args.profile)
+        if args.network:
+            if structure is None:
+                print(
+                    "no --structure was given, so there is no route structure "
+                    "to draw",
+                    file=sys.stderr,
+                )
+            else:
+                drawing = network_for(
+                    structure,
+                    closed_routes=args.closed or (),
+                    notams=document.enroute_notams,
+                    highlight=(
+                        document.expansion.route.points
+                        if document.expansion is not None
+                        else ()
+                    ),
+                    title=f"ATS route structure — {sector.label}",
+                )
+                Path(args.network).write_text(
+                    network_html(drawing), encoding="utf-8"
+                )
+                print(f"network written to {args.network}", file=sys.stderr)
         _emit(document, args, document.render() + _emptiness_note(store, path))
         # Adverse on anything above medium, or on a route we cannot speak for.
         # An inconclusive route dossier is not a pass: most of what it did not
@@ -1254,6 +1282,23 @@ def _parser() -> argparse.ArgumentParser:
             "write the vertical profile as a self-contained HTML page — the "
             "planned level as a line across the page, each leg standing on its "
             "binding minimum, and every gap drawn as a gap"
+        ),
+    )
+    sector.add_argument(
+        "--network", default=None, metavar="FILE",
+        help=(
+            "write the ATS route structure as a schematic — one lane per "
+            "airway, its points in published order, and a connector wherever "
+            "an airway meets another. Connectivity only: no coordinates are "
+            "held, so it is not a map"
+        ),
+    )
+    sector.add_argument(
+        "--closed", action="append", metavar="ROUTE",
+        help=(
+            "an airway established as closed, repeatable. Passed in rather "
+            "than inferred: a NOTAM against an airway may close it, restrict a "
+            "level band on it, or say something else"
         ),
     )
     sector.add_argument("--reference", default=None, help="your own name for this sector")
