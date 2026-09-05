@@ -13,13 +13,21 @@ table: it is false while anything below is unread for the regions in question.
 
 | Subsection | Content | Status |
 |---|---|---|
-| ENR 0.1–0.5 | Preface, record of amendments and supplements, checklist of pages | **Partial** — the checklist drives `OVERDUE` in `watcher.py` and coverage in `aip.py`. The page-level checklist reconciliation of §6 is not built |
+| ENR 0.1–0.5 | Preface, record of amendments and supplements, checklist of pages | **Built** — `checklist.py`. Page-level reconciliation against the State's own GEN 0.4, plus the GEN 0.2 amendment sequence and the GEN 0.3 record of supplements |
 | ENR 0.6 | Table of contents | Not held. Low value on its own |
 
-**The gap that matters.** A State's own checklist is the audit trail against
-what we hold. Reconciling it page by page at cycle close is the difference
-between "we hold everything we fetched" and "we hold everything the State
-says exists", and only the second is a coverage claim.
+**The gap that matters, now closed.** A State's own checklist is the audit
+trail against what we hold. Reconciling it page by page is the difference
+between "we hold everything we fetched" and "we hold everything the State says
+exists", and only the second is a coverage claim.
+
+The finding that matters most there is not the missing page — that is visible
+in every dossier downstream. It is the **stale** one: a section held at last
+cycle renders, cites and answers, and every answer is one cycle out of date
+with nothing on its face to say so. Two findings point the other way:
+**contradicted**, where our own `ABSENT` claim about the State is disproved by
+the State's own list, and **ahead**, where we hold newer than the checklist and
+the checklist is the document to refetch.
 
 ## ENR 1 — General rules and procedures
 
@@ -137,13 +145,13 @@ Overflight clearance lead times are screened against the notice available.
 
 ## Build order from here
 
-1. **ENR 0 checklist reconciliation** — page-level, at cycle close. The
-   difference between "we hold everything we fetched" and "we hold everything
-   the State says exists".
-2. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
+1. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
    differ from the Annex, a crew planning from the Annex alone is wrong.
-3. **ENR 1.6 ATS surveillance services** — what service is actually provided,
+2. **ENR 1.6 ATS surveillance services** — what service is actually provided,
    which the airspace class implies and does not state.
+3. **Ingestion recording holdings** — `checklist.load_holdings` reads a
+   separate file today because nothing records a `SectionHolding` as it
+   parses. That file should become a by-product of ingestion.
 
 Everything above is buildable offline from published text.
 

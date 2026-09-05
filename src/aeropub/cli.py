@@ -97,6 +97,13 @@ from aeropub.route import Jurisdiction, Route, build_route_dossier
 from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
+from aeropub.checklist import (
+    checklist_template,
+    holdings_template,
+    load_checklist,
+    load_holdings,
+    reconcile,
+)
 from aeropub.trip import Trip, assess_trip
 
 __all__ = ["DEFAULT_STORE", "main"]
@@ -991,6 +998,51 @@ def _cmd_store(args: argparse.Namespace) -> int:
         store.close()
 
 
+def _cmd_checklist(args: argparse.Namespace) -> int:
+    """Reconcile a State's own checklist against what we hold."""
+    if args.template:
+        print(checklist_template())
+        return OK
+    if args.holdings_template:
+        print(holdings_template())
+        return OK
+    if not args.checklist:
+        print(
+            "give a checklist extract, or --template for a blank one",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+
+    held = load_checklist(args.checklist)
+    if not args.holdings:
+        # Reconciling against nothing would report every page the State
+        # publishes as missing. A report where everything is a finding is a
+        # report nobody reads, and it would be a finding about us rather than
+        # about the AIP.
+        print(f"{held.entity} — checklist for "
+              + (f"AIRAC {held.published_for.identifier}"
+                 if held.published_for else "no cycle stated"))
+        print(f"  {len(held)} pages listed  ·  "
+              f"{len(held.sections)} sections placed  ·  "
+              f"{len(held.unplaced)} not placeable")
+        print(f"  {len(held.amendments)} amendments  ·  "
+              f"{len(held.supplements)} supplements in force")
+        print()
+        print("  Nothing was supplied to reconcile against. Give --holdings to")
+        print("  compare this against what we hold; without it this is the")
+        print("  State's list and nothing more.")
+        for entry in held.entries:
+            print(f"    {entry.describe()}")
+        return OK
+
+    coverage = load_holdings(args.holdings)
+    found = reconcile(
+        held, coverage, held_supplements=args.held_supplement or ()
+    )
+    print(found.render())
+    return OK if found.is_reconciled else ADVERSE
+
+
 def _cmd_aircraft(args: argparse.Namespace) -> int:
     if args.template:
         print(template())
@@ -1446,6 +1498,35 @@ def _parser() -> argparse.ArgumentParser:
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
     inventory.set_defaults(handler=_cmd_store)
+
+    audit = sub.add_parser(
+        "checklist",
+        help="reconcile a State's own checklist of pages against what we hold",
+        description=(
+            "GEN 0.4 is the State's list of every page in its AIP and the "
+            "cycle each is current to. Reconciling against it is the "
+            "difference between holding everything we fetched and holding "
+            "everything the State says exists."
+        ),
+    )
+    audit.add_argument("checklist", nargs="?", help="path to a checklist extract")
+    audit.add_argument(
+        "--holdings", metavar="FILE",
+        help="path to a record of what we hold, to reconcile against",
+    )
+    audit.add_argument(
+        "--held-supplement", action="append", metavar="ID",
+        help="a supplement we hold, repeatable — checked against GEN 0.3",
+    )
+    audit.add_argument(
+        "--template", action="store_true",
+        help="print a blank checklist extract",
+    )
+    audit.add_argument(
+        "--holdings-template", dest="holdings_template", action="store_true",
+        help="print a blank record of holdings",
+    )
+    audit.set_defaults(handler=_cmd_checklist)
 
     aircraft = sub.add_parser(
         "aircraft", help="read aircraft manifests and show what they hold"
