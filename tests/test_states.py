@@ -147,6 +147,79 @@ class TestQatarUrlStructure:
         assert cycle_for(day).effective_date == day
 
 
+#: A current Qatar edition root, given first-hand by an operator who uses the
+#: site on 05 SEP 2026. Not fetched — the egress policy refuses the host — but
+#: it is a real address on the authority's own domain, and it is a *different*
+#: layout from every 2018-2025 observation above.
+CURRENT_EDITION = (
+    "https://aim.gov.qa/AIP/03-SEP-2026/AIP-30/2026-10-01-000000"
+    "/html/index-en-GB.html"
+)
+
+
+class TestQatarCurrentLayout:
+    """Qatar changed its scheme. A builder that only knew the old one would
+    404 on every current edition."""
+
+    def test_the_builder_reproduces_the_observed_edition_exactly(self):
+        c = AiracCycle.from_identifier("2610")
+        assert qatar.edition_index_url(c, 30) == CURRENT_EDITION
+
+    def test_the_effective_date_in_the_path_is_a_real_airac_date(self):
+        # Independent cross-check: the calendar was not consulted to build the
+        # URL, and it agrees with the State's own path.
+        day = date.fromisoformat("2026-10-01")
+        assert cycle_for(day).effective_date == day
+
+    def test_the_publication_date_is_the_recipient_deadline(self):
+        """T-28, which this repository computes from the calendar alone. One
+        observation and one independent derivation agreeing."""
+        c = AiracCycle.from_identifier("2610")
+        assert qatar.publication_date(c) == date(2026, 9, 3)
+        assert qatar.publication_date(c) == c.recipient_deadline
+
+    def test_the_month_is_upper_case_in_the_path(self):
+        c = AiracCycle.from_identifier("2610")
+        assert "03-SEP-2026" in qatar.edition_base(c, 30)
+
+    def test_the_amendment_number_is_not_derivable_from_the_cycle(self):
+        """The finding that matters for automation: a current edition cannot be
+        addressed from the cycle alone, which is why the history page is the
+        entry point rather than a convenience."""
+        c = AiracCycle.from_identifier("2610")
+        assert qatar.edition_base(c, 30) != qatar.edition_base(c, 31)
+
+    def test_an_amendment_number_that_is_not_a_count_is_refused(self):
+        c = AiracCycle.from_identifier("2610")
+        with pytest.raises(ValueError, match="running number"):
+            qatar.edition_base(c, 0)
+
+    def test_a_section_follows_the_eurocontrol_convention(self):
+        c = AiracCycle.from_identifier("2610")
+        built = qatar.edition_section_url(c, 30, "ENR-3.1")
+        assert built.startswith(qatar.edition_base(c, 30))
+        assert built.endswith("/html/eAIP/ENR-3.1-en-GB.html")
+
+    def test_the_legacy_builder_still_reproduces_the_old_observations(self):
+        """A State that changed its scheme once may still serve old editions
+        at old addresses."""
+        c = AiracCycle.from_identifier("2201")
+        assert qatar.eaip_section_url(c, "GEN-0.1") == OBSERVED_URLS["2201-html"]
+
+    def test_the_two_layouts_are_not_the_same_address(self):
+        c = AiracCycle.from_identifier("2610")
+        assert qatar.eaip_base(c) not in qatar.edition_base(c, 30)
+
+    def test_the_history_page_is_registered_as_a_source(self):
+        assert qatar.HISTORY_URL in {s.url for s in qatar.PROFILE.sources}
+
+    def test_the_history_page_is_unverified_like_everything_else(self):
+        found = next(
+            s for s in qatar.PROFILE.sources if s.url == qatar.HISTORY_URL
+        )
+        assert not found.is_verified
+
+
 class TestQatar:
     def test_is_registered_and_retrievable(self):
         assert get_profile("OT") is qatar.PROFILE

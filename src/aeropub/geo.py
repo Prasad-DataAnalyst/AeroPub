@@ -59,6 +59,7 @@ __all__ = [
     "CoordinateError",
     "Position",
     "bounds_of",
+    "destination",
     "distance_disagreement",
     "format_coordinate",
     "great_circle_nm",
@@ -286,6 +287,37 @@ def initial_bearing(start: Position, end: Position) -> float:
     )
     turned = math.degrees(math.atan2(y, x)) % 360.0
     return 360.0 if turned == 0.0 else turned
+
+
+def destination(start: Position, bearing_deg: float, distance_nm: float) -> Position:
+    """Where you arrive going that far on that bearing, on the sphere.
+
+    What an arc needs. An AIP defines a great many boundaries as "an arc of
+    N NM radius centred on X", and drawing one means walking the circle about
+    the centre — which is this, once per step.
+
+    Computed on the sphere for the same reason everything else here is: a
+    circle of 30 NM drawn by adding degrees to a latitude and a longitude is
+    an ellipse everywhere except the equator, and at 50°N it is out by half
+    its radius in one axis.
+    """
+    if distance_nm < 0:
+        raise ValueError("distance_nm must not be negative")
+    angular = distance_nm / EARTH_RADIUS_NM
+    bearing = math.radians(bearing_deg % 360.0)
+    lat1 = math.radians(start.latitude)
+    lon1 = math.radians(start.longitude)
+    lat2 = math.asin(
+        math.sin(lat1) * math.cos(angular)
+        + math.cos(lat1) * math.sin(angular) * math.cos(bearing)
+    )
+    lon2 = lon1 + math.atan2(
+        math.sin(bearing) * math.sin(angular) * math.cos(lat1),
+        math.cos(angular) - math.sin(lat1) * math.sin(lat2),
+    )
+    # Normalised into -180..180 rather than left to run past the antimeridian.
+    degrees = (math.degrees(lon2) + 540.0) % 360.0 - 180.0
+    return Position(latitude=math.degrees(lat2), longitude=degrees)
 
 
 def intermediate(start: Position, end: Position, fraction: float) -> Position:
