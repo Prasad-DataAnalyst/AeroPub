@@ -43,6 +43,12 @@ from aeropub.diagram import (
     route_html,
 )
 from aeropub.planview import plan_html, plan_view
+from aeropub.gnss import (
+    ApproachCapability,
+    GnssRegister,
+    gnss_template,
+    load_gnss,
+)
 from aeropub.navaids import NavaidRegister, load_navaids, navaid_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
@@ -810,6 +816,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.navaid_template:
         print(navaid_template())
         return OK
+    if args.gnss_template:
+        print(gnss_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -838,6 +847,17 @@ def _cmd_route(args: argparse.Namespace) -> int:
         navaids = NavaidRegister(
             navaids=tuple(n for held in loaded for n in held.navaids)
         )
+    capabilities = tuple(
+        ApproachCapability(value) for value in (args.capability or ())
+    )
+    gnss = None
+    if args.gnss:
+        loaded = [load_gnss(path) for path in args.gnss]
+        gnss = GnssRegister(
+            services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
     hazards = None
     if args.hazards:
         loaded = [load_hazards(path) for path in args.hazards]
@@ -883,6 +903,8 @@ def _cmd_route(args: argparse.Namespace) -> int:
             airspace=airspace,
             hazards=hazards,
             navaids=navaids,
+            gnss=gnss,
+            capabilities=capabilities,
             notice_hours=args.notice_hours,
         )
         if args.profile:
@@ -1292,6 +1314,26 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--navaid-template", dest="navaid_template", action="store_true",
         help="print a blank ENR 4 extract",
+    )
+    sector.add_argument(
+        "--gnss", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 4.3 extract, repeatable — which GNSS elements the "
+            "State approves, for what, and what it requires before departure"
+        ),
+    )
+    sector.add_argument(
+        "--capability", action="append", metavar="LINE",
+        choices=[c.value for c in ApproachCapability],
+        help=(
+            "an approach line this operation intends to use (lnav, "
+            "lnav_vnav, lp, lpv, gls), repeatable — checked against what "
+            "each State's ENR 4.3 actually authorises"
+        ),
+    )
+    sector.add_argument(
+        "--gnss-template", dest="gnss_template", action="store_true",
+        help="print a blank ENR 4.3 extract",
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

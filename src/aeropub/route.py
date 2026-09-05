@@ -72,6 +72,12 @@ from aeropub.charts import (
     screen_descent,
 )
 from aeropub.currency import Currency, DataCurrency, assess_currency
+from aeropub.gnss import (
+    ApproachCapability,
+    GnssRegister,
+    GnssView,
+    view_gnss,
+)
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
 from aeropub.hazards import (
     HazardRegister,
@@ -118,7 +124,6 @@ NOT_YET_ADDRESSED: tuple[str, ...] = (
     "driftdown escape corridors and depressurisation strategy",
     "route availability — RAD restrictions, conditional routes and flexible "
     "use of airspace",
-    "RAIM prediction, and GNSS outages published under ENR 4.3",
     "HF, CPDLC and SATCOM coverage along track — the carriage requirement is "
     "screened, the coverage is not",
     "payload-range envelope against route length, and the critical fuel scenario",
@@ -512,6 +517,11 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    gnss: GnssView | None = None
+    """ENR 4.3 — what each region approves, what it requires before departure,
+    and which approach lines the plates offer that the State does not
+    authorise. ``None`` where no ENR 4.3 was supplied."""
+
     navaids: tuple[NavaidUse, ...] = ()
     """ENR 4 — the aids the filed route names, and what is known about each.
     An aid the register has never seen is listed as such rather than dropped:
@@ -738,6 +748,8 @@ class RouteDossier:
             lines += ["", self.airspace.render()]
         if self.hazards is not None:
             lines += ["", self.hazards.render()]
+        if self.gnss is not None:
+            lines += ["", self.gnss.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -816,6 +828,7 @@ def _open_items(
     airspace: AirspaceView | None = None,
     hazards: HazardScreen | None = None,
     navaids: Iterable[NavaidUse] = (),
+    gnss: GnssView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1043,6 +1056,55 @@ def _open_items(
                 )
             )
 
+    if gnss is not None:
+        for region in gnss.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 4.3 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "nothing is approved and nothing is refused here — "
+                        "neither reading is available from what is held"
+                    ),
+                )
+            )
+        for finding in gnss.unavailable:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what=(
+                        f"{finding.capability.label} is not authorised in this "
+                        "airspace"
+                    ),
+                    # The line is on the plate. Nothing on the plate says the
+                    # State has not approved it, which is why this is a finding
+                    # rather than something a crew would notice.
+                    severity=Exposure.HIGH,
+                    why=finding.describe(),
+                )
+            )
+        for finding in gnss.reopened:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what=f"{finding.capability.label} reopened by NOTAM",
+                    severity=Exposure.HIGH,
+                    why=finding.describe(),
+                )
+            )
+        for note in gnss.must_predict:
+            items.append(
+                OpenItem(
+                    where=note.region,
+                    what="RAIM prediction required before departure",
+                    # A check the dispatch relies on, which has not been made.
+                    # This platform computes none: the item is the pointer.
+                    severity=Exposure.HIGH,
+                    why=note.describe(),
+                )
+            )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -1081,6 +1143,8 @@ def build_route_dossier(
     airspace: AirspaceStructure | None = None,
     hazards: HazardRegister | None = None,
     navaids: NavaidRegister | None = None,
+    gnss: GnssRegister | None = None,
+    capabilities: Iterable[ApproachCapability] = (),
     notice_hours: float | None = None,
 ) -> RouteDossier:
     """Assemble everything the platform holds about one sector.
@@ -1151,6 +1215,18 @@ def build_route_dossier(
     if hazard_screen is not None and register is not None:
         enroute = enroute + notams_on_hazards(register, hazard_screen, moment)
 
+    gnss_view = (
+        view_gnss(
+            gnss,
+            regions=regions,
+            capabilities=capabilities,
+            notams=register,
+            at=moment,
+        )
+        if gnss is not None
+        else None
+    )
+
     aids: tuple[NavaidUse, ...] = ()
     if navaids is not None and expansion is not None:
         # Only the points the route actually names. Screening every aid in the
@@ -1205,7 +1281,7 @@ def build_route_dossier(
         altimetry=Altimetry(covers=jurisdictions),
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
-            airspace_view, hazard_screen, aids,
+            airspace_view, hazard_screen, aids, gnss_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1217,4 +1293,5 @@ def build_route_dossier(
         airspace=airspace_view,
         hazards=hazard_screen,
         navaids=aids,
+        gnss=gnss_view,
     )

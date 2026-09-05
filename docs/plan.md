@@ -454,7 +454,7 @@ it prepares, and what stays with an engineer.
 |---|---|---|
 | **Terrain profile & driftdown** | Route against Grid MORA and MEA; points of no return; engine-out driftdown escape routes; oxygen and depressurisation strategy | **Prepared** — system assembles terrain profile, MORA/MEA bands and candidate corridors; engineer computes and approves the path |
 | **Airspace & regulatory** | FIR transitions; State differences from ICAO (GEN 1.7); TA/TL validation across jurisdictions | **Automated** |
-| **PBN & navigation audit** | Required nav spec per airspace (RNAV 5, RNP 4, RNP 10); RAIM prediction for the operating window; ground navaid dependencies for conventional reversion | **Automated** |
+| **PBN & navigation audit** | Required nav spec per airspace (RNAV 5, RNP 4, RNP 10); which GNSS elements each State approves and which approach lines that authorises; the published RAIM prediction requirement and the provider named for it; ground navaid dependencies for conventional reversion | **Automated**, except the prediction itself — the platform reports the requirement and the provider and computes no RAIM number, because it holds no almanac, satellite health or receiver model |
 | **Communications & ATC** | High-density or complex ATC environments; VHF coverage gaps requiring HF or CPDLC logon | **Automated** |
 
 ### Phase 2 — Aerodrome

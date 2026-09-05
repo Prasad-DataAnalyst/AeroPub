@@ -76,9 +76,29 @@ and airway.
 |---|---|---|
 | 4.1 | Radio navigation aids — en-route | **Built** — `navaids.py`. Ident, kind, frequency or channel, published coverage, status and hours, plus what each aid is published as serving. A NOTAM in force overrides the published status |
 | 4.2 | Special navigation systems | Not held |
-| 4.3 | GNSS | **Not built.** Feeds RAIM prediction and PBN substitution — both named in the plan and both unaddressed |
+| 4.3 | GNSS | **Built** — `gnss.py`. Which GNSS elements the State approves, for which operations, on what conditions; which approach lines that authorises; the published RAIM prediction requirement and the provider named for it; and what GNSS is published as usable in lieu of |
 | 4.4 | Name-code designators for significant points | **Built** — `ats.SignificantPoint` |
 | 4.5 | Aeronautical ground lights — en-route | Not held. Low value for the operations this serves |
+
+**What it does.** Answers one question the approach plate cannot: whether the
+State authorises the minimum line printed on it. An LPV line is drawn from
+SBAS, and a State that approves no SBAS service has not authorised it — nothing
+on the plate says so. Answers per region, so a sector crossing an approving
+State and a non-approving one gets two findings rather than an average.
+
+**What it does not.** It computes no RAIM prediction and never will. A
+prediction needs the current almanac, satellite health, the receiver model and
+the exact time and place; none of those are held here. What is reported is the
+published *requirement* and the provider the State names. It also does not rule
+on substitution — `substitutions_for` lists what is published, and the choice
+stays the operator's.
+
+**The four states matter.** A capability comes back `PUBLISHED`, `WITHDRAWN`
+(somebody decided against it), `NOT_PUBLISHED` (read here, and no such service
+is approved) or `UNREAD`. The register tracks which regions an extract *covers*
+as well as which have rows, because without that a single loaded row would make
+every unmentioned element read as refused — a coverage gap silently promoted to
+a finding.
 
 ## ENR 5 — Navigation warnings
 
@@ -103,12 +123,20 @@ Overflight clearance lead times are screened against the notice available.
 
 ## Build order from here
 
-1. **ENR 4.3 GNSS** — outages and RAIM, which the PBN work already asks for.
-2. **ENR 1.10 flight planning** — filing requirements and minimum notice, which
+1. **ENR 1.10 flight planning** — filing requirements and minimum notice, which
    the charter variant needs beside the clearance lead times already built.
-3. **ENR 0 checklist reconciliation** — page-level, at cycle close.
+2. **ENR 0 checklist reconciliation** — page-level, at cycle close.
+3. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
+   differ from the Annex, a crew planning from the Annex alone is wrong.
 
-Everything above is buildable offline from published text. None of it needs
-geometry, and none of it should acquire any: the moment this platform holds a
-polygon it starts making containment claims, and a containment claim from
-incomplete geometry is the most dangerous output it could produce.
+Everything above is buildable offline from published text.
+
+**On geometry.** ENR 4.1 and 4.4 publish coordinates, so reading them is
+reading the AIP, and `geo.py` and `planview.py` do exactly that: a point is
+drawn where the State published it or it is not drawn at all. What the platform
+still refuses is *derived* geometry — a boundary polygon assembled from a
+prose description, a coverage footprint computed from anything but the
+published figure, a containment verdict. The moment it answers "you are inside
+this area" from geometry nobody published, it is producing the most dangerous
+output it could produce. Reading a published position is not that; inventing
+one is.
