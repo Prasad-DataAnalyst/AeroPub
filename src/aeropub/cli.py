@@ -1214,6 +1214,8 @@ def _cmd_atlas(args: argparse.Namespace) -> int:
         )
         return CANNOT_RUN
 
+    filed = parse_route_string(args.route_string) if args.route_string else None
+
     drawn = build_atlas(
         airspace=airspace,
         structure=structure,
@@ -1222,6 +1224,7 @@ def _cmd_atlas(args: argparse.Namespace) -> int:
         regions=args.region or (),
         routes=args.route or (),
         level_ft=args.level,
+        filed=filed,
         title=args.title or "",
     )
     print(drawn.render())
@@ -1896,6 +1899,15 @@ def _parser() -> argparse.ArgumentParser:
             "draw what is available at this level; anything publishing no "
             "band is drawn anyway, because not knowing the floor is not the "
             "same as the floor being satisfied"
+        ),
+    )
+    sheet.add_argument(
+        "--route-string", dest="route_string", default="", metavar="ITEM15",
+        help=(
+            "a filed route to draw over the structure, as Item 15 states it. "
+            "Resolved against the ENR 3 given, so the track follows each "
+            "airway through its published points rather than cutting straight "
+            "between the filed ones"
         ),
     )
     sheet.add_argument("--title", default="", help="a title for the sheet")

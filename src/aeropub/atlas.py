@@ -52,7 +52,7 @@ from datetime import datetime
 from typing import Iterable, Mapping, Sequence
 
 from aeropub.airspace import Airspace, AirspaceStructure, AirspaceType
-from aeropub.ats import ATS_ROUTE, AtsStructure
+from aeropub.ats import ATS_ROUTE, AtsStructure, FiledRoute, expand
 from aeropub.basemap import NOT_AERONAUTICAL, Basemap, load_basemap
 from aeropub.boundary import Boundary
 from aeropub.enroute import AirwayProfile, profile_for
@@ -186,6 +186,55 @@ class DrawnPoint:
 
 
 @dataclass(frozen=True, slots=True)
+class DrawnTrack:
+    """The filed route, drawn through the structure it was resolved against.
+
+    Not a straight line between the filed points: a leg filed as ``ALSEM UM688
+    KUKLA`` crosses every published segment between them, and the track flown
+    goes through each one. Where the route resolved, this is drawn through the
+    intermediate points; where it did not, it is drawn through the points the
+    string itself names and says so.
+    """
+
+    points: tuple[str, ...] = ()
+    path: tuple[Position, ...] = ()
+    unplaced: tuple[str, ...] = ()
+    filed: str = ""
+    resolved: int = 0
+    checkable: int = 0
+
+    @property
+    def is_drawable(self) -> bool:
+        return len(self.path) >= 2
+
+    @property
+    def distance_nm(self) -> float | None:
+        """Great-circle length of what is drawn, or nothing.
+
+        ``None`` while any point on the track has no held position: a partial
+        total is a smaller number than the route and a reader would take it
+        for the route length.
+        """
+        if self.unplaced or len(self.path) < 2:
+            return None
+        return sum(
+            great_circle_nm(a, b) for a, b in zip(self.path, self.path[1:])
+        )
+
+    def describe(self) -> str:
+        parts = [f"{len(self.points)} points"]
+        if self.checkable:
+            parts.append(f"{self.resolved} of {self.checkable} legs resolved")
+        length = self.distance_nm
+        parts.append(
+            f"{length:.0f} NM computed from the published positions"
+            if length is not None
+            else "length not computed — a point on it has no published position"
+        )
+        return "  ·  ".join(parts)
+
+
+@dataclass(frozen=True, slots=True)
 class Atlas:
     """Everything to be drawn, and everything that could not be."""
 
@@ -196,6 +245,10 @@ class Atlas:
     unplaced: tuple[str, ...] = ()
     """Named by a section and given no position or no boundary. Listed under
     the map, never placed on it."""
+
+    track: DrawnTrack | None = None
+    """The filed route over the structure. ``None`` where none was given,
+    which prints differently from one nobody could draw."""
 
     regions: tuple[str, ...] = ()
     level_ft: float | None = None
@@ -248,6 +301,14 @@ class Atlas:
             + _count(len(self.hazards), "hazard area")
             + (f"  ·  at {self.level_ft:.0f} ft" if self.level_ft is not None else ""),
         ]
+        if self.track is not None:
+            lines += ["", "FILED ROUTE", f"  {self.track.describe()}"]
+            if self.track.filed:
+                lines.append(f"  as filed: {self.track.filed}")
+            if self.track.unplaced:
+                lines.append(
+                    "  not drawn: " + ", ".join(self.track.unplaced)
+                )
         if self.unplaced:
             lines += [
                 "",
@@ -353,6 +414,7 @@ def build_atlas(
     level_ft: float | None = None,
     notams: NotamRegister | None = None,
     at: datetime | None = None,
+    filed: FiledRoute | None = None,
     basemap: Basemap | None = None,
     title: str = "",
 ) -> Atlas:
@@ -503,8 +565,50 @@ def build_atlas(
         if designator in through or kinds.get(designator) == "navaid"
     )
 
+    # ---- the filed route over the structure ------------------------------
+    track: DrawnTrack | None = None
+    if filed is not None:
+        walked: list[str] = []
+        resolved = checkable = 0
+        if structure is not None:
+            expansion = expand(filed, structure)
+            resolved, checkable = expansion.coverage
+            for leg in expansion.legs:
+                if not walked:
+                    walked.append(leg.leg.start)
+                if leg.segments:
+                    # Through every published segment, not straight between the
+                    # filed points: the airway is the route, and it bends.
+                    walked.extend(segment.end for segment in leg.segments)
+                else:
+                    walked.append(leg.leg.end)
+        else:
+            walked = list(filed.points)
+        walked = [p for i, p in enumerate(walked) if i == 0 or p != walked[i - 1]]
+
+        held = [p for p in walked if p in positions]
+        missing = [p for p in walked if p not in positions]
+        path: list[Position] = []
+        for start, end in zip(held, held[1:]):
+            leg_path = great_circle_path(
+                positions[start], positions[end], steps=LEG_STEPS
+            )
+            path.extend(leg_path if not path else leg_path[1:])
+        track = DrawnTrack(
+            points=tuple(walked),
+            path=tuple(path),
+            unplaced=tuple(dict.fromkeys(missing)),
+            filed=filed.text,
+            resolved=resolved,
+            checkable=checkable,
+        )
+        for point in track.unplaced:
+            unplaced.append(f"{point} (on the filed route, no position read)")
+
     everything = [p.position for p in drawn_points]
     everything += [p for route in drawn_routes for p in route.path]
+    if track is not None:
+        everything += list(track.path)
     everything += [p for area in areas for ring in area.rings for p in ring]
     window = bounds_of(everything)
     padded = window.padded(0.06) if window else None
@@ -514,6 +618,7 @@ def build_atlas(
         areas=tuple(areas),
         routes=tuple(drawn_routes),
         points=drawn_points,
+        track=track,
         unplaced=tuple(dict.fromkeys(unplaced)),
         regions=wanted,
         level_ft=level_ft,
@@ -700,6 +805,30 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
         out.append("</g>")
     out.append("</g>")
 
+    if atlas.track is not None and atlas.track.is_drawable:
+        out.append('<g class="at-layer" data-layer="track">')
+        info = _info(
+            "Filed route",
+            "filed route",
+            f"{len(atlas.track.points)} points"
+            + (
+                f", {len(atlas.track.unplaced)} with no position"
+                if atlas.track.unplaced
+                else ""
+            ),
+            atlas.track.describe(),
+            atlas.track.filed or "as filed",
+            0,
+        )
+        out.append(
+            f'<g class="at-trackg" tabindex="0" role="button" data-info="{info}" '
+            'aria-label="Filed route">'
+        )
+        out.append(
+            f'<polyline points="{points_of(atlas.track.path)}" class="at-track"/>'
+        )
+        out.append("</g></g>")
+
     out.append('<g class="at-layer" data-layer="points">')
     for point in atlas.points:
         x, y = xy(point.position)
@@ -785,13 +914,13 @@ def _steps(start: float, end: float, count: int) -> list[float]:
 ATLAS_CSS = """
 .at-wrap { --at-ink: #16202b; --at-muted: #64757f; --at-ground: #eef1f3;
   --at-coast: #9fb3bd; --at-border: #c6d2d8; --at-fir: #1b6ca8;
-  --at-terminal: #7a5ea8; --at-hazard: #c0392b; --at-route: #2f7d5f;
+  --at-terminal: #7a5ea8; --at-hazard: #c0392b; --at-route: #2f7d5f; --at-flight: #b8541c;
   --at-mark: #16202b; --at-card: #ffffff; }
 @media (prefers-color-scheme: dark) {
   .at-wrap:not([data-theme="light"]) { --at-ink: #e6edf3; --at-muted: #93a4b3;
     --at-ground: #101821; --at-coast: #48606d; --at-border: #2c3d47;
     --at-fir: #63b3ed; --at-terminal: #b39ae0; --at-hazard: #e5705f;
-    --at-route: #63c69b; --at-mark: #cfd9e2; --at-card: #18222b; } }
+    --at-route: #63c69b; --at-flight: #f0913f; --at-mark: #cfd9e2; --at-card: #18222b; } }
 .at-wrap { background: var(--at-ground); border: 1px solid var(--at-border);
   border-radius: 3px; position: relative; overflow: hidden; }
 .at { display: block; touch-action: none; cursor: grab; }
@@ -810,6 +939,11 @@ ATLAS_CSS = """
   stroke-width: 1.2; }
 .at-hazard-open .at-hazard-line { fill: none; stroke-dasharray: 5 4; }
 .at-route { fill: none; stroke: var(--at-route); stroke-width: 1.6; }
+.at-track { fill: none; stroke: var(--at-flight); stroke-width: 2.6;
+  stroke-linejoin: round; stroke-linecap: round; }
+.at-trackg { cursor: pointer; }
+.at-trackg:hover .at-track, .at-trackg:focus-visible .at-track {
+  stroke-width: 4; }
 .at-route-notam { stroke-dasharray: 6 3; }
 .at-mark { fill: var(--at-mark); }
 .at-ring { fill: none; stroke: var(--at-hazard); stroke-width: 1.4; }
@@ -941,6 +1075,7 @@ def atlas_html(atlas: Atlas) -> str:
         ("fir", "FIR/UIR"),
         ("terminal", "TMA/CTR"),
         ("routes", "ATS routes"),
+        ("track", "Filed route"),
         ("points", "Points"),
         ("hazard", "P/R/D"),
     )

@@ -29,7 +29,13 @@ import pytest
 
 from aeropub.airspace import Airspace, AirspaceClass, AirspaceStructure, AirspaceType
 from aeropub.atlas import atlas_html, atlas_svg, build_atlas
-from aeropub.ats import AtsStructure, CruisingLevels, RouteSegment, SignificantPoint
+from aeropub.ats import (
+    AtsStructure,
+    CruisingLevels,
+    RouteSegment,
+    SignificantPoint,
+    parse_route_string,
+)
 from aeropub.boundary import Boundary, BoundaryEdge, Circle, EdgeKind, boundary_from_points
 from aeropub.entities import named
 from aeropub.geo import Position
@@ -426,6 +432,77 @@ class TestNotams:
 # --------------------------------------------------------------------------
 # The drawing
 # --------------------------------------------------------------------------
+
+
+class TestFiledRoute:
+    """The flight path over the structure, which is not a straight line
+    between the filed points."""
+
+    def filed(self, text="ALSEM UM688 KUKLA"):
+        return parse_route_string(text)
+
+    def test_the_track_follows_the_airway_through_its_points(self):
+        """A leg filed as ALSEM UM688 KUKLA crosses every published segment
+        between them, and the track goes through each one."""
+        found = atlas(filed=self.filed())
+        assert found.track is not None
+        assert found.track.points == ("ALSEM", "MIDLE", "KUKLA")
+
+    def test_without_a_structure_it_is_the_points_the_string_names(self):
+        found = build_atlas(structure=STRUCTURE, filed=self.filed())
+        assert found.track.points == ("ALSEM", "MIDLE", "KUKLA")
+        bare = build_atlas(filed=self.filed())
+        assert bare.track.points == ("ALSEM", "KUKLA")
+
+    def test_the_length_is_computed_and_labelled_as_computed(self):
+        found = atlas(filed=self.filed())
+        assert found.track.distance_nm is not None
+        assert "computed from the published positions" in found.track.describe()
+
+    def test_a_point_with_no_position_stops_the_length_being_reported(self):
+        """A partial total is a smaller number than the route and a reader
+        would take it for the route length."""
+        found = atlas(filed=self.filed("RASKI W12 ZEBRA"))
+        assert found.track.unplaced == ("ZEBRA",)
+        assert found.track.distance_nm is None
+        assert "not computed" in found.track.describe()
+
+    def test_an_unplaced_filed_point_is_listed_under_the_map(self):
+        found = atlas(filed=self.filed("RASKI W12 ZEBRA"))
+        assert any("filed route" in u for u in found.unplaced)
+
+    def test_how_much_of_the_route_resolved_travels_with_it(self):
+        found = atlas(filed=self.filed())
+        assert found.track.checkable >= 1
+        assert found.track.resolved <= found.track.checkable
+
+    def test_no_filed_route_is_not_an_undrawable_one(self):
+        assert atlas().track is None
+
+    def test_the_track_is_drawn_and_clickable(self):
+        svg = atlas_svg(atlas(filed=self.filed()))
+        assert 'class="at-track"' in svg
+        assert 'data-layer="track"' in svg
+
+    def test_the_track_is_drawn_over_the_route_structure(self):
+        svg = atlas_svg(atlas(filed=self.filed()))
+        assert svg.index('data-layer="routes"') < svg.index('data-layer="track"')
+
+    def test_the_panel_carries_the_route_as_filed(self):
+        svg = atlas_svg(atlas(filed=self.filed()))
+        assert "ALSEM UM688 KUKLA" in svg
+
+    def test_the_layer_switches(self):
+        assert 'data-layer="track"' in atlas_html(atlas(filed=self.filed()))
+
+    def test_the_render_reports_the_track(self):
+        text = atlas(filed=self.filed()).render()
+        assert "FILED ROUTE" in text
+        assert "ALSEM UM688 KUKLA" in text
+
+    def test_the_render_says_which_filed_points_are_not_drawn(self):
+        text = atlas(filed=self.filed("RASKI W12 ZEBRA")).render()
+        assert "not drawn: ZEBRA" in text
 
 
 class TestOrientation:
