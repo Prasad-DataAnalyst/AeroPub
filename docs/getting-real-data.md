@@ -230,6 +230,28 @@ the manifests currently say — and `aeropub checklist` reconciles those against
 the State's own GEN 0.4 to catch the page that is a cycle out of date while
 still rendering perfectly.
 
+## Checking it against the State's own list
+
+Once the manifests exist, reconcile them against GEN 0.4 — the State's list of
+every page in its AIP and the cycle each is current to:
+
+```
+python -m aeropub checklist gen04.json \
+  --held "ENR 2.1=enr2.json" --held "ENR 3.2=enr3.json" \
+  --held "ENR 4.1=enr4.json" --held "ENR 5.1=enr5.json"
+```
+
+Holdings are derived from the manifests themselves, so this is a check on what
+ingestion actually produced. The finding that matters is not the missing page —
+that is visible in every dossier downstream — it is the **stale** one: a
+section held at last cycle renders, cites and answers, and every answer is a
+cycle out of date with nothing on its face to say so.
+
+`--absent "ENR 4.5=the contents page does not list it"` records a section the
+State does not publish, with its basis. If the State's checklist then lists it,
+the reconciliation says so: a wrong absence closes a question a gap would have
+kept open.
+
 ## What will still not be answered
 
 Nothing tells you whether a point is inside an area. Not a route against an

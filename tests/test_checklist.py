@@ -31,6 +31,7 @@ from aeropub.aip import AipCoverage, HoldingState, SectionHolding, section
 from aeropub.airac import AiracCycle
 from aeropub.checklist import (
     AmendmentRecord,
+    holdings_from_manifests,
     Checklist,
     ChecklistEntry,
     PageStatus,
@@ -437,6 +438,115 @@ def manifest(**overrides) -> dict:
     }
     payload.update(overrides)
     return payload
+
+
+class TestHoldingsFromManifests:
+    """What we hold, derived from the manifests actually loaded rather than
+    from a file somebody maintained by hand."""
+
+    def enr3(self, tmp_path: Path, rows: int = 2) -> Path:
+        (tmp_path / "enr3.txt").write_text("fixture\n", encoding="utf-8")
+        payload = {
+            "source": {
+                "source_id": "OT-EAIP",
+                "document": "AIP AA ENR 3.2",
+                "document_path": "enr3.txt",
+                "retrieved_at": READ_AT,
+            },
+            "region": "AA",
+            "segments": [
+                {"route": "UM688", "start": "A", "end": "B", "locator": f"r{i}"}
+                for i in range(rows)
+            ],
+        }
+        path = tmp_path / "enr3.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_a_manifest_with_rows_is_held_and_cited(self, tmp_path):
+        found = holdings_from_manifests(
+            "AA", {"ENR 3.2": self.enr3(tmp_path)}, cycle=CYCLE
+        )
+        holding = found.holding("AA", "ENR 3.2")
+        assert holding.state is HoldingState.HELD
+        assert holding.cycle == CYCLE
+        assert holding.source is not None
+        assert "2 rows" in holding.detail
+
+    def test_a_manifest_with_no_rows_is_failed_not_absent(self):
+        """An extract loaded and carrying nothing is something we could not
+        read, not something the State does not publish."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as raw:
+            tmp = Path(raw)
+            found = holdings_from_manifests(
+                "AA", {"ENR 3.2": self.enr3(tmp, rows=0)}
+            )
+            holding = found.holding("AA", "ENR 3.2")
+            assert holding.state is HoldingState.FAILED
+            assert "not something the State does not publish" in holding.detail
+
+    def test_covers_is_not_counted_as_rows(self, tmp_path):
+        """An extract that read three States and found nothing would otherwise
+        look like one holding three things."""
+        (tmp_path / "enr18.txt").write_text("fixture\n", encoding="utf-8")
+        payload = {
+            "source": {
+                "source_id": "OT",
+                "document": "AIP AA ENR 1.8",
+                "document_path": "enr18.txt",
+                "retrieved_at": READ_AT,
+            },
+            "covers": ["AA", "BB", "CC"],
+            "procedures": [],
+        }
+        path = tmp_path / "enr18.json"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        found = holdings_from_manifests("AA", {"ENR 1.8": path})
+        assert found.holding("AA", "ENR 1.8").state is HoldingState.FAILED
+
+    def test_an_absence_is_recorded_only_with_its_basis(self, tmp_path):
+        found = holdings_from_manifests(
+            "AA",
+            {"ENR 3.2": self.enr3(tmp_path)},
+            absent={"ENR 4.5": "the contents page does not list it"},
+        )
+        holding = found.holding("AA", "ENR 4.5")
+        assert holding.state is HoldingState.ABSENT
+        assert "contents page" in holding.detail
+
+    def test_an_absence_without_a_basis_is_refused(self, tmp_path):
+        with pytest.raises(ManifestError, match="needs its basis"):
+            holdings_from_manifests(
+                "AA", {"ENR 3.2": self.enr3(tmp_path)}, absent={"ENR 4.5": "  "}
+            )
+
+    def test_an_unknown_section_code_is_refused(self, tmp_path):
+        with pytest.raises(ManifestError, match="ENR 9.9"):
+            holdings_from_manifests("AA", {"ENR 9.9": self.enr3(tmp_path)})
+
+    def test_holdings_with_no_entity_are_refused(self, tmp_path):
+        with pytest.raises(ManifestError, match="whose holdings"):
+            holdings_from_manifests("", {"ENR 3.2": self.enr3(tmp_path)})
+
+    def test_the_derived_holdings_reconcile(self, tmp_path):
+        """The whole point: the checklist is compared against what ingestion
+        actually produced."""
+        coverage = holdings_from_manifests(
+            "AA", {"ENR 3.2": self.enr3(tmp_path)}, cycle=CYCLE
+        )
+        found = reconcile(
+            checklist(entry("ENR 3.2-1"), entity="AA"), coverage
+        )
+        assert found.findings[0].status is PageStatus.CURRENT
+
+    def test_a_stale_cycle_is_caught_against_the_checklist(self, tmp_path):
+        coverage = holdings_from_manifests(
+            "AA", {"ENR 3.2": self.enr3(tmp_path)}, cycle=EARLIER
+        )
+        found = reconcile(checklist(entry("ENR 3.2-1"), entity="AA"), coverage)
+        assert found.findings[0].status is PageStatus.STALE
 
 
 class TestLoading:

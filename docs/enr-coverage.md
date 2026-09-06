@@ -21,6 +21,14 @@ trail against what we hold. Reconciling it page by page is the difference
 between "we hold everything we fetched" and "we hold everything the State says
 exists", and only the second is a coverage claim.
 
+`holdings_from_manifests` derives what we hold from the manifests actually
+loaded, so the reconciliation runs against what ingestion produced rather than
+against a file somebody maintained by hand. A manifest with rows is held and
+cited to its own source; a manifest loaded and carrying nothing is *failed*,
+not absent — that is something we could not read, not something the State does
+not publish, and calling it an absence would be a claim about the State made
+from a claim about our own file.
+
 The finding that matters most there is not the missing page — that is visible
 in every dossier downstream. It is the **stale** one: a section held at last
 cycle renders, cites and answers, and every answer is one cycle out of date
@@ -231,9 +239,8 @@ and an FIR on the same sheet does not make one contain the other.
 
 ## Build order from here
 
-1. **Ingestion recording holdings** — `checklist.load_holdings` reads a
-   separate file today because nothing records a `SectionHolding` as it
-   parses. That file should become a by-product of ingestion.
+1. **ENR 1.1–1.3 general, VFR and IFR rules** — the flight rules themselves,
+   which nothing here reads and which GEN 1.7 differences bear on.
 3. **ENR 1.9 ATFM** — slots and CTOT are operational rather than
    published-state, and belong with a live feed rather than an AIP parser.
 

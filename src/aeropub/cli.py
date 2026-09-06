@@ -115,6 +115,7 @@ from aeropub.tables import (
 from aeropub.enroute import chart_for, chart_html
 from aeropub.checklist import (
     checklist_template,
+    holdings_from_manifests,
     holdings_template,
     load_checklist,
     load_holdings,
@@ -1320,7 +1321,40 @@ def _cmd_checklist(args: argparse.Namespace) -> int:
         return CANNOT_RUN
 
     held = load_checklist(args.checklist)
-    if not args.holdings:
+
+    derived = None
+    if args.held:
+        sections: dict[str, str] = {}
+        for spec in args.held:
+            if "=" not in spec:
+                print(
+                    f"{spec!r} is not SECTION=FILE. A manifest does not know "
+                    "which section it is — ENR 3.1 and ENR 3.2 have the same "
+                    "shape — so the section is named here.",
+                    file=sys.stderr,
+                )
+                return CANNOT_RUN
+            code, path = spec.split("=", 1)
+            sections[code.strip()] = path.strip()
+        absent: dict[str, str] = {}
+        for spec in args.absent or ():
+            if "=" not in spec:
+                print(
+                    f"{spec!r} is not SECTION=REASON. An absence is a claim "
+                    "about the State and needs its basis.",
+                    file=sys.stderr,
+                )
+                return CANNOT_RUN
+            code, reason = spec.split("=", 1)
+            absent[code.strip()] = reason.strip()
+        derived = holdings_from_manifests(
+            held.entity,
+            sections,
+            cycle=held.published_for,
+            absent=absent,
+        )
+
+    if not args.holdings and derived is None:
         # Reconciling against nothing would report every page the State
         # publishes as missing. A report where everything is a finding is a
         # report nobody reads, and it would be a finding about us rather than
@@ -1341,7 +1375,7 @@ def _cmd_checklist(args: argparse.Namespace) -> int:
             print(f"    {entry.describe()}")
         return OK
 
-    coverage = load_holdings(args.holdings)
+    coverage = load_holdings(args.holdings) if args.holdings else derived
     found = reconcile(
         held, coverage, held_supplements=args.held_supplement or ()
     )
@@ -2029,6 +2063,22 @@ def _parser() -> argparse.ArgumentParser:
     audit.add_argument(
         "--holdings", metavar="FILE",
         help="path to a record of what we hold, to reconcile against",
+    )
+    audit.add_argument(
+        "--held", action="append", metavar="SECTION=FILE",
+        help=(
+            "a manifest that was loaded for a section, repeatable — holdings "
+            "are derived from the manifests themselves rather than from a "
+            "file somebody maintains. The section is named because a manifest "
+            "does not know which one it is"
+        ),
+    )
+    audit.add_argument(
+        "--absent", action="append", metavar="SECTION=REASON",
+        help=(
+            "a section the State does not publish, with the basis for saying "
+            "so — an absence closes a question a gap would keep open"
+        ),
     )
     audit.add_argument(
         "--held-supplement", action="append", metavar="ID",

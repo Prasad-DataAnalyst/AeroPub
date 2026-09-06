@@ -68,6 +68,7 @@ from aeropub.manifest import (
 
 __all__ = [
     "AmendmentGap",
+    "holdings_from_manifests",
     "holdings_template",
     "load_holdings",
     "AmendmentRecord",
@@ -810,6 +811,112 @@ def load_holdings(path: Path | str) -> AipCoverage:
             )
         except (ValueError, TypeError) as error:
             raise ManifestError(f"{where}: {error}") from None
+
+    return AipCoverage(held)
+
+
+#: Keys in a manifest that are not the rows. ``covers`` is the list of regions
+#: an extract was read for, not a list of what it holds, and counting it as
+#: rows would make an extract that read three States and found nothing look
+#: like one holding three things.
+_NOT_ROWS = frozenset({"covers", "points"})
+
+
+def holdings_from_manifests(
+    entity: str,
+    sections: Mapping[str, Path | str],
+    *,
+    cycle: AiracCycle | None = None,
+    absent: Mapping[str, str] | None = None,
+) -> AipCoverage:
+    """Derive what we hold from the manifests that were actually loaded.
+
+    The reconciliation in :func:`reconcile` needs to know what we hold, and
+    until now that was a file somebody maintained by hand — which is a record
+    of what somebody remembered loading, not of what was loaded. This reads the
+    manifests themselves.
+
+    ``sections`` maps a section code to the manifest that was read for it. The
+    caller says which section a manifest is, because a manifest does not know:
+    ``ENR 3.1`` and ``ENR 3.2`` produce the same shape, and guessing from the
+    prose in ``source.document`` would be reading a title as a section code.
+
+    A manifest with rows is ``HELD``, cited to its own source block. A manifest
+    with none is ``FAILED``, not absent: an extract that was loaded and carried
+    nothing is something we tried to read and got nothing out of, and calling
+    that an absence would be a claim about the State made from a claim about
+    our own file. ``absent`` is how a real absence is recorded, with the basis
+    it needs.
+    """
+    who = normalise(entity)
+    if not who:
+        raise ManifestError("holdings need an entity — whose holdings these are")
+
+    held: list[SectionHolding] = []
+    for code, path in sections.items():
+        try:
+            found = section(code)
+        except (KeyError, ValueError) as error:
+            raise ManifestError(f"{code}: {error}") from None
+        path = Path(path)
+        manifest = read_manifest(path)
+        source = document_source(
+            manifest.get("source"),
+            base=path.parent,
+            where=f"{path}: source",
+            parser_id=CHECKLIST_PARSER_ID,
+        )
+        rows = [
+            value
+            for key, value in manifest.items()
+            if key not in _NOT_ROWS and isinstance(value, list)
+        ]
+        count = sum(len(group) for group in rows)
+        if count:
+            held.append(
+                SectionHolding(
+                    section=found,
+                    entity=who,
+                    state=HoldingState.HELD,
+                    cycle=cycle,
+                    source=sub_source(source, f"{path.name}, {count} rows"),
+                    detail=f"{count} rows from {path.name}",
+                )
+            )
+        else:
+            held.append(
+                SectionHolding(
+                    section=found,
+                    entity=who,
+                    state=HoldingState.FAILED,
+                    cycle=cycle,
+                    detail=(
+                        f"{path.name} was loaded and carried no rows. That is "
+                        "something we could not read, not something the State "
+                        "does not publish"
+                    ),
+                )
+            )
+
+    for code, reason in (absent or {}).items():
+        if not str(reason).strip():
+            raise ManifestError(
+                f"{code}: an absence is a claim about the State and needs its "
+                "basis — the checklist or contents page that says so"
+            )
+        try:
+            found = section(code)
+        except (KeyError, ValueError) as error:
+            raise ManifestError(f"{code}: {error}") from None
+        held.append(
+            SectionHolding(
+                section=found,
+                entity=who,
+                state=HoldingState.ABSENT,
+                cycle=cycle,
+                detail=str(reason).strip(),
+            )
+        )
 
     return AipCoverage(held)
 
