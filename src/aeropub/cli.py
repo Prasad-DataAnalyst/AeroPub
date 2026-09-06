@@ -56,6 +56,7 @@ from aeropub.planning import (
     load_planning,
     planning_template,
 )
+from aeropub.supps import SuppsRegister, load_supps, supps_template
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
@@ -844,6 +845,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.planning_template:
         print(planning_template())
         return OK
+    if args.supps_template:
+        print(supps_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -880,6 +884,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
         loaded = [load_gnss(path) for path in args.gnss]
         gnss = GnssRegister(
             services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    supps = None
+    if args.supps:
+        loaded = [load_supps(path) for path in args.supps]
+        supps = SuppsRegister(
+            procedures=tuple(p for held in loaded for p in held.procedures),
             covers=frozenset().union(*(held.covers for held in loaded)),
         )
 
@@ -939,6 +951,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             gnss=gnss,
             capabilities=capabilities,
             planning=planning,
+            supps=supps,
             item18=args.item18 or "",
             slip_minutes=args.slip_minutes,
             notice_hours=args.notice_hours,
@@ -1708,6 +1721,18 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--planning-template", dest="planning_template", action="store_true",
         help="print a blank ENR 1.10 extract",
+    )
+    sector.add_argument(
+        "--supps", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 1.8 extract, repeatable — the regional "
+            "supplementary procedures each State applies, and where it "
+            "departs from them"
+        ),
+    )
+    sector.add_argument(
+        "--supps-template", dest="supps_template", action="store_true",
+        help="print a blank ENR 1.8 extract",
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

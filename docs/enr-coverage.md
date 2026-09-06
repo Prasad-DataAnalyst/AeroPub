@@ -40,7 +40,7 @@ the checklist is the document to refetch.
 | 1.5 | Holding, approach and departure procedures | **Built** — `holding.py`. Level band, speed against the published limit or the PANS-OPS table, outbound timing, and the entry sector for an arrival heading including the 5° flexibility zone |
 | 1.6 | ATS surveillance services | Not held |
 | 1.7 | **Altimeter setting procedures** | **Built** — transition altitude and level per region, reported as boundaries in `route.py` |
-| 1.8 | Regional supplementary procedures | Not held. Where a region's SUPPS differ from ICAO, a crew planning from Annex alone is wrong |
+| 1.8 | Regional supplementary procedures | **Built** — `supps.py`. Which Doc 7030 procedures each State applies and where it departs from them, compared across the regions crossed so the finding is the boundary rather than the table |
 | 1.9 | ATFM and airspace management | Not held. Slots and CTOT are operational rather than published-state, and belong with a live feed |
 | 1.10 | Flight planning | **Built** — `planning.py`. Filing window (both ends), repetitive-plan acceptance, required Item 18 indicators against the Item 18 as filed, and the EOBT slip a delay message covers |
 | 1.11 | Addressing of flight plan messages | Not held |
@@ -61,6 +61,19 @@ would find a key inside a remark — `RMK/CONTACT OPS ON/OFF FREQ` splits at
 which is a false pass. Tokens outside the recognised set are reported, not
 acted on, because regional indicators exist and the list does not claim to be
 all of them.
+
+**What ENR 1.8 does.** Three layers govern a flight and only the bottom one is
+in the crew's manual: the Annex, the region's supplementary procedures, and the
+State's departures from those. Somebody planning from the Annex alone is not
+slightly out of date — they are reading a document that does not govern the
+airspace they are in, and nothing about the flight will say so.
+
+Six regions' procedures are a table nobody reads, so the screen reports where
+a procedure **changes** between consecutive regions: where lateral offset stops
+being permitted, where the contingency procedure is not the one used behind.
+Three absences are kept apart — both sides read and differing, both read with
+one silent (the procedure stops being published, which is an answer), and one
+side never read (which is not).
 
 ## ENR 2 — ATS airspace
 
@@ -205,13 +218,13 @@ and an FIR on the same sheet does not make one contain the other.
 
 ## Build order from here
 
-1. **ENR 1.8 regional supplementary procedures** — where a region's SUPPS
-   differ from the Annex, a crew planning from the Annex alone is wrong.
-2. **ENR 1.6 ATS surveillance services** — what service is actually provided,
+1. **ENR 1.6 ATS surveillance services** — what service is actually provided,
    which the airspace class implies and does not state.
-3. **Ingestion recording holdings** — `checklist.load_holdings` reads a
+2. **Ingestion recording holdings** — `checklist.load_holdings` reads a
    separate file today because nothing records a `SectionHolding` as it
    parses. That file should become a by-product of ingestion.
+3. **ENR 1.9 ATFM** — slots and CTOT are operational rather than
+   published-state, and belong with a live feed rather than an AIP parser.
 
 Everything above is buildable offline from published text.
 

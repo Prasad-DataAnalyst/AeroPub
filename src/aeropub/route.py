@@ -79,6 +79,7 @@ from aeropub.gnss import (
     view_gnss,
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
+from aeropub.supps import SuppsRegister, SuppsView, view_supps
 from aeropub.planning import (
     PlanKind,
     PlanningRegister,
@@ -524,6 +525,11 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    supps: SuppsView | None = None
+    """ENR 1.8 — where the regions crossed depart from the regional
+    supplementary procedures, and where that changes between them. ``None``
+    where no ENR 1.8 was supplied."""
+
     planning: PlanningView | None = None
     """ENR 1.10 — whether this plan can still be filed in each State crossed,
     which Item 18 indicators they require, and what a slip in EOBT costs.
@@ -764,6 +770,8 @@ class RouteDossier:
             lines += ["", self.gnss.render()]
         if self.planning is not None:
             lines += ["", self.planning.render()]
+        if self.supps is not None:
+            lines += ["", self.supps.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -844,6 +852,7 @@ def _open_items(
     navaids: Iterable[NavaidUse] = (),
     gnss: GnssView | None = None,
     planning: PlanningView | None = None,
+    supps: SuppsView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1194,6 +1203,54 @@ def _open_items(
                     )
                 )
 
+    if supps is not None:
+        for region in supps.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.8 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "whether the Annex governs here, or a regional "
+                        "supplementary procedure does, is not something the "
+                        "held documents answer"
+                    ),
+                )
+            )
+        for change in supps.known_changes:
+            items.append(
+                OpenItem(
+                    where=f"{change.leaving} → {change.entering}",
+                    what=f"{change.area.label} procedure changes",
+                    # A crew following the regional text is right up to the
+                    # boundary and wrong after it, and nothing en route says so.
+                    severity=(
+                        Exposure.HIGH
+                        if change.changes_applicability
+                        else Exposure.MEDIUM
+                    ),
+                    why=change.describe(),
+                )
+            )
+        for change in supps.one_sided:
+            items.append(
+                OpenItem(
+                    where=f"{change.leaving} → {change.entering}",
+                    what=f"{change.area.label} published on one side only",
+                    severity=Exposure.MEDIUM,
+                    why=change.describe(),
+                )
+            )
+        for change in supps.unspeakable_boundaries:
+            items.append(
+                OpenItem(
+                    where=f"{change.leaving} → {change.entering}",
+                    what=f"{change.area.label} — one side never read",
+                    severity=Exposure.UNKNOWN,
+                    why=change.describe(),
+                )
+            )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -1235,6 +1292,7 @@ def build_route_dossier(
     gnss: GnssRegister | None = None,
     capabilities: Iterable[ApproachCapability] = (),
     planning: PlanningRegister | None = None,
+    supps: SuppsRegister | None = None,
     item18: str = "",
     slip_minutes: float | None = None,
     notice_hours: float | None = None,
@@ -1332,6 +1390,10 @@ def build_route_dossier(
         else None
     )
 
+    supps_view = (
+        view_supps(supps, regions=regions) if supps is not None else None
+    )
+
     aids: tuple[NavaidUse, ...] = ()
     if navaids is not None and expansion is not None:
         # Only the points the route actually names. Screening every aid in the
@@ -1387,6 +1449,7 @@ def build_route_dossier(
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
             airspace_view, hazard_screen, aids, gnss_view, planning_view,
+            supps_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1400,4 +1463,5 @@ def build_route_dossier(
         navaids=aids,
         gnss=gnss_view,
         planning=planning_view,
+        supps=supps_view,
     )
