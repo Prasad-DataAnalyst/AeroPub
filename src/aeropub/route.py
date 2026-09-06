@@ -52,7 +52,12 @@ from datetime import date, datetime, timezone
 from typing import Iterable
 
 from aeropub.aip import AipCoverage
-from aeropub.airspace import AirspaceStructure, AirspaceView, view_airspace
+from aeropub.airspace import (
+    AirspaceClass,
+    AirspaceStructure,
+    AirspaceView,
+    view_airspace,
+)
 from aeropub.ats import (
     AtsStructure,
     FiledRoute,
@@ -80,6 +85,11 @@ from aeropub.gnss import (
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
 from aeropub.supps import SuppsRegister, SuppsView, view_supps
+from aeropub.surveillance import (
+    SurveillanceRegister,
+    SurveillanceView,
+    view_surveillance,
+)
 from aeropub.planning import (
     PlanKind,
     PlanningRegister,
@@ -525,6 +535,11 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    surveillance: SurveillanceView | None = None
+    """ENR 1.6 — how separation is actually provided in each region crossed,
+    and where the plan falls below the coverage the State publishes. ``None``
+    where no ENR 1.6 was supplied."""
+
     supps: SuppsView | None = None
     """ENR 1.8 — where the regions crossed depart from the regional
     supplementary procedures, and where that changes between them. ``None``
@@ -772,6 +787,8 @@ class RouteDossier:
             lines += ["", self.planning.render()]
         if self.supps is not None:
             lines += ["", self.supps.render()]
+        if self.surveillance is not None:
+            lines += ["", self.surveillance.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -853,6 +870,7 @@ def _open_items(
     gnss: GnssView | None = None,
     planning: PlanningView | None = None,
     supps: SuppsView | None = None,
+    surveillance: SurveillanceView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1251,6 +1269,45 @@ def _open_items(
                 )
             )
 
+    if surveillance is not None:
+        for region in surveillance.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.6 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "whether separation here is provided on a display or "
+                        "procedurally is not something the held documents "
+                        "answer"
+                    ),
+                )
+            )
+        for gap in surveillance.gaps:
+            items.append(
+                OpenItem(
+                    where=gap.region,
+                    what="planned below the published surveillance coverage",
+                    # Not a defect and not a refusal. The class is unchanged
+                    # and the separation is procedural, which is a different
+                    # operation nothing en route announces.
+                    severity=Exposure.MEDIUM,
+                    why=gap.describe(),
+                )
+            )
+        for region in surveillance.unpublished_coverage:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="no surveillance coverage figure published",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "read, and the column is blank. That is not coverage "
+                        "throughout"
+                    ),
+                )
+            )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -1293,6 +1350,7 @@ def build_route_dossier(
     capabilities: Iterable[ApproachCapability] = (),
     planning: PlanningRegister | None = None,
     supps: SuppsRegister | None = None,
+    surveillance: SurveillanceRegister | None = None,
     item18: str = "",
     slip_minutes: float | None = None,
     notice_hours: float | None = None,
@@ -1394,6 +1452,31 @@ def build_route_dossier(
         view_supps(supps, regions=regions) if supps is not None else None
     )
 
+    # The class ENR 2 publishes is what makes a surveillance gap land: Class A
+    # at a level with no coverage is still Class A. Taken from the volumes the
+    # airspace view did not rule out, so it is the class at the planned level
+    # rather than the one that shares the region's name.
+    classes = (
+        {
+            volume.designator: volume.airspace_class.value
+            for volume in airspace_view.volumes
+            if volume.kind.is_region
+            and volume.airspace_class is not AirspaceClass.UNCLASSIFIED
+        }
+        if airspace_view is not None
+        else {}
+    )
+    surveillance_view = (
+        view_surveillance(
+            surveillance,
+            regions=regions,
+            planned_ft=route.planned_level_ft,
+            classes=classes,
+        )
+        if surveillance is not None
+        else None
+    )
+
     aids: tuple[NavaidUse, ...] = ()
     if navaids is not None and expansion is not None:
         # Only the points the route actually names. Screening every aid in the
@@ -1449,7 +1532,7 @@ def build_route_dossier(
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
             airspace_view, hazard_screen, aids, gnss_view, planning_view,
-            supps_view,
+            supps_view, surveillance_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1464,4 +1547,5 @@ def build_route_dossier(
         gnss=gnss_view,
         planning=planning_view,
         supps=supps_view,
+        surveillance=surveillance_view,
     )

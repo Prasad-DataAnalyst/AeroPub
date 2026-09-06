@@ -57,6 +57,11 @@ from aeropub.planning import (
     planning_template,
 )
 from aeropub.supps import SuppsRegister, load_supps, supps_template
+from aeropub.surveillance import (
+    SurveillanceRegister,
+    load_surveillance,
+    surveillance_template,
+)
 from aeropub.airac import AiracCycle, current_cycle, cycle_for, cycles_in_year
 from aeropub.entities import aerodrome_of
 from aeropub.api import dumps
@@ -848,6 +853,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.supps_template:
         print(supps_template())
         return OK
+    if args.surveillance_template:
+        print(surveillance_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -883,6 +891,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.gnss:
         loaded = [load_gnss(path) for path in args.gnss]
         gnss = GnssRegister(
+            services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    surveillance = None
+    if args.surveillance:
+        loaded = [load_surveillance(path) for path in args.surveillance]
+        surveillance = SurveillanceRegister(
             services=tuple(s for held in loaded for s in held.services),
             covers=frozenset().union(*(held.covers for held in loaded)),
         )
@@ -952,6 +968,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             capabilities=capabilities,
             planning=planning,
             supps=supps,
+            surveillance=surveillance,
             item18=args.item18 or "",
             slip_minutes=args.slip_minutes,
             notice_hours=args.notice_hours,
@@ -1733,6 +1750,17 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--supps-template", dest="supps_template", action="store_true",
         help="print a blank ENR 1.8 extract",
+    )
+    sector.add_argument(
+        "--surveillance", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 1.6 extract, repeatable — how separation is "
+            "provided, from what level, and what carriage is mandated"
+        ),
+    )
+    sector.add_argument(
+        "--surveillance-template", dest="surveillance_template",
+        action="store_true", help="print a blank ENR 1.6 extract",
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

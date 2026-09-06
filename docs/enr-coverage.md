@@ -38,7 +38,7 @@ the checklist is the document to refetch.
 | 1.3 | Instrument flight rules | Not held |
 | 1.4 | ATS airspace classification | **Built** — `airspace.py`, `AirspaceClass`. What each class answers about clearance, separation and VFR |
 | 1.5 | Holding, approach and departure procedures | **Built** — `holding.py`. Level band, speed against the published limit or the PANS-OPS table, outbound timing, and the entry sector for an arrival heading including the 5° flexibility zone |
-| 1.6 | ATS surveillance services | Not held |
+| 1.6 | ATS surveillance services | **Built** — `surveillance.py`. What surveillance the State has, what service it supports, from what level, and what carriage it mandates — cross-checked against the planned level |
 | 1.7 | **Altimeter setting procedures** | **Built** — transition altitude and level per region, reported as boundaries in `route.py` |
 | 1.8 | Regional supplementary procedures | **Built** — `supps.py`. Which Doc 7030 procedures each State applies and where it departs from them, compared across the regions crossed so the finding is the boundary rather than the table |
 | 1.9 | ATFM and airspace management | Not held. Slots and CTOT are operational rather than published-state, and belong with a live feed |
@@ -74,6 +74,19 @@ being permitted, where the contingency procedure is not the one used behind.
 Three absences are kept apart — both sides read and differing, both read with
 one silent (the procedure stops being published, which is an answer), and one
 side never read (which is not).
+
+**What ENR 1.6 does.** ENR 2 publishes a class, and a class is a promise about
+service: in Class A, ATC separates every aircraft from every other. It never
+says *by what means*. A region publishing Class A to FL660 and surveillance
+from FL200 is Class A at FL180 too, and the separation there is procedural —
+longer spacing, position reports, a controller who cannot see you. Neither
+section says so alone, so the screen takes the planned level and reports where
+it falls below the published coverage.
+
+Never as "no service": that is not what happens, and a crew reading it that way
+would be wrong in the other direction. And a blank coverage column is not
+coverage to the ground — read-and-blank and never-read are both reported, and
+neither is "covered".
 
 ## ENR 2 — ATS airspace
 
@@ -218,9 +231,7 @@ and an FIR on the same sheet does not make one contain the other.
 
 ## Build order from here
 
-1. **ENR 1.6 ATS surveillance services** — what service is actually provided,
-   which the airspace class implies and does not state.
-2. **Ingestion recording holdings** — `checklist.load_holdings` reads a
+1. **Ingestion recording holdings** — `checklist.load_holdings` reads a
    separate file today because nothing records a `SectionHolding` as it
    parses. That file should become a by-product of ingestion.
 3. **ENR 1.9 ATFM** — slots and CTOT are operational rather than
