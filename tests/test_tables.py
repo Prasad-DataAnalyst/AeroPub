@@ -23,6 +23,7 @@ import pytest
 from aeropub.tables import (
     Cell,
     ColumnError,
+    ColumnRef,
     Table,
     TableError,
     map_rows,
@@ -165,11 +166,33 @@ class TestReading:
         )[0]
         assert table.grid[0][0] == "UM688"
 
-    def test_markup_inside_a_cell_becomes_spaces(self):
+    def test_a_line_break_inside_a_cell_is_kept_as_structure(self):
+        """An AIP uses it structurally: ENR 5.1 writes the upper limit on one
+        line and the lower on the next, in one cell. Flattening the pair into
+        "15000 SFC" loses which is which."""
         table = read_tables(
-            "<table><tr><td>ALSEM<br/>compulsory</td></tr></table>"
+            "<table><tr><td>15000<br/>SFC</td></tr></table>"
         )[0]
-        assert table.grid[0][0] == "ALSEM compulsory"
+        assert table.grid[0][0] == "15000\nSFC"
+
+    def test_a_newline_in_the_source_is_not_a_line_break(self):
+        """An AIP wraps a boundary description across source lines for
+        readability. Treating that as structure cuts the description in half at
+        whatever column the author's editor used."""
+        table = read_tables(
+            "<table><tr><td>OTD-31<br/>290000N 0493000E - 293000N 0500000E -\n"
+            "    291500N 0503000E - thence to 290000N 0493000E</td></tr></table>"
+        )[0]
+        lines = table.grid[0][0].split("\n")
+        assert len(lines) == 2
+        assert lines[1].endswith("thence to 290000N 0493000E")
+        assert "291500N" in lines[1]
+
+    def test_a_tab_or_run_of_spaces_is_not_a_line_break_either(self):
+        table = read_tables(
+            "<table><tr><td>ALSEM\t\t   MIDLE</td></tr></table>"
+        )[0]
+        assert table.grid[0][0] == "ALSEM MIDLE"
 
     def test_script_and_style_never_reach_a_cell(self):
         table = read_tables(
@@ -216,10 +239,14 @@ class TestReading:
 
 class TestColumns:
     def test_a_header_is_matched_exactly(self):
-        assert resolve_columns(enr3(), {"route": "Route"}) == {"route": 0}
+        assert resolve_columns(enr3(), {"route": "Route"}) == {
+            "route": ColumnRef(column=0)
+        }
 
     def test_case_and_spacing_do_not_matter(self):
-        assert resolve_columns(enr3(), {"mea_ft": "  mea "}) == {"mea_ft": 3}
+        assert resolve_columns(enr3(), {"mea_ft": "  mea "}) == {
+            "mea_ft": ColumnRef(column=3)
+        }
 
     def test_a_near_miss_is_refused_rather_than_scored(self):
         """MEA and MAA differ by one letter and twenty thousand feet."""
@@ -232,12 +259,12 @@ class TestColumns:
 
     def test_a_column_index_is_accepted(self):
         assert resolve_columns(enr3(), {"route": 0, "mea_ft": 3}) == {
-            "route": 0,
-            "mea_ft": 3,
+            "route": ColumnRef(column=0),
+            "mea_ft": ColumnRef(column=3),
         }
 
     def test_an_index_as_text_is_accepted(self):
-        assert resolve_columns(enr3(), {"route": "0"}) == {"route": 0}
+        assert resolve_columns(enr3(), {"route": "0"}) == {"route": ColumnRef(0)}
 
     def test_an_index_outside_the_table_is_refused(self):
         with pytest.raises(ColumnError, match="outside the table"):
@@ -250,6 +277,48 @@ class TestColumns:
         )[0]
         with pytest.raises(ColumnError, match="ambiguous"):
             resolve_columns(table, {"level": "Level"})
+
+    def test_a_line_within_a_cell_can_be_addressed(self):
+        """ENR 5.1 puts the upper limit above the lower in one cell."""
+        table = read_tables(
+            "<table><tr><th>Area</th><th>Limits</th></tr>"
+            "<tr><td>OTD-31</td><td>15000<br/>SFC</td></tr></table>"
+        )[0]
+        rows = map_rows(table, {"upper": "Limits:0", "lower": "Limits:1"})
+        assert rows[0]["upper"] == "15000"
+        assert rows[0]["lower"] == "SFC"
+
+    def test_a_line_can_be_addressed_by_column_index_too(self):
+        table = read_tables(
+            "<table><tr><td>OTD-31</td><td>15000<br/>SFC</td></tr></table>"
+        )[0]
+        rows = map_rows(table, {"upper": "1:0", "lower": "1:1"})
+        assert (rows[0]["upper"], rows[0]["lower"]) == ("15000", "SFC")
+
+    def test_a_cell_with_fewer_lines_answers_nothing_not_the_wrong_line(self):
+        """Some areas publish one limit and some publish two, and the second
+        line of a one-line cell is not the first line."""
+        table = read_tables(
+            "<table><tr><th>Area</th><th>Limits</th></tr>"
+            "<tr><td>OTP-1</td><td>UNL</td></tr></table>"
+        )[0]
+        rows = map_rows(table, {"area": "Area", "lower": "Limits:1"})
+        assert rows[0]["area"] == "OTP-1"
+        assert rows[0]["lower"] == ""
+
+    def test_without_a_line_the_whole_cell_comes_back_joined(self):
+        table = read_tables(
+            "<table><tr><th>Limits</th></tr><tr><td>15000<br/>SFC</td></tr></table>"
+        )[0]
+        assert map_rows(table, {"limits": "Limits"})[0]["limits"] == "15000 SFC"
+
+    def test_a_header_spanning_lines_is_still_one_name(self):
+        table = read_tables(
+            "<table><tr><th>Upper limit<br/>Lower limit</th></tr>"
+            "<tr><td>UNL</td></tr></table>"
+        )[0]
+        assert table.headers == ("Upper limit Lower limit",)
+        assert resolve_columns(table, {"x": "Upper limit Lower limit"})["x"].column == 0
 
     def test_a_table_with_no_columns_is_refused(self):
         with pytest.raises(TableError, match="no columns"):

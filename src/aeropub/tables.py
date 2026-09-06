@@ -77,6 +77,7 @@ from typing import Iterable, Mapping, Sequence
 __all__ = [
     "Cell",
     "ColumnError",
+    "ColumnRef",
     "Table",
     "TableError",
     "map_rows",
@@ -88,7 +89,9 @@ __all__ = [
 #: Tags whose text is never part of a cell.
 _IGNORED = {"script", "style"}
 
-#: Tags that mean a line break inside a cell rather than a space.
+#: Tags that end a line inside a cell. An AIP uses them structurally — ENR 5.1
+#: writes the upper limit on one line and the lower on the next, in one cell —
+#: so they become newlines and the lines stay addressable.
 _BREAKS = {"br", "p", "div", "li", "tr"}
 
 
@@ -110,9 +113,25 @@ class Cell:
     header: bool = False
 
 
+#: Marks a line break the *markup* asked for, as opposed to a newline that
+#: happens to be in the source. They are not the same thing: an AIP wraps a
+#: boundary description across source lines for readability, and treating that
+#: as structure would cut the description in half.
+_BREAK = "\x00"
+
+
 def _normalise(text: str) -> str:
-    """Collapse whitespace, including the non-breaking kind AIPs are full of."""
-    return " ".join(str(text).replace("\xa0", " ").split())
+    """Collapse whitespace, keeping only the line breaks the markup asked for.
+
+    Inside a cell a ``<br/>`` is structure: ENR 5.1 writes the upper limit on
+    one line and the lower on the next, and flattening the pair into
+    "15000 SFC" loses which is which. A newline in the *source* is not
+    structure — it is how the file was wrapped — and treating it as one cuts a
+    boundary description in half at whatever column the author's editor used.
+    """
+    body = str(text).replace("\xa0", " ")
+    kept = [" ".join(part.split()) for part in body.split(_BREAK)]
+    return "\n".join(part for part in kept if part)
 
 
 class _TableReader(HTMLParser):
@@ -162,11 +181,11 @@ class _TableReader(HTMLParser):
             top["cell"] = {"parts": [], "colspan": 1, "rowspan": 1, "header": False,
                            "caption": True}
         elif tag in _BREAKS and top["cell"] is not None:
-            top["cell"]["parts"].append(" ")
+            top["cell"]["parts"].append(_BREAK)
 
     def handle_startendtag(self, tag: str, attrs) -> None:
         if tag in _BREAKS and self._open and self._open[-1]["cell"] is not None:
-            self._open[-1]["cell"]["parts"].append(" ")
+            self._open[-1]["cell"]["parts"].append(_BREAK)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in _IGNORED:
@@ -286,7 +305,7 @@ class Table:
             for part in parts:
                 if part not in seen:
                     seen.append(part)
-            columns.append(" ".join(seen))
+            columns.append(" ".join(" ".join(part.split("\n")) for part in seen))
         return tuple(columns)
 
     @property
@@ -388,12 +407,51 @@ def read_tables(html: str) -> tuple[Table, ...]:
 
 
 def _key(text: str) -> str:
-    return _normalise(text).casefold()
+    return " ".join(_normalise(text).split()).casefold()
+
+
+@dataclass(frozen=True, slots=True)
+class ColumnRef:
+    """A column, and optionally one line within its cells.
+
+    An AIP writes two values in one cell, one per line: ENR 5.1 puts the upper
+    limit above the lower. ``line`` addresses one of them, and without it the
+    whole cell comes back with its lines joined by a space.
+    """
+
+    column: int
+    line: int | None = None
+
+    def read(self, cell: str) -> str:
+        """The part of the cell this reference names."""
+        lines = [part for part in str(cell).split("\n") if part]
+        if self.line is None:
+            return " ".join(lines)
+        # A row whose cell has fewer lines than the others is answered with
+        # nothing rather than with the wrong line. Some areas publish one
+        # limit and some publish two.
+        return lines[self.line] if 0 <= self.line < len(lines) else ""
+
+
+def _split_line(wanted: str) -> tuple[str, int | None]:
+    """Split ``Header:0`` or ``3:1`` into the column and the line.
+
+    Only the part after the *last* colon counts, and only if it is a bare
+    integer, so a header that itself contains a colon still resolves — as long
+    as it does not end in one followed by digits, which no AIP header does.
+    """
+    text = str(wanted).strip()
+    if ":" not in text:
+        return text, None
+    head, _, tail = text.rpartition(":")
+    if head and re.fullmatch(r"\d+", tail.strip()):
+        return head.strip(), int(tail)
+    return text, None
 
 
 def resolve_columns(
     table: Table, mapping: Mapping[str, str | int]
-) -> dict[str, int]:
+) -> dict[str, ColumnRef]:
     """Turn ``field -> header or index`` into ``field -> column``.
 
     Exact after collapsing whitespace and case, or an index. No fuzzy match:
@@ -407,18 +465,21 @@ def resolve_columns(
     for column, header in enumerate(table.headers):
         by_header.setdefault(_key(header), []).append(column)
 
-    resolved: dict[str, int] = {}
-    for field_name, wanted in mapping.items():
-        if isinstance(wanted, int) or (
-            isinstance(wanted, str) and re.fullmatch(r"-?\d+", wanted.strip())
-        ):
+    resolved: dict[str, ColumnRef] = {}
+    for field_name, raw in mapping.items():
+        if isinstance(raw, int):
+            wanted, line = str(raw), None
+        else:
+            wanted, line = _split_line(str(raw))
+
+        if re.fullmatch(r"-?\d+", wanted.strip()):
             column = int(wanted)
             if not 0 <= column < table.width:
                 raise ColumnError(
                     f"table {table.index}: column {column} for {field_name!r} is "
                     f"outside the table, which has {table.width} columns"
                 )
-            resolved[field_name] = column
+            resolved[field_name] = ColumnRef(column=column, line=line)
             continue
 
         found = by_header.get(_key(str(wanted)), [])
@@ -435,7 +496,7 @@ def resolve_columns(
                 f"({', '.join(str(c) for c in found)}), so {field_name!r} is "
                 "ambiguous. Give a column index."
             )
-        resolved[field_name] = found[0]
+        resolved[field_name] = ColumnRef(column=found[0], line=line)
     return resolved
 
 
@@ -478,8 +539,9 @@ def map_rows(
     rows: list[dict[str, str]] = []
     for offset, line in enumerate(table.body):
         row: dict[str, str] = {}
-        for field_name, column in columns.items():
-            value = line[column] if column < len(line) else ""
+        for field_name, ref in columns.items():
+            cell = line[ref.column] if ref.column < len(line) else ""
+            value = ref.read(cell)
             if not value and field_name in filled:
                 value = carried.get(field_name, "")
             if value and field_name in filled:

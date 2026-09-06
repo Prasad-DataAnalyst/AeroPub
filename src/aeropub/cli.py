@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -1044,6 +1045,39 @@ def _parse_mapping(text: str) -> dict[str, str]:
     return mapping
 
 
+#: Splitting a cell on these turns "ALSEM, UM688" into two values. Semicolons
+#: because an AIP uses both, and a slash because some print "ALSEM / UM688".
+_LIST_SEPARATORS = re.compile(r"\s*[;,/]\s*")
+
+
+def _shape_row(row: dict[str, str], *, split: set[str]) -> dict:
+    """Give a flat row the shape the manifest loaders expect.
+
+    Two shapes exist and neither can come out of a table cell as it stands.
+    ``boundary`` is an object, because a boundary is a coordinate list or a
+    circle or a description and the loader reads all three; from a table it is
+    always the description, which `boundary.parse_boundary` then reads as far
+    as it can. And a handful of fields are lists — what an aid serves, what a
+    State approves — which a cell writes as one string.
+
+    Everything else stays exactly the text the AIP printed.
+    """
+    shaped: dict[str, object] = {}
+    for field_name, value in row.items():
+        if field_name == "boundary":
+            # A table cell holds the printed description. parse_boundary reads
+            # the coordinates and arcs out of it and leaves the rest as the
+            # narrative edges it is.
+            shaped["boundary"] = {"described_as": value}
+        elif field_name in split:
+            shaped[field_name] = [
+                part for part in _LIST_SEPARATORS.split(value) if part
+            ]
+        else:
+            shaped[field_name] = value
+    return shaped
+
+
 def _cmd_tables(args: argparse.Namespace) -> int:
     """Read an AIP page's tables, and turn one into a manifest."""
     page = Path(args.page)
@@ -1115,6 +1149,9 @@ def _cmd_tables(args: argparse.Namespace) -> int:
         print(str(error), file=sys.stderr)
         return CANNOT_RUN
 
+    split = {f.strip() for f in (args.split or "").split(",") if f.strip()}
+    shaped = [_shape_row(dict(r), split=split) for r in rows]
+
     key, section = _MANIFEST_ROWS[args.kind]
     payload = {
         "source": {
@@ -1125,7 +1162,7 @@ def _cmd_tables(args: argparse.Namespace) -> int:
             "original_url": args.url or "",
         },
         "region": args.region or "",
-        key: [dict(r) for r in rows],
+        key: shaped,
     }
     text = json.dumps(payload, indent=2)
     if args.out:
@@ -1796,6 +1833,13 @@ def _parser() -> argparse.ArgumentParser:
             "the leg arriving at that point (second) or leaving it (first). "
             "Both conventions are published; check the page, because guessing "
             "shifts every value by one leg"
+        ),
+    )
+    grid.add_argument(
+        "--split", default="", metavar="FIELDS",
+        help=(
+            "fields whose cell holds a list — what an aid serves, what a "
+            "State approves. Split on comma, semicolon or slash"
         ),
     )
     grid.add_argument("--locator", default="", metavar="SECTION",

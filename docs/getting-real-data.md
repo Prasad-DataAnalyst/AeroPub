@@ -130,6 +130,31 @@ mapping names and the table does not have is an error you fix in ten seconds;
 a scored near-miss is a manifest that is correct in every respect except the
 numbers.
 
+**One cell, two values.** ENR 5.1 writes the upper limit above the lower in a
+single cell, and puts the identification, the name and the lateral limits in
+another. A `<br/>` is structure, so lines stay addressable — `Limits:0` is the
+upper, `Limits:1` the lower, and `0:1` is the second line of column zero:
+
+```
+python -m aeropub tables ENR-5.1-en-GB.html --table 0 --kind hazards \
+  --map "designator=0:0,boundary=0:1,upper=1:0,lower=1:1,remarks=2" \
+  --locator "ENR 5.1" --region OTDF --out enr5.json
+```
+
+A newline in the *source* is not a line break — an AIP wraps a boundary
+description across source lines for readability, and treating that as
+structure would cut it in half at whatever column the author's editor used.
+Only what the markup asks for counts.
+
+A header containing a comma — and AIP headers are full of them, like
+*Identification, name and lateral limits* — is addressed by index instead,
+since the mapping itself is comma-separated.
+
+Whatever lands in `boundary` is emitted as the description, and
+`boundary.parse_boundary` reads the coordinates, arcs and circles out of it.
+What it cannot read stays a narrative edge, so *thence along the coastline*
+becomes a visible gap and the area is drawn open.
+
 Cells spanning rows are expanded before any of this. An ENR 3 table writes the
 route designator once over its segments, and a reader that walks the markup in
 order shifts every later row one column left — the next segment's route becomes
