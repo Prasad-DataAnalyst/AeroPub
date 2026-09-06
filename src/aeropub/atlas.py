@@ -46,6 +46,7 @@ platform could produce. Airspace is entered on a clearance and a chart.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable, Mapping, Sequence
@@ -60,8 +61,10 @@ from aeropub.geo import (
     Bounds,
     Position,
     bounds_of,
+    great_circle_nm,
     great_circle_path,
     mercator,
+    unmercator,
 )
 from aeropub.hazards import Hazard, HazardRegister
 from aeropub.navaids import NavaidRegister
@@ -85,6 +88,42 @@ LEG_STEPS = 12
 def _count(n: int, singular: str, plural: str = "") -> str:
     """A count that reads like a person wrote it."""
     return f"{n} {singular if n == 1 else (plural or singular + 's')}"
+
+
+#: Graticule spacings, coarsest first, in degrees. Down to ten minutes, which
+#: is as fine as a chart of a route structure is ever read.
+_SPACINGS = (30.0, 10.0, 5.0, 2.0, 1.0, 0.5, 1.0 / 6.0)
+
+
+def _spacing_for(span_deg: float, *, want: int = 6) -> float:
+    """The graticule spacing that puts about ``want`` lines across the window."""
+    for spacing in _SPACINGS:
+        if span_deg / spacing >= want:
+            return spacing
+    return _SPACINGS[-1]
+
+
+def _label_degrees(value: float, *, is_latitude: bool) -> str:
+    """A graticule label in the form a chart prints."""
+    hemisphere = ("N" if value >= 0 else "S") if is_latitude else (
+        "E" if value >= 0 else "W"
+    )
+    size = abs(value)
+    degrees = int(size)
+    minutes = round((size - degrees) * 60.0)
+    if minutes == 60:
+        degrees, minutes = degrees + 1, 0
+    if minutes:
+        return f"{degrees}\u00b0{minutes:02d}'{hemisphere}"
+    return f"{degrees}\u00b0{hemisphere}"
+
+
+def _round_distance(nm: float) -> float:
+    """A scale-bar length a person would recognise."""
+    for step in (1000.0, 500.0, 250.0, 200.0, 100.0, 50.0, 25.0, 20.0, 10.0, 5.0, 2.0, 1.0):
+        if nm >= step:
+            return step
+    return 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -550,6 +589,43 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
     ]
 
     # Geography first and underneath, in a colour that reads as background.
+    # The graticule, first and underneath everything. Computed from the
+    # projection, so it is the one layer here that cannot be out of date.
+    south_west = unmercator(box.min_x, box.min_y)
+    north_east = unmercator(box.max_x, box.max_y)
+    out.append('<g class="at-layer" data-layer="graticule">')
+    lat_step = _spacing_for(abs(north_east.latitude - south_west.latitude))
+    lon_step = _spacing_for(abs(north_east.longitude - south_west.longitude))
+    first = math.ceil(south_west.latitude / lat_step) * lat_step
+    parallel = first
+    while parallel <= north_east.latitude + 1e-9:
+        line = [
+            Position(latitude=parallel, longitude=lon)
+            for lon in _steps(south_west.longitude, north_east.longitude, 24)
+        ]
+        out.append(f'<polyline points="{points_of(line)}" class="at-grid"/>')
+        _, gy = xy(Position(latitude=parallel, longitude=south_west.longitude))
+        out.append(
+            f'<text x="4" y="{gy - 3:.1f}" class="at-grid-label">'
+            f"{_label_degrees(parallel, is_latitude=True)}</text>"
+        )
+        parallel += lat_step
+    first = math.ceil(south_west.longitude / lon_step) * lon_step
+    meridian = first
+    while meridian <= north_east.longitude + 1e-9:
+        line = [
+            Position(latitude=lat, longitude=meridian)
+            for lat in _steps(south_west.latitude, north_east.latitude, 24)
+        ]
+        out.append(f'<polyline points="{points_of(line)}" class="at-grid"/>')
+        gx, _ = xy(Position(latitude=south_west.latitude, longitude=meridian))
+        out.append(
+            f'<text x="{gx + 3:.1f}" y="{height - 6:.1f}" class="at-grid-label">'
+            f"{_label_degrees(meridian, is_latitude=False)}</text>"
+        )
+        meridian += lon_step
+    out.append("</g>")
+
     out.append('<g class="at-layer" data-layer="basemap">')
     for line in atlas.basemap.borders:
         out.append(f'<polyline points="{points_of(line)}" class="at-border"/>')
@@ -660,8 +736,50 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
         out.append("</g>")
     out.append("</g>")
 
-    out += ["</g>", "</svg>"]
+    out.append("</g>")
+
+    # The scale bar sits outside the pan group: it describes the drawing as
+    # published, and a reader who has zoomed in has changed the drawing.
+    middle_lat = (south_west.latitude + north_east.latitude) / 2.0
+    left = Position(latitude=middle_lat, longitude=south_west.longitude)
+    right = Position(latitude=middle_lat, longitude=north_east.longitude)
+    across_nm = great_circle_nm(left, right)
+    if across_nm > 0:
+        bar_nm = _round_distance(across_nm / 4.0)
+        x0, _ = xy(left)
+        x1, _ = xy(right)
+        pixels = abs(x1 - x0) * (bar_nm / across_nm)
+        base_y = height - 18.0
+        out.append('<g class="at-scale">')
+        out.append(
+            f'<line x1="16" y1="{base_y:.1f}" x2="{16 + pixels:.1f}" '
+            f'y2="{base_y:.1f}" class="at-scale-bar"/>'
+        )
+        for tick in (16.0, 16.0 + pixels):
+            out.append(
+                f'<line x1="{tick:.1f}" y1="{base_y - 4:.1f}" x2="{tick:.1f}" '
+                f'y2="{base_y + 4:.1f}" class="at-scale-bar"/>'
+            )
+        # Named for the latitude it is true at. On Mercator the scale grows
+        # with latitude, so a bar with no latitude on it is wrong everywhere
+        # except one line the reader cannot see.
+        out.append(
+            f'<text x="16" y="{base_y - 7:.1f}" class="at-scale-label">'
+            f"{bar_nm:.0f} NM at "
+            f"{_label_degrees(middle_lat, is_latitude=True)}</text>"
+        )
+        out.append("</g>")
+
+    out.append("</svg>")
     return "\n".join(out)
+
+
+def _steps(start: float, end: float, count: int) -> list[float]:
+    """``count`` values from start to end inclusive, for drawing a curve."""
+    if count < 2:
+        return [start, end]
+    span = end - start
+    return [start + span * i / (count - 1) for i in range(count)]
 
 
 ATLAS_CSS = """
@@ -704,6 +822,15 @@ ATLAS_CSS = """
 .at-route-label { fill: var(--at-route); font-weight: 600; }
 .at-point-label { fill: var(--at-ink); }
 .at-note { font: 12px ui-sans-serif, system-ui, sans-serif; fill: var(--at-ink); }
+.at-grid { fill: none; stroke: var(--at-border); stroke-width: 0.5;
+  stroke-dasharray: 2 4; }
+.at-grid-label { font: 9px ui-monospace, SFMono-Regular, Menlo, monospace;
+  fill: var(--at-muted); paint-order: stroke; stroke: var(--at-ground);
+  stroke-width: 2.5px; }
+.at-scale-bar { stroke: var(--at-ink); stroke-width: 1.4; }
+.at-scale-label { font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+  fill: var(--at-ink); paint-order: stroke; stroke: var(--at-ground);
+  stroke-width: 3px; }
 .at-area, .at-routeg, .at-point { cursor: pointer; }
 .at-area:hover .at-fir-line, .at-area:focus-visible .at-fir-line,
 .at-area:hover .at-terminal-line, .at-area:focus-visible .at-terminal-line,
@@ -809,6 +936,7 @@ ATLAS_JS = """
 def atlas_html(atlas: Atlas) -> str:
     """The atlas as a standalone page: no library, no network, no runtime."""
     layers = (
+        ("graticule", "Grid"),
         ("basemap", "Coast"),
         ("fir", "FIR/UIR"),
         ("terminal", "TMA/CTR"),

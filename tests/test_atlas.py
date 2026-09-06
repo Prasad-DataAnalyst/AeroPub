@@ -22,6 +22,7 @@ Every designator and coordinate below is a fixture.
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -425,6 +426,63 @@ class TestNotams:
 # --------------------------------------------------------------------------
 # The drawing
 # --------------------------------------------------------------------------
+
+
+class TestOrientation:
+    """A chart a reader cannot locate themselves on is a picture."""
+
+    def test_the_graticule_is_drawn_and_labelled(self):
+        svg = atlas_svg(atlas())
+        assert 'class="at-grid"' in svg
+        labels = re.findall(r'class="at-grid-label">([^<]+)<', svg)
+        assert any(label.endswith("N") for label in labels)
+        assert any(label.endswith("E") for label in labels)
+
+    def test_the_labels_are_in_the_form_a_chart_prints(self):
+        svg = atlas_svg(atlas())
+        labels = re.findall(r'class="at-grid-label">([^<]+)<', svg)
+        assert all(re.fullmatch(r"\d+°(\d\d')?[NSEW]", label) for label in labels)
+
+    def test_the_spacing_follows_the_window(self):
+        """A sheet of one terminal area does not want thirty-degree lines."""
+        wide = atlas()
+        narrow = build_atlas(
+            airspace=AirspaceStructure(volumes=(tma(),)), structure=None
+        )
+        count = lambda svg: svg.count('class="at-grid"')
+        assert count(atlas_svg(narrow)) > 0
+        wide_labels = re.findall(
+            r'class="at-grid-label">([^<]+)<', atlas_svg(wide)
+        )
+        narrow_labels = re.findall(
+            r'class="at-grid-label">([^<]+)<', atlas_svg(narrow)
+        )
+        assert wide_labels != narrow_labels
+
+    def test_the_scale_bar_names_the_latitude_it_is_true_at(self):
+        """On Mercator the scale grows with latitude, so a bar with no
+        latitude on it is wrong everywhere except one line nobody can see."""
+        svg = atlas_svg(atlas())
+        scale = re.search(r'class="at-scale-label">([^<]+)<', svg)
+        assert scale is not None
+        assert " NM at " in scale.group(1)
+        assert scale.group(1).rstrip().endswith(("N", "S"))
+
+    def test_the_scale_bar_does_not_pan_with_the_drawing(self):
+        """It describes the drawing as published; a reader who has zoomed has
+        changed the drawing."""
+        svg = atlas_svg(atlas())
+        assert svg.index('class="at-scale"') > svg.index("</g>")
+        after = svg[svg.index('class="at-scale"') :]
+        assert "at-pan" not in after
+
+    def test_the_graticule_is_under_everything(self):
+        svg = atlas_svg(atlas())
+        order = re.findall(r'data-layer="(\w+)"', svg)
+        assert order[0] == "graticule"
+
+    def test_the_graticule_switches_like_any_layer(self):
+        assert 'data-layer="graticule"' in atlas_html(atlas())
 
 
 class TestDrawing:
