@@ -159,6 +159,24 @@ coordinate list, so ENR 5 is the part of the AIP whose geometry is usually
 |---|---|---|
 | ENR 6 | En-route charts | **Built** — `enroute.py` draws the chart *from* ENR 3: every airway with its binding level band, direction, navigation specification and controlling unit, plotted on the coordinates ENR 4 publishes. `ChartKind.ENROUTE` still reconciles a State's own chart like any other. Nothing extracts route structure from a chart, and nothing should: ENR 3 is the authority and the chart is the picture of it |
 
+## Getting a section in
+
+`tables.py` reads an AIP page's tables into the manifests the loaders take —
+`aeropub tables page.html` to list them, then `--table N --map field=Header`
+to emit one. It expands cells spanning rows first, because an ENR 3 table
+writes the route designator once over its segments and a reader that walks the
+markup in order shifts every later row one column left. It addresses lines
+within a cell, because ENR 5.1 writes the upper limit above the lower in one
+cell. And `--pair` turns a table of significant points into segments, refusing
+to guess whether a row's track and distance describe the leg arriving at that
+point or leaving it.
+
+Columns are matched exactly or by index and never scored: `MEA` and `MAA`
+differ by one letter and twenty thousand feet.
+
+See `docs/getting-real-data.md` for the whole path from a saved eAIP page to a
+drawn sheet.
+
 ## The atlas
 
 `atlas.py` puts ENR 2, 3, 4 and 5 on one sheet over a public-domain coastline
@@ -170,6 +188,17 @@ published it**. That last is how "which State" is answered. Never the country
 under the point: an FIR is not a country, they run over the high seas and are
 delegated between States, and the coastline layer is geography that is never
 asked an aeronautical question.
+
+A filed route can be drawn over it: given an Item 15 string and the ENR 3 it
+resolves against, the track follows each airway through its published points
+rather than cutting straight between the filed ones. Its length is computed
+from the published positions, labelled as computed, and withheld while any
+point on it has none.
+
+The sheet carries a graticule computed from the projection — the one layer
+that cannot be out of date — and a scale bar naming the latitude it is true
+at, because on Mercator a bar without one is wrong everywhere except a line
+the reader cannot see.
 
 Nothing on the atlas answers whether a point is inside an area. Putting a route
 and an FIR on the same sheet does not make one contain the other.
