@@ -528,7 +528,28 @@ class TestLoading:
     def test_an_unreadable_minimum_altitude_is_refused_not_rounded(self, tmp_path, document):
         payload = manifest()
         payload["segments"][0]["mea_ft"] = "see remarks"
-        with pytest.raises(ManifestError, match="not a number"):
+        with pytest.raises(ManifestError, match="left unread rather than guessed"):
+            load_ats_structure(write(tmp_path, "enr3.json", payload))
+
+    def test_vertical_limits_read_as_an_aip_prints_them(self, tmp_path, document):
+        """An ENR 3 table says FL245 as readily as ENR 2 does, and both go
+        through the same reader — two implementations would drift and only one
+        of them would be the one somebody tested."""
+        payload = manifest()
+        payload["segments"][0]["mea_ft"] = "FL245"
+        payload["segments"][0]["maa_ft"] = "FL460"
+        payload["segments"][0]["lower_limit_ft"] = "SFC"
+        held = load_ats_structure(write(tmp_path, "enr3.json", payload))
+        segment = held.segments[0]
+        assert segment.mea_ft == 24500.0
+        assert segment.maa_ft == 46000.0
+        assert segment.lower_limit_ft == 0.0
+
+    def test_a_distance_is_still_a_number_and_not_a_level(self, tmp_path, document):
+        """The level reader would take FL245 for a distance."""
+        payload = manifest()
+        payload["segments"][0]["distance_nm"] = "FL245"
+        with pytest.raises(ManifestError, match="distance_nm"):
             load_ats_structure(write(tmp_path, "enr3.json", payload))
 
     def test_an_unknown_direction_is_refused(self, tmp_path, document):

@@ -89,8 +89,52 @@ python -m aeropub.eaip probe ENR-4.4-en-GB.html --state OT --name Qatar \
 
 `probe` describes the page's actual structure and drafts a reading profile
 against it. It does not guess: a section a profile cannot locate is reported as
-a miss, and a miss is a coverage gap rather than a wrong value. From that draft
-comes the table reader that emits the manifests below.
+a miss, and a miss is a coverage gap rather than a wrong value.
+
+For the tables themselves — which is most of an ENR page — `aeropub tables`
+reads them directly. List what is on the page:
+
+```
+python -m aeropub tables ENR-3.2-en-GB.html
+```
+
+It prints every table with its size and its column headers, including the
+two-row headers an eAIP uses (`Vertical limits Upper`, `Track (°M) Fwd`). Then
+name the columns and emit a manifest:
+
+```
+python -m aeropub tables ENR-3.2-en-GB.html --table 0 --kind segments --pair \
+  --map "route=Route designator,point=Significant points,\
+distance_nm=Distance (NM),upper_limit_ft=Vertical limits Upper,\
+mea_ft=Vertical limits Lower,airspace_class=Airspace class" \
+  --attributes-from second --locator "ENR 3.2" --region OTDF \
+  --out enr3.json
+```
+
+Two flags there carry the whole risk of reading an ENR 3 table.
+
+**`--pair`** — an ENR 3 table lists one significant point per row, and a
+segment is the gap between two consecutive rows of the same route. ALSEM,
+MIDLE, KUKLA is three rows and two segments.
+
+**`--attributes-from`** — whether a row's track, distance and limits describe
+the leg *arriving* at that point or the leg *leaving* it. Both conventions are
+published, nothing can tell which a State used, and guessing puts every
+distance on the neighbouring segment: an error of one leg, invisible in the
+output, wrong the whole length of the route. Check the page. The answer is
+recorded on every row it produces.
+
+Columns are matched exactly or by index. There is no fuzzy match, because
+`MEA` and `MAA` differ by one letter and twenty thousand feet. A header the
+mapping names and the table does not have is an error you fix in ten seconds;
+a scored near-miss is a manifest that is correct in every respect except the
+numbers.
+
+Cells spanning rows are expanded before any of this. An ENR 3 table writes the
+route designator once over its segments, and a reader that walks the markup in
+order shifts every later row one column left — the next segment's route becomes
+a waypoint and its minimum altitude becomes a designator. That output parses,
+loads and draws.
 
 ## What the manifests look like
 

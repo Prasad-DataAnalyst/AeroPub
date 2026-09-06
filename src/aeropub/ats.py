@@ -63,6 +63,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from aeropub.airspace import read_limit
 from aeropub.entities import named, normalise
 from aeropub.facts import SourceRef
 from aeropub.geo import CoordinateError, Position, parse_coordinate
@@ -1162,13 +1163,18 @@ def load_ats_structure(path: Path | str) -> AtsStructure:
                     start=str(row.get("start", "")),
                     end=str(row.get("end", "")),
                     source=sub_source(document, locator),
-                    mea_ft=_number(row.get("mea_ft"), where=where, field="mea_ft"),
-                    moca_ft=_number(row.get("moca_ft"), where=where, field="moca_ft"),
-                    maa_ft=_number(row.get("maa_ft"), where=where, field="maa_ft"),
-                    upper_limit_ft=_number(
+                    # Vertical limits, read the way an AIP prints them: an
+                    # ENR 3 table says FL245 and SFC as readily as ENR 2 does,
+                    # and read_limit is the one implementation of that.
+                    mea_ft=read_limit(row.get("mea_ft"), where=where, field="mea_ft"),
+                    moca_ft=read_limit(
+                        row.get("moca_ft"), where=where, field="moca_ft"
+                    ),
+                    maa_ft=read_limit(row.get("maa_ft"), where=where, field="maa_ft"),
+                    upper_limit_ft=read_limit(
                         row.get("upper_limit_ft"), where=where, field="upper_limit_ft"
                     ),
-                    lower_limit_ft=_number(
+                    lower_limit_ft=read_limit(
                         row.get("lower_limit_ft"), where=where, field="lower_limit_ft"
                     ),
                     direction=_direction(row.get("direction", "both"), where=where),

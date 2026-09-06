@@ -98,6 +98,13 @@ from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
 from aeropub.atlas import atlas_html, build_atlas
+from aeropub.tables import (
+    ColumnError,
+    TableError,
+    map_rows,
+    pair_points,
+    read_tables,
+)
 from aeropub.enroute import chart_for, chart_html
 from aeropub.checklist import (
     checklist_template,
@@ -1000,6 +1007,139 @@ def _cmd_store(args: argparse.Namespace) -> int:
         store.close()
 
 
+#: What each manifest calls its list of rows, so one command can emit any of
+#: them. The loaders are the authority on the field names inside a row; this is
+#: only the wrapper around them.
+_MANIFEST_ROWS = {
+    "segments": ("segments", "ENR 3"),
+    "points": ("points", "ENR 4.4"),
+    "navaids": ("navaids", "ENR 4.1"),
+    "volumes": ("volumes", "ENR 2"),
+    "hazards": ("hazards", "ENR 5"),
+    "services": ("services", "ENR 4.3"),
+    "rules": ("rules", "ENR 1.10"),
+    "pages": ("pages", "GEN 0.4"),
+}
+
+
+def _parse_mapping(text: str) -> dict[str, str]:
+    """``field=Header,field=3`` into a mapping.
+
+    Split on commas outside nothing clever: a header containing a comma is
+    given by index instead. Better a caller who has to count columns once than
+    a quoting rule nobody remembers.
+    """
+    mapping: dict[str, str] = {}
+    for part in str(text or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise ValueError(
+                f"{part!r} is not field=Header. Give each column as "
+                "field=Header or field=index, separated by commas."
+            )
+        field_name, wanted = part.split("=", 1)
+        mapping[field_name.strip()] = wanted.strip()
+    return mapping
+
+
+def _cmd_tables(args: argparse.Namespace) -> int:
+    """Read an AIP page's tables, and turn one into a manifest."""
+    page = Path(args.page)
+    try:
+        html = page.read_text(encoding="utf-8", errors="replace")
+    except OSError as error:
+        print(f"{page}: {error}", file=sys.stderr)
+        return CANNOT_RUN
+
+    tables = read_tables(html)
+    if not tables:
+        print(f"{page}: no tables found", file=sys.stderr)
+        return CANNOT_RUN
+
+    if args.table is None:
+        print(f"{page}: {len(tables)} tables")
+        for table in tables:
+            print(f"\n  {table.describe()}")
+            if table.headers:
+                for column, header in enumerate(table.headers):
+                    print(f"    [{column}] {header or '(unheaded)'}")
+            else:
+                print("    no header row; address columns by index")
+                if table.body:
+                    print("    first row: " + " | ".join(table.body[0][:8]))
+            if table.ragged:
+                print(
+                    "    !! ragged rows; nothing will be emitted from this "
+                    "table until they are explained"
+                )
+        print(
+            "\n  Choose one with --table N and map its columns with "
+            "--map field=Header,..."
+        )
+        return OK
+
+    if not 0 <= args.table < len(tables):
+        print(
+            f"{page}: table {args.table} does not exist; there are "
+            f"{len(tables)}",
+            file=sys.stderr,
+        )
+        return CANNOT_RUN
+    table = tables[args.table]
+
+    if not args.map:
+        print("give --map field=Header,... to say which column is which",
+              file=sys.stderr)
+        return CANNOT_RUN
+    try:
+        mapping = _parse_mapping(args.map)
+        rows = map_rows(
+            table,
+            mapping,
+            locator=args.locator or "",
+            fill_down=[f.strip() for f in (args.fill_down or "").split(",") if f.strip()],
+            skip_blank=[f.strip() for f in (args.require or "").split(",") if f.strip()],
+        )
+        if args.pair:
+            # An ENR 3 table lists significant points; a segment is the gap
+            # between two consecutive rows of the same route.
+            rows = pair_points(
+                rows,
+                group=args.group,
+                point=args.point,
+                attributes_from=args.attributes_from,
+            )
+    except (ColumnError, TableError, ValueError) as error:
+        print(str(error), file=sys.stderr)
+        return CANNOT_RUN
+
+    key, section = _MANIFEST_ROWS[args.kind]
+    payload = {
+        "source": {
+            "source_id": args.source_id or "",
+            "document": args.document or section,
+            "document_path": args.document_path or page.name,
+            "retrieved_at": args.retrieved_at or "",
+            "original_url": args.url or "",
+        },
+        "region": args.region or "",
+        key: [dict(r) for r in rows],
+    }
+    text = json.dumps(payload, indent=2)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"{len(rows)} rows written to {args.out}")
+        print(
+            "  Fill in source.retrieved_at and source.source_id before "
+            "loading: a row nobody can date is a row nobody can supersede."
+        )
+    else:
+        print(text)
+    return OK
+
+
 def _cmd_atlas(args: argparse.Namespace) -> int:
     """Draw ENR 2, 3, 4 and 5 on one sheet."""
     structure = None
@@ -1594,6 +1734,80 @@ def _parser() -> argparse.ArgumentParser:
     inventory = sub.add_parser("store", help="what the fact store holds")
     inventory.add_argument("-v", "--verbose", action="store_true")
     inventory.set_defaults(handler=_cmd_store)
+
+    grid = sub.add_parser(
+        "tables",
+        help="read an AIP page's tables into a manifest",
+        description=(
+            "An eAIP page is tables, and so is a PDF once converted. This "
+            "lists them with their headers, then turns one into a manifest "
+            "the loaders read. Cells spanning rows are expanded first: an "
+            "ENR 3 table writes the route designator once over its segments, "
+            "and a reader that walks the markup in order shifts every later "
+            "row one column left."
+        ),
+    )
+    grid.add_argument("page", help="a saved AIP page (HTML)")
+    grid.add_argument(
+        "--table", type=int, default=None, metavar="N",
+        help="which table to read; omit to list them",
+    )
+    grid.add_argument(
+        "--map", default="", metavar="SPEC",
+        help="field=Header,field=index,... — exact headers, never guessed",
+    )
+    grid.add_argument(
+        "--kind", default="segments", choices=sorted(_MANIFEST_ROWS),
+        help="which manifest to emit (default segments, i.e. ENR 3)",
+    )
+    grid.add_argument(
+        "--fill-down", dest="fill_down", default="", metavar="FIELDS",
+        help=(
+            "fields to carry down where a cell is blank — for a State that "
+            "writes a designator once instead of spanning it. Never use it "
+            "for a level"
+        ),
+    )
+    grid.add_argument(
+        "--require", default="", metavar="FIELDS",
+        help="drop rows where any of these is blank, e.g. the sub-headings",
+    )
+    grid.add_argument(
+        "--pair", action="store_true",
+        help=(
+            "the table lists one significant point per row and a segment is "
+            "the gap between two — the ENR 3 case. Needs route and point in "
+            "the mapping"
+        ),
+    )
+    grid.add_argument(
+        "--group", default="route", metavar="FIELD",
+        help="with --pair, the field pairing must not cross (default route)",
+    )
+    grid.add_argument(
+        "--point", default="point", metavar="FIELD",
+        help="with --pair, the field holding the significant point",
+    )
+    grid.add_argument(
+        "--attributes-from", dest="attributes_from", default="second",
+        choices=("first", "second"),
+        help=(
+            "with --pair, whether a row's track, distance and limits describe "
+            "the leg arriving at that point (second) or leaving it (first). "
+            "Both conventions are published; check the page, because guessing "
+            "shifts every value by one leg"
+        ),
+    )
+    grid.add_argument("--locator", default="", metavar="SECTION",
+                      help="the AIP section, e.g. 'ENR 3.2', cited on every row")
+    grid.add_argument("--region", default="", help="the FIR these rows belong to")
+    grid.add_argument("--document", default="", help="what to cite this page as")
+    grid.add_argument("--document-path", dest="document_path", default="")
+    grid.add_argument("--source-id", dest="source_id", default="")
+    grid.add_argument("--retrieved-at", dest="retrieved_at", default="")
+    grid.add_argument("--url", default="", help="where the page came from")
+    grid.add_argument("--out", metavar="FILE", help="write the manifest here")
+    grid.set_defaults(handler=_cmd_tables)
 
     sheet = sub.add_parser(
         "atlas",
