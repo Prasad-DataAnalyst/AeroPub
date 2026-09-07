@@ -193,6 +193,33 @@ class TestFilterValidation:
         assert "accountability=ZFW" in url
         assert "notamNumber=10%2F108" in url
 
+    def test_a_classification_narrows_a_location_query(self):
+        """How a foreign aerodrome's NOTAM are asked for: the FAA holds
+        international NOTAM under their own classification."""
+        router = Router({"/v1/notams": (AIXM, 200, {})})
+        _client(router).notams(location="OTHH", classification="INTERNATIONAL")
+        url = router.requests[0].full_url
+        assert "location=OTHH" in url
+        assert "classification=INTERNATIONAL" in url
+
+    def test_a_classification_on_its_own_is_refused(self):
+        """The specification makes it a different operation: as the sole
+        parameter it returns a five-minute content path to the whole
+        classification, not NOTAM in the body. Returning a pointer where the
+        caller expects NOTAM is the trap."""
+        with pytest.raises(NmsConfigurationError, match="content path"):
+            _client(Router({})).notams(classification="INTERNATIONAL")
+
+    def test_a_classification_with_a_change_time_is_accepted(self):
+        from datetime import datetime, timezone
+
+        router = Router({"/v1/notams": (AIXM, 200, {})})
+        _client(router).notams(
+            classification="INTERNATIONAL",
+            last_updated=datetime(2026, 9, 7, tzinfo=timezone.utc),
+        )
+        assert "classification=INTERNATIONAL" in router.requests[0].full_url
+
     def test_a_partial_circle_is_refused(self):
         with pytest.raises(NmsConfigurationError, match="not defined by two"):
             _client(Router({})).notams(latitude=32.897, longitude=-97.037)

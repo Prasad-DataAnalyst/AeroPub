@@ -205,6 +205,27 @@ is not stored cannot be cited later.
 Expect roughly 20 000 NOTAM in the staging DOMESTIC load. A short read is
 reported as a short read, never as a successful empty pull.
 
+### One location's active NOTAM
+
+```
+python -m aeropub.faa.check --notams OTHH --classification INTERNATIONAL \
+  --archive raw/ --out othh-notams.json
+```
+
+A **foreign** aerodrome's NOTAM are `INTERNATIONAL` in the FAA's holdings;
+US ones are `DOMESTIC`. `--archive` is required — a NOTAM answered from a
+response nobody kept is not citable.
+
+> **The FAA is not the source of record for a foreign aerodrome.** It
+> redistributes international NOTAM; the State's own AIS issues them. For OTHH
+> that is Qatar CAA. The FAA copy can lag, can hold a subset, and is a
+> different citation — useful, and not the same document. Where the two
+> disagree, the State's own publication governs.
+>
+> An empty response cannot tell you which of two things happened: no active
+> NOTAM, or this location not being in the FAA's holdings at all. The command
+> says so rather than reporting a quiet aerodrome.
+
 Then, in ordinary use:
 
 ```python
@@ -212,7 +233,8 @@ from aeropub.faa import NmsClient
 client.notams(location="KDFW")                       # one aerodrome
 client.notams(notam_number="10/108", location="KDFW")
 client.notams(notam_number="10/108", accountability="ZFW")   # either works
-client.notams(latitude=32.897, longitude=-97.037, radius=50)
+client.notams(latitude=25.273, longitude=51.608, radius=50)      # around OTHH
+client.notams(location="OTHH", classification="INTERNATIONAL")
 client.checklist(location="KATL", classification="DOMESTIC")
 ```
 

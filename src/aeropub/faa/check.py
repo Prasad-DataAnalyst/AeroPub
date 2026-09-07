@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Mapping
@@ -420,6 +421,87 @@ def verify(
     return report
 
 
+def _fetch_notams(
+    env, environ, archive, *, location: str, classification: str | None, out: str | None
+) -> int:
+    """Fetch one location's active NOTAM and say what came back.
+
+    Separate from the staged check because it is not a diagnostic: it is the
+    ordinary operation, and its failure modes are the ordinary ones.
+    """
+    import json as _json
+
+    from aeropub.faa.aixm import NotamFeed
+    from aeropub.faa.client import NmsClient
+    from aeropub.faa.errors import NmsError
+
+    client = NmsClient(env, archive=archive, environ=environ)
+    try:
+        response = client.notams(location=location, classification=classification)
+    except NmsError as error:
+        print(f"{type(error).__name__}: {error}", file=sys.stderr)
+        return EXIT_NETWORK if getattr(error, "is_retryable", False) else EXIT_PROTOCOL
+
+    import io
+
+    held = list(NotamFeed(io.BytesIO(response.body)))
+
+    where = f"{location}" + (f" / {classification}" if classification else "")
+    print(f"{where}: {len(held)} active NOTAM")
+    if response.archived is not None:
+        print(f"  archived as {response.archived.digest[:12]}")
+    if not held:
+        # An aerodrome with no NOTAM and an aerodrome the FAA does not hold
+        # look identical in an empty response, and they are not the same fact.
+        print(
+            "  Nothing came back. That is either no active NOTAM, or this "
+            "location not being in the FAA's holdings — the response cannot "
+            "tell them apart, and the State's own AIS can."
+        )
+    for notam in held[:10]:
+        print(f"  {notam.describe() if hasattr(notam, 'describe') else notam}")
+    if len(held) > 10:
+        print(f"  ... and {len(held) - 10} more")
+
+    if out:
+        Path(out).write_text(
+            _json.dumps(
+                {
+                    "location": location,
+                    "classification": classification,
+                    "archived_as": (
+                        response.archived.digest if response.archived else None
+                    ),
+                    "retrieved_at": (
+                        response.archived.retrieved_at.isoformat()
+                        if response.archived
+                        else None
+                    ),
+                    "count": len(held),
+                    "notams": [
+                        {
+                            "number": n.number,
+                            "year": n.year,
+                            "location": n.location,
+                            "effective_start": (
+                                n.effective_start.isoformat() if n.effective_start else None
+                            ),
+                            "effective_end": (
+                                n.effective_end.isoformat() if n.effective_end else None
+                            ),
+                            "text": n.text,
+                        }
+                        for n in held
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        print(f"  wrote {out}")
+    return EXIT_OK
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m aeropub.faa.check",
@@ -440,6 +522,25 @@ def main(argv: list[str] | None = None) -> int:
         help="also pull and parse the domestic initial load. Needs --archive.",
     )
     parser.add_argument("--archive", help="directory for the raw store.")
+    parser.add_argument(
+        "--notams", metavar="LOCATION",
+        help=(
+            "fetch the active NOTAM for one location and write them out, e.g. "
+            "OTHH. Needs --archive so the response stays citable."
+        ),
+    )
+    parser.add_argument(
+        "--classification", metavar="KIND",
+        help=(
+            "narrow --notams to one classification: INTERNATIONAL, DOMESTIC, "
+            "FDC, MILITARY, LOCAL_MILITARY. A foreign aerodrome's NOTAM are "
+            "INTERNATIONAL in the FAA's holdings."
+        ),
+    )
+    parser.add_argument(
+        "--out", metavar="FILE",
+        help="write the NOTAM read by --notams to this file, as JSON.",
+    )
     parser.add_argument(
         "--relay", metavar="FILE",
         help=(
@@ -468,6 +569,21 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_PROTOCOL
 
     archive = Archive(args.archive) if args.archive else None
+
+    if args.notams:
+        if archive is None:
+            print(
+                "--notams needs --archive: a NOTAM answered from a response "
+                "nobody kept is not citable.",
+                file=sys.stderr,
+            )
+            return EXIT_PROTOCOL
+        return _fetch_notams(
+            env, environ, archive,
+            location=args.notams,
+            classification=args.classification,
+            out=args.out,
+        )
 
     if args.relay:
         if archive is None:

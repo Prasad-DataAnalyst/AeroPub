@@ -460,6 +460,7 @@ class NmsClient:
         location: str | None = None,
         notam_number: str | None = None,
         accountability: str | None = None,
+        classification: str | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         radius: float | None = None,
@@ -501,6 +502,20 @@ class NmsClient:
                 "notam_number identifies a NOTAM within a location or an "
                 "accountability; supply one of them as well."
             )
+        # Classification alone is a different operation. The specification
+        # says so: as the sole query parameter it returns a relative content
+        # path to a file of every NOTAM in that classification, expiring in
+        # five minutes — the initial-load shape, not a query result. Reaching
+        # it through notams() would return a pointer where the caller expects
+        # NOTAM.
+        if classification is not None and not chosen and last_updated is None:
+            raise NmsConfigurationError(
+                "classification on its own returns a content path to the whole "
+                "classification, not NOTAM in the response body. Use "
+                "fetch_initial_load(classification=...) for that, or add a "
+                "filter — location, a circle, or last_updated — to get data "
+                "back inline."
+            )
         if not chosen and last_updated is None:
             raise NmsConfigurationError(
                 "a NOTAM query needs a filter: nms_id, location, "
@@ -524,6 +539,8 @@ class NmsClient:
             params["notamNumber"] = notam_number
         if accountability is not None:
             params["accountability"] = accountability
+        if classification is not None:
+            params["classification"] = classification
         if latitude is not None:
             params["latitude"] = latitude
             params["longitude"] = longitude
