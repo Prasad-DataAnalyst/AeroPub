@@ -286,8 +286,8 @@ def client(environment, opener, tmp_path):
         environment,
         ClientCredentials.default(),
         environ={
-            "FAA_NMS_CLIENT_ID": CLIENT_ID,
-            "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+            "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+            "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
         },
         opener=opener,
         timeout=30,
@@ -322,8 +322,8 @@ class TestTokenOverTheWire:
             environment,
             ClientCredentials.default(),
             environ={
-                "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                "FAA_NMS_CLIENT_SECRET": "wrong-secret",
+                "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                "AEROPUB_FAA_CLIENT_SECRET": "wrong-secret",
             },
             opener=opener,
         )
@@ -335,7 +335,7 @@ class TestTokenOverTheWire:
         tokens = TokenClient(
             environment,
             ClientCredentials.default(),
-            environ={"FAA_NMS_CLIENT_ID": CLIENT_ID},
+            environ={"AEROPUB_FAA_CLIENT_ID": CLIENT_ID},
             opener=opener,
         )
         with pytest.raises(NmsConfigurationError):
@@ -445,8 +445,8 @@ class TestDriftOverTheWire:
                 moved,
                 ClientCredentials.default(),
                 environ={
-                    "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                    "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+                    "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                    "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
                 },
                 opener=opener,
             ),
@@ -468,8 +468,8 @@ class TestDriftOverTheWire:
                 gone,
                 ClientCredentials.default(),
                 environ={
-                    "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                    "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+                    "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                    "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
                 },
                 opener=opener,
             ),
@@ -490,8 +490,8 @@ class TestCheckOverTheWire:
         report = verify(
             environment,
             environ={
-                "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+                "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
             },
             client=client,
             network_probe=probe(environment.url("ping"), opener=opener),
@@ -517,8 +517,8 @@ class TestCheckOverTheWire:
         report = verify(
             environment,
             environ={
-                "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+                "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
             },
             client=client,
             network_probe=probe(environment.url("ping"), opener=opener),
@@ -537,8 +537,8 @@ class TestCheckOverTheWire:
         from aeropub.faa.check import verify
 
         environ = {
-            "FAA_NMS_CLIENT_ID": CLIENT_ID,
-            "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+            "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+            "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
         }
         client = NmsClient(
             environment,
@@ -571,8 +571,8 @@ class TestCheckOverTheWire:
         report = verify(
             environment,
             environ={
-                "FAA_NMS_CLIENT_ID": CLIENT_ID,
-                "FAA_NMS_CLIENT_SECRET": CLIENT_SECRET,
+                "AEROPUB_FAA_CLIENT_ID": CLIENT_ID,
+                "AEROPUB_FAA_CLIENT_SECRET": CLIENT_SECRET,
             },
             client=client,
             fetch_data=True,

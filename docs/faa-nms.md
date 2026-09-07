@@ -150,7 +150,37 @@ Two are needed:
 | `AEROPUB_FAA_CLIENT_ID` | OAuth2 client id, issued with registration |
 | `AEROPUB_FAA_CLIENT_SECRET` | OAuth2 client secret, issued with it |
 
-Set them once:
+### Installing them from the pack, without ever seeing them
+
+The FAA does not issue a client id and secret in a form anything can consume.
+It ships the SoapUI project, with the OAuth2 profile filled in — client id,
+client secret, and whatever bearer the person who exported it happened to be
+holding, all in plain text. Import it directly:
+
+```
+aeropub credentials --import-pack NMS-API-PreProd-soapui-project.xml --dry-run
+aeropub credentials --import-pack NMS-API-PreProd-soapui-project.xml
+```
+
+The value goes from the file the FAA sent to a mode-600 file outside any
+repository, and is never rendered on the way. That is the whole point: the
+alternative is an operator opening the project, finding a 64-character opaque
+string and moving it by hand into a terminal — where it lands in shell history
+and in the process list — or into a chat window to ask which field is which, or
+into a screenshot for a ticket. Every one of those is a copy of a live
+credential somewhere nobody is tracking, and nobody spots 64 characters of
+opaque text in a scrollback.
+
+The **access token is deliberately not imported**. A bearer in an exported
+project is minutes old at best and is a third credential to leak; the client
+mints its own from the id and secret on demand. Its presence is reported, so
+the operator knows the pack is hazardous, and dropped.
+
+The importer also reads which environment the pack is for off its own
+`accessTokenURI` and says so. A pack's keys against another environment give a
+401 that says nothing about why.
+
+### Or by hand
 
 ```
 aeropub credentials --set AEROPUB_FAA_CLIENT_ID       # prompts, never echoes
@@ -219,3 +249,22 @@ was tested.
 **As of this writing, this environment's egress refuses all three hosts** with a
 `403` at the gateway before the request leaves the building. That is a policy on
 our side, not anything the FAA or CGI did.
+
+### The allowlist request
+
+Everything except the wire is verified: configuration resolves, both credential
+halves are installed and readable, and the client is proven against a local
+server implementing the FAA's documented contract over real TLS. What remains is
+one allowlist entry. The request, in the form whoever owns egress needs it:
+
+| | |
+|---|---|
+| **Hosts** | `api-staging.cgifederal-aim.com`, `api-sit.cgifederal-aim.com` |
+| **Port** | 443, TLS |
+| **Direction** | outbound only |
+| **Owner** | CGI Federal, operating the FAA's NMS-API |
+| **Why not `faa.gov`** | the API is not hosted on an FAA domain; allowlisting `faa.gov` does nothing |
+| **Production** | `api-nms.aim.faa.gov` — **unconfirmed**, see [Hosts](#hosts). Do not allowlist it on our guess; ask the FAA for the real one when requesting production onboarding |
+
+Confirm it took effect with `aeropub netcheck --all`, which needs no credential.
+Exit `0` means every host answered.

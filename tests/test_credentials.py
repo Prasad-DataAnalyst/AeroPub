@@ -194,7 +194,13 @@ class TestTheRepositoryHoldsNoSecret:
     #: Shapes that are credentials rather than code. Long unbroken runs of
     #: base64-ish characters are what an OAuth2 client secret looks like.
     SUSPECT = (
-        re.compile(r"\bclientSecret\b", re.I),
+        # A credential-bearing element *with a value in it*. The element name
+        # alone is not a secret — the importer that keeps a secret off the
+        # operator's terminal has to name the field it reads — and an empty
+        # element carries nothing. What is dangerous is a value.
+        re.compile(r"<(?:\w+:)?clientSecret>\s*[^<\s]"),
+        re.compile(r"<(?:\w+:)?accessToken>\s*[^<\s]"),
+        re.compile(r"\bclientSecret\b\s*[:=]\s*['\"][A-Za-z0-9+/=_-]{16,}", re.I),
         re.compile(r"\bclient_secret\b\s*[:=]\s*['\"][A-Za-z0-9+/=_-]{16,}"),
         re.compile(r"\baccessToken\b\s*>\s*[A-Za-z0-9+/=_-]{16,}"),
         re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
@@ -223,6 +229,39 @@ class TestTheRepositoryHoldsNoSecret:
             "is permanent and a repository's visibility can change, so remove "
             "the value, rotate it at the issuer, and store it with "
             "`aeropub credentials --set`:\n  " + "\n  ".join(offenders)
+        )
+
+    def test_the_scanner_catches_a_committed_onboarding_pack(self):
+        """The rule exists for one specific file, so it is tested against one.
+
+        The FAA's SoapUI project carries a live client id and secret in plain
+        text. If it is ever committed, this is what has to notice.
+        """
+        pack = (
+            '<?xml version="1.0"?>\n'
+            '<con:soapui-project xmlns:con="http://eviware.com/soapui/config">\n'
+            "  <con:clientSecret>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA</con:clientSecret>\n"
+            "</con:soapui-project>\n"
+        )
+        assert any(p.search(pack) for p in self.SUSPECT)
+
+    def test_the_scanner_does_not_fire_on_code_that_parses_one(self):
+        """Naming a field is not carrying its value, and the importer that
+        keeps a secret off the operator's terminal has to name it."""
+        source = (
+            'SOAPUI_FIELDS = {"clientID": ..., "clientSecret": ...}\n'
+            're.search(rf"<(?:\\w+:)?{tag}>([^<]*)</(?:\\w+:)?{tag}>", raw)\n'
+        )
+        assert not any(p.search(source) for p in self.SUSPECT)
+
+    def test_an_empty_element_is_not_a_secret(self):
+        """A pack exported before the keys were issued carries no credential,
+        and calling it one trains people to ignore the alarm."""
+        assert not any(
+            p.search("<con:clientSecret></con:clientSecret>") for p in self.SUSPECT
+        )
+        assert not any(
+            p.search("<con:clientSecret>\n</con:clientSecret>") for p in self.SUSPECT
         )
 
     def test_the_credentials_file_is_not_tracked(self):

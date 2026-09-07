@@ -557,6 +557,59 @@ def _cmd_netcheck(args: argparse.Namespace) -> int:
     return netcheck.main(argv)
 
 
+def _import_pack(store, path: str, *, dry_run: bool = False) -> int:
+    """Install a credential from an onboarding pack, never rendering it.
+
+    The alternative is an operator opening the file, finding a 64-character
+    opaque string and copying it into a terminal — where it lands in shell
+    history and the process list — or into a chat window to ask which field is
+    which. This is the same operation without those copies.
+    """
+    from aeropub.onboarding import PackError, read_soapui_pack
+
+    try:
+        pack = read_soapui_pack(path)
+    except PackError as error:
+        print(str(error), file=sys.stderr)
+        return CANNOT_RUN
+
+    print(pack.summary())
+    print()
+    if dry_run:
+        print("--dry-run: nothing was written.")
+        return OK
+
+    for name, value in sorted(pack.secrets.items()):
+        try:
+            written = store.set_secret(name, value)
+        except ValueError as error:
+            print(str(error), file=sys.stderr)
+            return CANNOT_RUN
+        print(f"stored {name} in {written}")
+    print("  Owner-readable only, outside any repository, so it cannot be "
+          "committed.")
+
+    if pack.environment_hint:
+        print()
+        print(f"These are {pack.environment_hint} credentials. Run against "
+              f"that environment,\n  not the default:  export "
+              f"FAA_NMS_ENVIRONMENT={pack.environment_hint}")
+        print("  A pack's keys against another environment give a 401 that "
+              "says nothing about why.")
+
+    # The pack is a live credential in a file that has been emailed. Saying so
+    # once, here, is the only moment anybody is definitely looking.
+    print()
+    print("ROTATE THESE. The pack carries the client id and secret in plain "
+          "text and has\n  travelled by email; the FAA's own FAQ says not to "
+          "send credentials in the clear.\n  Ask 7-AWA-NAIMES@faa.gov to "
+          "reissue, re-import, and delete the pack.")
+    if pack.dropped:
+        print(f"  Not imported: {', '.join(pack.dropped)} — stale, and the "
+              "client mints its own.")
+    return OK
+
+
 def _cmd_credentials(args: argparse.Namespace) -> int:
     """Show, set or remove a stored secret. Never prints a value.
 
@@ -565,6 +618,9 @@ def _cmd_credentials(args: argparse.Namespace) -> int:
     process list, where anyone on the machine can read it.
     """
     store = CredentialStore()
+
+    if getattr(args, "import_pack", None):
+        return _import_pack(store, args.import_pack, dry_run=args.dry_run)
 
     if args.set:
         import getpass
@@ -1639,6 +1695,19 @@ def _parser() -> argparse.ArgumentParser:
     secrets.add_argument("--set", metavar="NAME",
                          help="store a secret, read from a prompt")
     secrets.add_argument("--forget", metavar="NAME", help="remove a stored secret")
+    secrets.add_argument(
+        "--import-pack", dest="import_pack", metavar="FILE",
+        help=(
+            "install the client id and secret from an authority's onboarding "
+            "pack (the SoapUI project the FAA ships). The value goes from that "
+            "file to the store without being rendered, which hand-copying "
+            "cannot promise"
+        ),
+    )
+    secrets.add_argument(
+        "--dry-run", action="store_true",
+        help="with --import-pack, report what would be installed and stop",
+    )
     secrets.set_defaults(handler=_cmd_credentials)
 
     reach = sub.add_parser(
