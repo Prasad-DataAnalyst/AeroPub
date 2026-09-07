@@ -91,7 +91,12 @@ class AirwayProfile:
     """The lowest published maximum, for the same reason in the other
     direction."""
 
-    direction: CruisingLevels = CruisingLevels.BOTH
+    direction: CruisingLevels = CruisingLevels.NOT_PUBLISHED
+    mixed_directions: bool = False
+    """The segments do not publish one direction between them. Summarising
+    them as ``BOTH`` would say the State published both sets end to end, which
+    is a claim none of the segments makes."""
+
     navigation_specs: tuple[str, ...] = ()
     """Every specification published across the segments. More than one means
     the requirement changes along the airway, which is a finding rather than a
@@ -104,7 +109,16 @@ class AirwayProfile:
 
     @property
     def is_one_way(self) -> bool:
-        return self.direction is not CruisingLevels.BOTH
+        """Whether the State restricted this airway by direction.
+
+        A segment that published nothing is not thereby one-way — it is one
+        the State's general rule governs, and that rule is ENR 1.3.
+        """
+        return self.direction in (
+            CruisingLevels.ODD,
+            CruisingLevels.EVEN,
+            CruisingLevels.NONE,
+        )
 
     @property
     def band_known(self) -> bool:
@@ -138,6 +152,10 @@ class AirwayProfile:
             parts.append("no level band published")
         if self.is_one_way:
             parts.append(f"{self.direction.value} levels only")
+        elif self.mixed_directions:
+            parts.append("direction changes along the airway")
+        elif self.direction is CruisingLevels.NOT_PUBLISHED:
+            parts.append("no direction published — ENR 1.3 governs")
         if self.navigation_specs:
             parts.append(", ".join(self.navigation_specs))
         if self.units:
@@ -180,10 +198,11 @@ def profile_for(structure: AtsStructure, route: str) -> AirwayProfile | None:
         floor_ft=max(floors) if floors else None,
         ceiling_ft=min(ceilings) if ceilings else None,
         direction=(
-            directions.pop()
+            next(iter(directions))
             if len(directions) == 1
-            else CruisingLevels.BOTH
+            else CruisingLevels.NOT_PUBLISHED
         ),
+        mixed_directions=len(directions) > 1,
         navigation_specs=tuple(
             sorted({s.navigation_spec for s in segments if s.navigation_spec})
         ),

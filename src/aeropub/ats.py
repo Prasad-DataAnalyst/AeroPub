@@ -388,17 +388,34 @@ class CruisingLevels(str, Enum):
     ODD = "odd"
     EVEN = "even"
     BOTH = "both"
+    """The State published that both sets are available here — which most
+    segments do not say, and which is not what a blank column means."""
+
     NONE = "none"
     """One-way in the other direction, or not available for cruise."""
 
-    def permits(self, level_ft: float) -> bool:
+    NOT_PUBLISHED = "not_published"
+    """ENR 3 printed no direction for this segment.
+
+    Which is the commonest case in the table, and reading it as ``BOTH``
+    turned it into a silent pass for every level. A segment departing from the
+    State's general rule is what the column exists to print; a blank one means
+    the State's general rule applies, and that rule is in ENR 1.3.
+    """
+
+    def permits(self, level_ft: float) -> bool | None:
         """Whether a flight level is of the parity this segment allows.
+
+        Three-valued. ``None`` is *this segment does not say*, and the
+        question moves to the State's ENR 1.3 — never to a pass.
 
         Read in hundreds of feet, which is how levels are published and flown.
         A level that is not a whole hundred belongs to no parity and is
         refused rather than rounded: rounding here would clear a level nobody
         may fly.
         """
+        if self is CruisingLevels.NOT_PUBLISHED:
+            return None
         if self is CruisingLevels.BOTH:
             return True
         if self is CruisingLevels.NONE:
@@ -472,7 +489,7 @@ class RouteSegment:
     maa_ft: float | None = None
     upper_limit_ft: float | None = None
     lower_limit_ft: float | None = None
-    direction: CruisingLevels = CruisingLevels.BOTH
+    direction: CruisingLevels = CruisingLevels.NOT_PUBLISHED
     navigation_spec: str = ""
     """The PBN specification this segment requires — ``RNAV 5``, ``RNP 4``.
     Held as the State prints it; whether a tail holds it is a fact about the
@@ -532,7 +549,9 @@ class RouteSegment:
             parts.append(f"MEA {self.mea_ft:.0f}")
         if self.navigation_spec:
             parts.append(self.navigation_spec)
-        if self.direction is not CruisingLevels.BOTH:
+        if self.direction is CruisingLevels.NOT_PUBLISHED:
+            parts.append("no direction published — see ENR 1.3")
+        elif self.direction is not CruisingLevels.BOTH:
             parts.append(f"{self.direction.value} levels")
         return "  ·  ".join(parts)
 
@@ -988,7 +1007,7 @@ def screen_levels(
                     ),
                 )
             )
-        if not segment.direction.permits(planned_ft):
+        if segment.direction.permits(planned_ft) is False:
             findings.append(
                 LevelFinding(
                     segment=segment,
@@ -1177,7 +1196,9 @@ def load_ats_structure(path: Path | str) -> AtsStructure:
                     lower_limit_ft=read_limit(
                         row.get("lower_limit_ft"), where=where, field="lower_limit_ft"
                     ),
-                    direction=_direction(row.get("direction", "both"), where=where),
+                    direction=_direction(
+                        row.get("direction", "") or "not_published", where=where
+                    ),
                     navigation_spec=str(row.get("navigation_spec", "")),
                     track_deg=_number(row.get("track_deg"), where=where, field="track_deg"),
                     distance_nm=_number(
@@ -1260,7 +1281,7 @@ _STRUCTURE_TEMPLATE = {
             "maa_ft": None,
             "upper_limit_ft": None,
             "lower_limit_ft": None,
-            "direction": "both",
+            "direction": "",
             "navigation_spec": "",
             "track_deg": None,
             "distance_nm": None,

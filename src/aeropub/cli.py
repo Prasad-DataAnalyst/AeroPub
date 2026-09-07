@@ -61,6 +61,11 @@ from aeropub.supplement import (
     load_supplements,
     supplement_template,
 )
+from aeropub.flightrules import (
+    FlightRulesRegister,
+    flight_rules_template,
+    load_flight_rules,
+)
 from aeropub.supps import SuppsRegister, load_supps, supps_template
 from aeropub.surveillance import (
     SurveillanceRegister,
@@ -866,6 +871,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.supplement_template:
         print(supplement_template())
         return OK
+    if args.flight_rules_template:
+        print(flight_rules_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -917,6 +925,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
         loaded = [load_surveillance(path) for path in args.surveillance]
         surveillance = SurveillanceRegister(
             services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    flight_rules = None
+    if args.flight_rules:
+        loaded = [load_flight_rules(path) for path in args.flight_rules]
+        flight_rules = FlightRulesRegister(
+            schemes=tuple(s for held in loaded for s in held.schemes),
             covers=frozenset().union(*(held.covers for held in loaded)),
         )
 
@@ -986,6 +1002,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             planning=planning,
             supps=supps,
             surveillance=surveillance,
+            flight_rules=flight_rules,
             supplements=held_supplements,
             item18=args.item18 or "",
             slip_minutes=args.slip_minutes,
@@ -1837,6 +1854,18 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--surveillance-template", dest="surveillance_template",
         action="store_true", help="print a blank ENR 1.6 extract",
+    )
+    sector.add_argument(
+        "--flight-rules", dest="flight_rules", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 1.3 extract, repeatable — the State's own "
+            "cruising-level rule, which is what governs the segments whose "
+            "ENR 3 direction column is blank, and that is most of them"
+        ),
+    )
+    sector.add_argument(
+        "--flight-rules-template", dest="flight_rules_template",
+        action="store_true", help="print a blank ENR 1.3 extract",
     )
     sector.add_argument(
         "--supplement", action="append", metavar="FILE",

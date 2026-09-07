@@ -205,6 +205,14 @@ class TestSections:
         assert "Surveillance — ENR 1.6" in page
         assert "no ENR 1.6 has been read for AAAA" in page
 
+    def test_the_flight_rules_section_appears_where_one_is_given(self):
+        from aeropub.flightrules import FlightRulesRegister, view_flight_rules
+
+        view = view_flight_rules(FlightRulesRegister(), regions=["AAAA"])
+        page = briefing_html(dossier(flight_rules=view))
+        assert "Flight rules — ENR 1.3" in page
+        assert "AAAA: never read" in page
+
     def test_sections_are_collapsed_out_of_the_way(self):
         from aeropub.surveillance import SurveillanceRegister, view_surveillance
 

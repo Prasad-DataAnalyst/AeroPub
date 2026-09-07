@@ -565,8 +565,13 @@ class TestLoading:
 
     def test_the_template_round_trips_as_json(self):
         blank = json.loads(structure_template())
-        assert blank["segments"][0]["direction"] == "both"
         assert "procedures" in blank
+
+    def test_the_template_leaves_the_direction_blank(self):
+        """Pre-filling it "both" would put a claim the State did not make
+        into every manifest anybody starts from."""
+        blank = json.loads(structure_template())
+        assert blank["segments"][0]["direction"] == ""
 
 
 class TestPublishedCoordinates:

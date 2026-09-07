@@ -71,7 +71,7 @@ the checklist is the document to refetch.
 |---|---|---|
 | 1.1 | General rules | Not held |
 | 1.2 | Visual flight rules | Not held. Out of scope for the operations this serves |
-| 1.3 | Instrument flight rules | Not held |
+| 1.3 | Instrument flight rules | **Built** — `flightrules.py`. The State's cruising-level rule: which sectors take which set of levels, on a magnetic or true track, up to the level where parity stops being the rule |
 | 1.4 | ATS airspace classification | **Built** — `airspace.py`, `AirspaceClass`. What each class answers about clearance, separation and VFR |
 | 1.5 | Holding, approach and departure procedures | **Built** — `holding.py`. Level band, speed against the published limit or the PANS-OPS table, outbound timing, and the entry sector for an arrival heading including the 5° flexibility zone |
 | 1.6 | ATS surveillance services | **Built** — `surveillance.py`. What surveillance the State has, what service it supports, from what level, and what carriage it mandates — cross-checked against the planned level |
@@ -83,6 +83,41 @@ the checklist is the document to refetch.
 | 1.12 | Interception of civil aircraft | Not held. Procedural, and worth carrying for the conflict-zone case |
 | 1.13 | Unlawful interference | Not held |
 | 1.14 | Air traffic incidents | Not held |
+
+**What ENR 1.3 does, and the defect it exposed.** ENR 3 prints a direction
+column, and a route that is one-way or that overrides the semicircular rule
+says so there. Most segments print nothing — because nothing about them departs
+from the State's general rule, and the State's general rule is ENR 1.3. This
+platform read that blank as `BOTH`, which permitted every level on the
+commonest entry in the whole route structure.
+
+A blank column is now `CruisingLevels.NOT_PUBLISHED`, which permits nothing
+and refuses nothing, and the question moves to ENR 1.3 for the region the
+segment lies in. Where the column *does* publish a direction the column is the
+override and it governs; ENR 1.3 is fed only the segments it left blank.
+
+Three things the module will not answer, each of which used to be answered
+wrongly by arithmetic:
+
+- **Above FL410 the parity rule stops being a parity rule.** Annex 2's table
+  runs on 1000 ft steps to FL410 and 4000 ft above it, and the upper part is
+  not a parity: FL450 sits in the same set as FL350 while being an even number
+  of thousands. Anything answering by parity up there clears FL430 eastbound.
+- **A regional table is a table.** Reading the levels out of a paragraph is not
+  something a parser should do, so a State prescribing one gets an unscreened
+  segment rather than a computed answer.
+- **Magnetic or true is not a detail.** The sectors are drawn on a track. Over
+  the Gulf the variation is two degrees and it makes no difference; over Hudson
+  Bay it is thirty and it moves a northbound track into the other sector,
+  changing every legal level on the segment. A State that does not say which
+  basis it uses has left that open, and this reports it. No margin is invented,
+  because the margin that would matter is the local variation and that is not
+  something the platform holds.
+
+The sector bounds and which set each takes are held as published rather than
+assumed from the Annex, because the departure is the whole reason ENR 1.3
+prints them: a State drawing the split at 090°/270°, or reversing which set the
+sector takes, has said something the Annex does not.
 
 **What ENR 1.10 does.** Everything else here is about the air; this is about
 the paperwork, and for a non-scheduled operation the paperwork is what stops

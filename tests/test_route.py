@@ -386,6 +386,129 @@ class TestSupplements:
 # --------------------------------------------------------------------------
 
 
+class TestFlightRules:
+    """ENR 1.3 — the rule the blank direction column defers to.
+
+    Most of ENR 3 publishes no direction, and reading that as "any level is
+    available" was a silent pass on the commonest case in the table.
+    """
+
+    def rules(self, **overrides):
+        from aeropub.flightrules import (
+            CruisingLevelScheme,
+            FlightRulesRegister,
+            LevelScheme,
+            TrackBasis,
+        )
+
+        fields = dict(
+            region="AAAA",
+            source=ref(locator="ENR 1.3 para 2.1"),
+            scheme=LevelScheme.SEMICIRCULAR,
+            basis=TrackBasis.MAGNETIC,
+        )
+        fields.update(overrides)
+        held = CruisingLevelScheme(**fields)
+        return FlightRulesRegister(schemes=(held,), covers=frozenset({"AAAA"}))
+
+    def structure(self, *, direction=None, track=90.0):
+        from aeropub.ats import AtsStructure, CruisingLevels, RouteSegment
+
+        return AtsStructure(
+            segments=(
+                RouteSegment(
+                    route="UM688",
+                    start="ALSEM",
+                    end="MIDLE",
+                    source=ref(locator="ENR 3.2 row 1"),
+                    region="AAAA",
+                    track_deg=track,
+                    direction=direction or CruisingLevels.NOT_PUBLISHED,
+                ),
+            )
+        )
+
+    def built(self, **overrides):
+        fields = dict(
+            flight_rules=self.rules(),
+            structure=self.structure(),
+        )
+        fields.update(overrides)
+        from aeropub.ats import parse_route_string
+
+        sector = route(
+            crosses=(AAAA,),
+            planned_level_ft=36000.0,
+            filed=parse_route_string(
+                "ALSEM UM688 MIDLE", departure="XXXX", destination="YYYY"
+            ),
+        )
+        return dossier(sector, **fields)
+
+    def test_a_wrong_parity_on_a_blank_column_is_now_found(self):
+        """FL360 eastbound. Before ENR 1.3 was read this was a clean sector."""
+        built = self.built()
+        found = [
+            i
+            for i in built.open_items
+            if i.what == "planned level is against the direction of flight"
+        ]
+        assert found and found[0].severity is Exposure.HIGH
+        assert "odd levels" in found[0].why
+
+    def test_the_right_parity_raises_nothing(self):
+        built = self.built(
+            flight_rules=self.rules(), structure=self.structure(track=270.0)
+        )
+        assert not [
+            i
+            for i in built.open_items
+            if i.what == "planned level is against the direction of flight"
+        ]
+
+    def test_a_segment_publishing_its_own_direction_is_left_to_it(self):
+        """ENR 3's column is the override, and where it exists it governs."""
+        from aeropub.ats import CruisingLevels
+
+        built = self.built(structure=self.structure(direction=CruisingLevels.BOTH))
+        assert built.flight_rules is not None
+        assert built.flight_rules.findings == ()
+        assert built.flight_rules.unscreened == ()
+
+    def test_an_unread_region_is_an_open_item(self):
+        from aeropub.flightrules import FlightRulesRegister
+
+        built = self.built(flight_rules=FlightRulesRegister())
+        assert any(i.what == "ENR 1.3 never read" for i in built.open_items)
+
+    def test_an_unstated_track_basis_is_an_open_item(self):
+        from aeropub.flightrules import TrackBasis
+
+        built = self.built(flight_rules=self.rules(basis=TrackBasis.NOT_STATED))
+        found = [
+            i
+            for i in built.open_items
+            if i.what == "ENR 1.3 does not say magnetic or true track"
+        ]
+        assert found and "magnetic variation" in found[0].why
+
+    def test_a_segment_with_no_track_is_reported_not_passed(self):
+        built = self.built(structure=self.structure(track=None))
+        found = [
+            i
+            for i in built.open_items
+            if i.what == "segment not screened against the cruising-level rule"
+        ]
+        assert found and "published no track" in found[0].why
+
+    def test_no_enr_1_3_supplied_produces_no_section(self):
+        built = self.built(flight_rules=None)
+        assert built.flight_rules is None
+
+    def test_the_section_renders_into_the_dossier(self):
+        assert "FLIGHT RULES — ENR 1.3" in self.built().render()
+
+
 class TestCoverage:
     def test_an_unread_route_speaks_for_nothing(self):
         built = dossier(route())

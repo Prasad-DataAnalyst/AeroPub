@@ -175,6 +175,7 @@ python -m aeropub route --from OTHH --to EGLL --aircraft a.json --hazard-templat
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --gnss-template        # ENR 4.3
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --planning-template    # ENR 1.10
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --supplement-template  # AIP SUP
+python -m aeropub route --from OTHH --to EGLL --aircraft a.json --flight-rules-template # ENR 1.3
 python -m aeropub checklist --template                                                 # GEN 0.4
 ```
 
@@ -230,6 +231,35 @@ Re-run it each cycle. Nothing is cached between runs, so the map is whatever
 the manifests currently say — and `aeropub checklist` reconciles those against
 the State's own GEN 0.4 to catch the page that is a cycle out of date while
 still rendering perfectly.
+
+## The rule the blank column defers to
+
+An ENR 3 table prints a direction only where the segment departs from the
+State's general rule, and most segments do not. That blank means ENR 1.3
+governs, not that any level is available — so a route screened without ENR 1.3
+is unscreened for direction on most of its length:
+
+```
+python -m aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+  --crosses OTDF --level 35000 --route "ALSEM UM688 KUKLA" \
+  --structure enr3.json --flight-rules enr13.json
+```
+
+Fill `sector_from`, `sector_to` and `sector_parity` from what the State prints,
+not from the Annex. The Annex default is 000°–180° taking odd levels, and a
+State that prints something else has printed it *because* it differs. Set
+`basis` to `magnetic` or `true` only where the section says which; leaving it
+`not_stated` is reported on the route rather than resolved, because a track
+near a sector boundary changes sector once the local variation is applied.
+
+`parity_ceiling` is where the State's table stops being a parity — FL410 under
+Annex 2 Appendix 3, above which the levels step by 4000 ft and FL450 sits with
+FL350. A level above it is reported as unscreened, never cleared.
+
+A State prescribing a regional table or publishing in metres gets
+`scheme: regional_table` or `scheme: metric`, and its segments come back
+unscreened with the reason. The table is the answer and nothing here reads it
+out of a paragraph.
 
 ## The supplements in force
 

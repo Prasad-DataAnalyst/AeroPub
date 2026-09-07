@@ -61,6 +61,7 @@ from aeropub.airspace import (
 from aeropub.ats import (
     ATS_ROUTE,
     AtsStructure,
+    CruisingLevels,
     FiledRoute,
     LevelFinding,
     RouteExpansion,
@@ -85,6 +86,11 @@ from aeropub.gnss import (
     view_gnss,
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
+from aeropub.flightrules import (
+    FlightRulesRegister,
+    FlightRulesView,
+    view_flight_rules,
+)
 from aeropub.supplement import ForcePeriod, Supplement, SupplementRegister
 from aeropub.supps import SuppsRegister, SuppsView, view_supps
 from aeropub.surveillance import (
@@ -548,6 +554,13 @@ class RouteDossier:
     and where the plan falls below the coverage the State publishes. ``None``
     where no ENR 1.6 was supplied."""
 
+    flight_rules: FlightRulesView | None = None
+    """ENR 1.3 — the State's own cruising-level rule, screened against the
+    segments whose ENR 3 direction column is blank. That blank is the
+    commonest entry in the whole route structure, and it means the State's
+    general rule applies rather than that any level is available. ``None``
+    where no ENR 1.3 was supplied."""
+
     supps: SuppsView | None = None
     """ENR 1.8 — where the regions crossed depart from the regional
     supplementary procedures, and where that changes between them. ``None``
@@ -797,6 +810,8 @@ class RouteDossier:
             lines += ["", self.supps.render()]
         if self.surveillance is not None:
             lines += ["", self.surveillance.render()]
+        if self.flight_rules is not None:
+            lines += ["", self.flight_rules.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -880,6 +895,7 @@ def _open_items(
     supps: SuppsView | None = None,
     surveillance: SurveillanceView | None = None,
     supplements: Iterable[tuple[str, Supplement, ForcePeriod]] = (),
+    flight_rules: FlightRulesView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1317,6 +1333,54 @@ def _open_items(
                 )
             )
 
+    if flight_rules is not None:
+        for region in flight_rules.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.3 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "most of ENR 3 publishes no direction, because the "
+                        "State's general rule governs — and that rule is here"
+                    ),
+                )
+            )
+        for finding in flight_rules.findings:
+            items.append(
+                OpenItem(
+                    where=finding.region,
+                    what="planned level is against the direction of flight",
+                    # A level of the wrong parity is not a paperwork defect.
+                    # It is opposite-direction traffic at the same level, and
+                    # the State published which levels avoid that.
+                    severity=Exposure.HIGH,
+                    why=finding.describe(),
+                )
+            )
+        for region in flight_rules.basis_not_stated:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.3 does not say magnetic or true track",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "a track near a sector boundary takes the other set "
+                        "of levels once the local magnetic variation is "
+                        "applied, and nothing held here is that variation"
+                    ),
+                )
+            )
+        for reason in flight_rules.unscreened:
+            items.append(
+                OpenItem(
+                    where=flight_rules.regions[0] if flight_rules.regions else "",
+                    what="segment not screened against the cruising-level rule",
+                    severity=Exposure.UNKNOWN,
+                    why=reason,
+                )
+            )
+
     for entity, supplement, period in supplements:
         items.append(
             OpenItem(
@@ -1381,6 +1445,7 @@ def build_route_dossier(
     planning: PlanningRegister | None = None,
     supps: SuppsRegister | None = None,
     surveillance: SurveillanceRegister | None = None,
+    flight_rules: FlightRulesRegister | None = None,
     supplements: SupplementRegister | None = None,
     item18: str = "",
     slip_minutes: float | None = None,
@@ -1535,6 +1600,29 @@ def build_route_dossier(
         if airspace_view is not None
         else {}
     )
+    # ENR 1.3 screens the segments ENR 3 left blank, and only those: where the
+    # table published a direction, the table is the override and it governs.
+    # Feeding it the segments that already carry one would ask ENR 1.3 to
+    # confirm a rule it does not make.
+    flight_rules_view = (
+        view_flight_rules(
+            flight_rules,
+            regions=regions,
+            planned_ft=route.planned_level_ft,
+            tracks=tuple(
+                (
+                    f"{s.route} {s.start}-{s.end}",
+                    s.region,
+                    s.track_deg,
+                )
+                for s in (expansion.segments if expansion is not None else ())
+                if s.direction is CruisingLevels.NOT_PUBLISHED
+            ),
+        )
+        if flight_rules is not None
+        else None
+    )
+
     surveillance_view = (
         view_surveillance(
             surveillance,
@@ -1602,6 +1690,7 @@ def build_route_dossier(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
             airspace_view, hazard_screen, aids, gnss_view, planning_view,
             supps_view, surveillance_view, tuple(held_supplements),
+            flight_rules_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1617,5 +1706,6 @@ def build_route_dossier(
         planning=planning_view,
         supps=supps_view,
         surveillance=surveillance_view,
+        flight_rules=flight_rules_view,
         supplements=tuple(held_supplements),
     )
