@@ -33,6 +33,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date
 from pathlib import Path
 
 AIM = "https://aim.gov.qa"
@@ -68,14 +69,26 @@ def die(message: str) -> "NoReturn":  # noqa: F821
     raise SystemExit(1)
 
 
-def fetch(url: str, timeout: int) -> bytes:
+def fetch(url: str, timeout: int, fatal: bool = True) -> "bytes | None":
+    """The page, or None when ``fatal`` is off and it could not be had.
+
+    Discovery walks pages it has only guessed at, and one dead frame there
+    should not end a run that is otherwise going fine. Fetching a section
+    the index actually named is a different matter, and stays fatal.
+    """
     request = urllib.request.Request(url, headers={"User-Agent": AGENT})
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
     except urllib.error.HTTPError as error:
+        if not fatal:
+            print(f"    skipped {url} (HTTP {error.code})")
+            return None
         die(f"{url} answered HTTP {error.code}")
     except urllib.error.URLError as error:
+        if not fatal:
+            print(f"    skipped {url} ({error.reason})")
+            return None
         die(
             f"could not reach {url}: {error.reason}\n"
             "       If this is a corporate network, try mobile data — some "
@@ -139,7 +152,7 @@ def all_sections_on(html: str, base: str) -> dict[str, str]:
     ``QA-AD-2-OTHH-en-GB.html`` under ``AD-2-OTHH``.
     """
     found: dict[str, str] = {}
-    for url, _ in links(html, base):
+    for url in referenced_pages(html, base):
         name = url.rsplit("/", 1)[-1].split("?")[0]
         if not name.lower().endswith((".html", ".htm")):
             continue
@@ -152,6 +165,124 @@ def all_sections_on(html: str, base: str) -> dict[str, str]:
         code = re.sub(r"-[a-z]{2}-[A-Z]{2}$", "", code)   # -en-GB suffix
         found.setdefault(code, url)
     return found
+
+
+#: Any quoted path ending .html — an anchor's href, a frame's src, or a
+#: string inside a menu's JavaScript. They are indistinguishable here and
+#: that is the point: reading only <a href> misses a frameset entirely.
+_HREFISH = re.compile(r"""["']([^"'<>\s]+?\.html?)["']""", re.I)
+
+
+def referenced_pages(text: str, base: str) -> list[str]:
+    """Every .html path the text quotes anywhere, made absolute.
+
+    Deliberately not an HTML parse. Qatar's index is a frameset whose menu
+    is assembled by ``menu.js``, so the contents tree is in a script rather
+    than in markup, and an anchor-only reader comes back empty.
+    """
+    seen: dict[str, None] = {}
+    for match in _HREFISH.finditer(text):
+        seen.setdefault(urllib.parse.urljoin(base, match.group(1)), None)
+    return list(seen)
+
+
+def _follow_from(text: str, base: str) -> list[str]:
+    """Pages worth following when this one carries no sections itself.
+
+    Frames first, then scripts, then the anchors that name a menu or
+    contents page. Order matters only in that it puts the likely answer
+    first; everything found is tried.
+    """
+    out: dict[str, None] = {}
+    for pattern in (
+        r"<i?frame\b[^>]*\bsrc\s*=\s*[\"']([^\"']+)[\"']",
+        r"<script\b[^>]*\bsrc\s*=\s*[\"']([^\"']+\.js)[\"']",
+    ):
+        for match in re.finditer(pattern, text, re.I):
+            out.setdefault(urllib.parse.urljoin(base, match.group(1)), None)
+    for url in referenced_pages(text, base):
+        if _NOT_A_SECTION.search(url.rsplit("/", 1)[-1]):
+            out.setdefault(url, None)
+    return list(out)
+
+
+def discover(
+    text: str, url: str, timeout: int, delay: float, depth: int = 3, budget: int = 40
+) -> dict[str, str]:
+    """Walk from a page to the AIP sections, through frames and scripts.
+
+    An eAIP index is normally a frameset, so the sections are two or three
+    pages in: index -> menu frame -> the menu's own script. This follows
+    that chain rather than assuming its shape, and stops at the first level
+    that yields sections so a working AIP costs one extra request, not a
+    crawl.
+    """
+    found = all_sections_on(text, url)
+    if found:
+        return found
+
+    seen = {url}
+    frontier = _follow_from(text, url)
+    for level in range(1, depth + 1):
+        frontier = [u for u in frontier if u not in seen]
+        if not frontier:
+            break
+        print(f"  no sections yet — following {len(frontier)} link(s), depth {level}")
+        next_frontier: list[str] = []
+        for target in frontier:
+            if len(seen) >= budget:
+                print(f"    stopping at {budget} pages looked at")
+                break
+            seen.add(target)
+            time.sleep(delay)
+            body = fetch(target, timeout, fatal=False)
+            if body is None:
+                continue
+            inner = body.decode("utf-8", "replace")
+            found.update(all_sections_on(inner, target))
+            next_frontier.extend(_follow_from(inner, target))
+        if found:
+            print(f"  {len(found)} sections found at depth {level}")
+            return found
+        frontier = next_frontier
+    return found
+
+
+def effective_date(url: str) -> "date | None":
+    """The date an edition takes effect, read from its path.
+
+    A EUROCONTROL eAIP path carries two dates that mean different things:
+    ``/AIP/03-SEP-2026/AIP-30/2026-10-01-000000/html/`` was *published* on
+    3 September and takes *effect* on 1 October. So the newest published
+    edition is routinely one that is not in force yet — right for seeing
+    what is about to change, wrong for saying what is in force today.
+    Both are worth having and the difference must not be silent.
+    """
+    stamp = re.search(r"/(\d{4})-(\d{2})-(\d{2})-\d{6}/", url)
+    if stamp is None:
+        stamp = re.search(r"(\d{4})-(\d{2})-(\d{2})", url)
+    if stamp is None:
+        return None
+    try:
+        return date(int(stamp.group(1)), int(stamp.group(2)), int(stamp.group(3)))
+    except ValueError:
+        return None
+
+
+def in_force_on(
+    found: list[tuple[str, str]], day: date
+) -> "tuple[str, str] | None":
+    """The newest edition already effective on this day, if it can be told."""
+    dated = [
+        (effective_date(url), url, text)
+        for url, text in found
+        if effective_date(url) is not None
+    ]
+    current = [d for d in dated if d[0] <= day]
+    if not current:
+        return None
+    best = max(current, key=lambda d: d[0])
+    return (best[1], best[2])
 
 
 def save(out: Path, name: str, body: bytes) -> Path:
@@ -180,6 +311,10 @@ def main() -> int:
         help="a specific edition index URL, skipping the history lookup",
     )
     parser.add_argument(
+        "--in-force", action="store_true",
+        help="take the edition in force today, not the newest published",
+    )
+    parser.add_argument(
         "--delay", type=float, default=POLITE_DELAY,
         help=f"seconds between requests (default {POLITE_DELAY})",
     )
@@ -205,29 +340,49 @@ def main() -> int:
                 "no edition links found on the history page. It is saved — "
                 "hand it over rather than letting this guess a URL."
             )
-        print(f"  {len(found)} editions listed; taking the newest:")
-        for url, text in found[:3]:
-            print(f"    {text or '(no text)'}  {url}")
-        index_url = found[0][0]
+        today = date.today()
+        print(f"  {len(found)} editions listed:")
+        for url, text in found:
+            effective = effective_date(url)
+            if effective is None:
+                when = "effective ?         "
+            elif effective <= today:
+                when = f"effective {effective}  in force ({(today - effective).days}d)"
+            else:
+                when = f"effective {effective}  in {(effective - today).days} days"
+            print(f"    {when}  {text or '(no text)'}")
+
+        current = in_force_on(found, today)
+        if args.in_force:
+            if current is None:
+                die(
+                    "no listed edition is in force today. The history page is "
+                    "saved — hand it over."
+                )
+            index_url = current[0]
+            print(f"\n  taking the edition in force today: {current[1]}")
+        else:
+            index_url = found[0][0]
+            chosen = effective_date(index_url)
+            print(f"\n  taking the newest published: {found[0][1]}")
+            if chosen is not None and chosen > today:
+                print(
+                    f"    note: it does not take effect until {chosen}. "
+                    "What is in force today is"
+                )
+                print(
+                    f"    {current[1] if current else 'not listed here'}"
+                    " — --in-force takes that instead."
+                )
 
     print(f"\nindex: {index_url}")
     body = fetch(index_url, args.timeout)
     save(out, "index-en-GB.html", body)
     index_html = body.decode("utf-8", "replace")
 
-    # An eAIP index is often a frameset. Gather sections from it and from one
-    # level of whatever it points at, which is where the menu usually lives.
-    located = all_sections_on(index_html, index_url)
-    if not located:
-        print("  no sections on the index itself; following its frames")
-        for url, _ in links(index_html, index_url)[:30]:
-            if not re.search(r"\.html?$", url, re.I):
-                continue
-            time.sleep(args.delay)
-            inner = fetch(url, args.timeout).decode("utf-8", "replace")
-            located.update(all_sections_on(inner, url))
-        if located:
-            print(f"  found {len(located)} through the frames")
+    # An eAIP index is a frameset whose menu is often built in JavaScript, so
+    # the sections are two or three pages in. Walk it rather than assume it.
+    located = discover(index_html, index_url, args.timeout, args.delay)
 
     if not located:
         die(

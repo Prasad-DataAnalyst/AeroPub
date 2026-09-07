@@ -180,3 +180,109 @@ class TestLinks:
     def test_markup_inside_a_link_is_stripped(self, tool):
         page = '<a href="/x.html">ENR <b>4.4</b> points</a>'
         assert tool.links(page, BASE)[0][1] == "ENR 4.4 points"
+
+
+#: What Qatar's index actually served on 07 SEP 2026, unmodified. It is a
+#: frameset: no anchors at all, and the menu is assembled by menu.js. An
+#: anchor-only reader comes back empty here, which is how the first run
+#: failed — with the whole AIP behind a page it could not see into.
+REAL_FRAMESET = """<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Frameset//EN"
+ "http://www.w3.org/TR/xhtml1/DTD/xhtml1-frameset.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+		<TITLE>eAIP - English version</TITLE>
+		<script type="text/javascript">
+            if (screen.width <= 720) {
+                window.location = "index-mobile-en-GB.html";
+            }
+            </script>
+		<script src="menu.js" type="text/javascript"></script>
+		<script src="amendments.js" type="text/javascript"></script>
+		<script src="commands.js" type="text/javascript"></script>
+	</head>
+	<frameset cols="320,*" onload="openTarget()">
+		<frameset rows="100, *" border="0" frameSpacing="0" frameBorder="0">
+			<frame name="eAISCommands" src="commands-en-GB.html" scrolling="no">
+			<frame name="eAISNavigation" src="eAIP/QA-menu-en-GB.html" scrolling="yes">
+		</frameset>
+		<frame name="eAISContent" src="QA-cover-en-GB.html">
+	</frameset>
+</html>"""
+
+#: A menu built in JavaScript rather than markup, which is what menu.js is
+#: for. There is not an anchor in it.
+MENU_JS = """
+var tree = new Array();
+tree[0] = new Node("GEN 0.4", "eAIP/QA-GEN-0.4-en-GB.html");
+tree[1] = new Node("ENR 3.2", 'eAIP/QA-ENR-3.2-en-GB.html');
+tree[2] = new Node("AD 2 OTHH", "eAIP/QA-AD-2-OTHH-en-GB.html");
+"""
+
+
+class TestAFrameset:
+    """The index is a frameset. Reading only anchors finds nothing at all."""
+
+    def test_a_frameset_has_no_sections_of_its_own(self, tool):
+        assert tool.all_sections_on(REAL_FRAMESET, BASE) == {}
+
+    def test_the_navigation_frame_is_followed(self, tool):
+        following = tool._follow_from(REAL_FRAMESET, BASE)
+        assert any(url.endswith("eAIP/QA-menu-en-GB.html") for url in following)
+
+    def test_the_menu_script_is_followed_too(self, tool):
+        """The tree may be in the script, not the page it names."""
+        following = tool._follow_from(REAL_FRAMESET, BASE)
+        assert any(url.endswith("menu.js") for url in following)
+
+    def test_sections_are_read_out_of_javascript(self, tool):
+        found = tool.all_sections_on(MENU_JS, BASE)
+        assert found["GEN-0.4"].endswith("eAIP/QA-GEN-0.4-en-GB.html")
+        assert found["ENR-3.2"].endswith("eAIP/QA-ENR-3.2-en-GB.html")
+        assert found["AD-2-OTHH"].endswith("eAIP/QA-AD-2-OTHH-en-GB.html")
+
+    def test_single_quotes_are_read(self, tool):
+        """menu.js mixes quote styles; a reader that takes only one misses rows."""
+        assert "ENR-3.2" in tool.all_sections_on(MENU_JS, BASE)
+
+
+class TestWhichEditionIsInForce:
+    """Newest published and in force today are different editions.
+
+    Qatar published AIP-30 on 03 SEP 2026 to take effect 01 OCT 2026. For the
+    whole of September the newest edition is one that is not in force. Both
+    are worth having; the fetcher must not blur them.
+    """
+
+    NEWEST = "https://aim.gov.qa/AIP/03-SEP-2026/AIP-30/2026-10-01-000000/html/index-en-GB.html"
+    CURRENT = "https://aim.gov.qa/AIP/11-JUN-2026/AIP-29/2026-08-06-000000/html/index-en-GB.html"
+
+    def test_effective_date_is_the_iso_field_not_the_publication_date(self, tool):
+        from datetime import date
+
+        assert tool.effective_date(self.NEWEST) == date(2026, 10, 1)
+
+    def test_the_newest_is_not_yet_in_force(self, tool):
+        from datetime import date
+
+        listed = [(self.NEWEST, "AMDT 01/2026"), (self.CURRENT, "2nd Edition")]
+        chosen = tool.in_force_on(listed, date(2026, 9, 7))
+        assert chosen is not None
+        assert chosen[0] == self.CURRENT
+
+    def test_after_the_effective_date_the_newest_takes_over(self, tool):
+        from datetime import date
+
+        listed = [(self.NEWEST, "AMDT 01/2026"), (self.CURRENT, "2nd Edition")]
+        assert tool.in_force_on(listed, date(2026, 10, 1))[0] == self.NEWEST
+
+    def test_nothing_in_force_is_reported_not_guessed(self, tool):
+        from datetime import date
+
+        listed = [(self.NEWEST, "AMDT 01/2026")]
+        assert tool.in_force_on(listed, date(2026, 1, 1)) is None
+
+    def test_an_undateable_edition_does_not_become_the_answer(self, tool):
+        from datetime import date
+
+        listed = [("https://aim.gov.qa/AIP/whenever/html/index-en-GB.html", "?")]
+        assert tool.in_force_on(listed, date(2026, 9, 7)) is None
