@@ -60,6 +60,28 @@ does not. So a current edition **cannot be addressed from the cycle alone**,
 and the history page is the only published way to learn which amendment number
 an edition carries. `qatar.edition_index_url(cycle, amendment)` builds the rest.
 
+## Route one and a half: the fetcher
+
+`tools/fetch_qatar_aip.py` does the whole walk on a machine that can reach
+`aim.gov.qa`. Standard library only, and no credential — Qatar's eAIP is
+public:
+
+```
+python3 tools/fetch_qatar_aip.py --out qatar-aip/
+```
+
+It starts at the edition history, follows the newest edition's link to its
+index, follows the index to the sections, and saves each one. **It follows
+links rather than building URLs**, and that is the whole design: the amendment
+number in a 2026 path cannot be derived from the AIRAC cycle, so a constructed
+URL is a guess that goes stale without saying so. A link on a published page
+is the part least likely to change and the part that is checkable when it
+does. It is verified against both layouts Qatar has used.
+
+Where a section is not on the index it says so rather than inventing a path,
+and the saved index comes back with it so the reader can describe what is
+actually there.
+
 ## Route two: one saved page
 
 Anyone with normal access to the eAIP can save a page from a browser. That is
