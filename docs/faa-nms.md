@@ -9,23 +9,33 @@ with API registration.
 **No credential appears in this file or anywhere else in this repository.** See
 [Credentials](#credentials).
 
+**To bring the connection up, follow [docs/faa-connect-runbook.md](faa-connect-runbook.md)** — this file is the reference behind it.
+
 Support: `7-AWA-NAIMES@faa.gov`, or 866-466-1336. Report test-environment
 problems there; ask the same address for production onboarding once testing is
 validated.
 
 ## Hosts
 
-| Environment | Host | Confirmed |
+| Environment | Host | Source |
 |---|---|---|
-| SIT | `https://api-sit.cgifederal-aim.com` | yes — the FAQ's own token example |
-| Staging / Pre-Prod | `https://api-staging.cgifederal-aim.com` | yes — the onboarding email |
-| Production | `https://api-nms.aim.faa.gov` | **no** — assumed, see below |
+| FIT | `https://api-fit.cgifederal-aim.com` | OpenAPI spec + cURL examples |
+| Staging / Pre-Prod | `https://api-staging.cgifederal-aim.com` | onboarding email, OpenAPI spec |
+| Production | `https://api-nms.aim.faa.gov` | OpenAPI spec + cURL examples |
 
-The production host is **not named in any document supplied with
-registration**. It is carried in `ENVIRONMENTS` with `confirmed=False` so the
-check command says so rather than letting a guess look like a fact. The FAA
-issues production details separately when onboarding is requested; correct it
-with `AEROPUB_FAA_NMS_CONFIG` rather than editing code.
+All three are now confirmed against the NMS-API OpenAPI specification
+(v1.0.18, revised 2026-02-12) and the FAA's own cURL examples file.
+
+**`api-fit`, not `api-sit`.** Earlier work here guessed "SIT" from an
+initialism and built a hostname to match. No FAA document names `api-sit`;
+both authoritative files say **FIT** — Field Integration Test. Anything set to
+`sit` was pointed at a host that does not exist. The key is kept as an alias
+resolving to the correct host, so an existing setting recovers rather than
+failing in a new way.
+
+**Production being named is not production being open.** The host is
+confirmed; access is granted separately. Validate in staging, then request
+onboarding at `7-AWA-NAIMES@faa.gov` or 866-466-1336.
 
 Note the hosts are CGI Federal's, not `faa.gov`. Anyone allowlisting egress for
 this connector needs `*.cgifederal-aim.com`, which is not an obvious guess.
@@ -91,6 +101,9 @@ All under `https://<host>/nmsapi`:
 | `GET /v1/content/{token}` | Where a handover now points. Needs the bearer. |
 | `GET /v1/locationseries` | Location-series mappings. |
 
+**Every response carries `x-request-id`.** It is the correlation handle the
+FAA asks for when reporting a problem, so capture it before raising a ticket.
+
 ### Query parameter rules
 
 Parameters combine with logical AND, and several are only valid together:
@@ -98,10 +111,22 @@ Parameters combine with logical AND, and several are only valid together:
 - `notamNumber` requires `location`
 - `latitude`, `longitude` and `radius` are used together; radius 0–100 NM
 - `effectiveStartDate` and `effectiveEndDate` are used together
-- `lastUpdatedDate` on `/v1/notams` is limited to a **72-hour** window and
-  returns both active and inactive NOTAM
-- `lastUpdatedDate` on `/v1/locationseries` defaults to a **1-hour** window and
-  must not exceed **5 days** in the past
+- `notamNumber` requires **`location` or `accountability`** — either will do
+- `lastUpdatedDate` on `/v1/notams` is limited to a **24-hour** window and
+  returns both active and inactive NOTAM. *(The FAQ and the SoapUI project both
+  say 72 hours; the OpenAPI spec v1.0.18 says 24. The spec is newer and is what
+  the gateway enforces — a 48-hour lookback that used to work now fails.)*
+- `lastUpdatedDate` on `/v1/locationseries` must not exceed **5 days** in the
+  past. Omitting it returns **a full initial load of all active
+  Location-Series**, not a 1-hour window as the SoapUI project's description
+  claims — so an unfiltered poll is far heavier than it looks
+- Location-Series rows carry a status of New (`N`), Updated (`U`) or Deleted
+  (`D`). A delta returns all three; an initial load excludes `D`
+- `classification` **as the sole query parameter** on `/v1/notams` returns a
+  relative content path rather than inline data, and that path expires in
+  5 minutes. With any other parameter it returns data in the body
+- A request taking longer than 30 s returns **408**, so a client timeout below
+  that turns a slow answer into a different error
 - `allowRedirect=false` on the initial-load endpoints returns the handover as
   JSON instead of a 307
 - **A request with no query parameters at all is an error**, not "give me

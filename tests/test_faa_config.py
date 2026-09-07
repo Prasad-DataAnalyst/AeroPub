@@ -30,7 +30,11 @@ class TestPublishedEnvironments:
     @pytest.mark.parametrize(
         "name,host",
         [
-            ("sit", "https://api-sit.cgifederal-aim.com"),
+            ("fit", "https://api-fit.cgifederal-aim.com"),
+            # Earlier work guessed "sit" from an initialism and built a host
+            # to match. No FAA document names api-sit; both the OpenAPI spec
+            # and the cURL examples say api-fit.
+            ("sit", "https://api-fit.cgifederal-aim.com"),
             ("staging", "https://api-staging.cgifederal-aim.com"),
             ("prod", "https://api-nms.aim.faa.gov"),
         ],
@@ -182,10 +186,16 @@ class TestLoadEnvironment:
         assert load_environment(environ={}).name == "prod"
 
     def test_the_environment_variable_selects(self):
-        assert load_environment(environ={ENVIRONMENT_VAR: "sit"}).name == "sit"
+        assert load_environment(environ={ENVIRONMENT_VAR: "fit"}).name == "fit"
+
+    def test_the_earlier_misspelling_reaches_the_right_host(self):
+        """Anything set to "sit" was pointed at a hostname that does not
+        exist, so it resolves to the real one rather than failing later."""
+        found = load_environment(environ={ENVIRONMENT_VAR: "sit"})
+        assert found.host == "https://api-fit.cgifederal-aim.com"
 
     def test_an_explicit_name_beats_the_environment_variable(self):
-        assert load_environment("staging", environ={ENVIRONMENT_VAR: "sit"}).name == "staging"
+        assert load_environment("staging", environ={ENVIRONMENT_VAR: "fit"}).name == "staging"
 
     def test_an_unknown_name_says_how_to_add_one(self):
         with pytest.raises(KeyError, match=CONFIG_PATH_VAR):

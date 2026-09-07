@@ -367,11 +367,22 @@ class NmsEnvironment:
 #: The three environments the FAA documents. Registration is per-environment:
 #: a key issued for staging does not work against production.
 ENVIRONMENTS: dict[str, NmsEnvironment] = {
+    "fit": NmsEnvironment(
+        name="fit",
+        host="https://api-fit.cgifederal-aim.com",
+        description="FIT — Field Integration Test. Named in the NMS-API "
+        "OpenAPI specification and the FAA's own cURL examples.",
+    ),
+    # Carried because earlier work here guessed "sit" from an initialism and
+    # built a host to match. No FAA document names api-sit, so anything set to
+    # it was pointed at a hostname that does not exist; it resolves to the
+    # right host now rather than failing differently.
     "sit": NmsEnvironment(
-        name="sit",
-        host="https://api-sit.cgifederal-aim.com",
-        description="SIT — System Integration Test. The host the FAQ's own "
-        "token example uses.",
+        name="fit",
+        host="https://api-fit.cgifederal-aim.com",
+        description="FIT — Field Integration Test. (\"sit\" is an earlier "
+        "misreading of this environment's name, kept so an existing setting "
+        "reaches the right host.)",
     ),
     "staging": NmsEnvironment(
         name="staging",
@@ -384,13 +395,12 @@ ENVIRONMENTS: dict[str, NmsEnvironment] = {
         name="prod",
         host="https://api-nms.aim.faa.gov",
         min_data_pull_interval=180.0,
-        description="Production. NOT CONFIRMED — no document supplied with "
-        "registration names the production host, and this is an assumption "
-        "carried from earlier work. The FAA issues production details "
-        "separately when onboarding is requested at 7-AWA-NAIMES@faa.gov; "
-        "correct it with AEROPUB_FAA_NMS_CONFIG rather than editing code.",
+        description="Production. Named as the Prod Environment in the NMS-API "
+        "OpenAPI specification (v1.0.18) and the FAA's cURL examples. Access "
+        "still has to be granted: validate in staging first, then request "
+        "production onboarding at 7-AWA-NAIMES@faa.gov or 866-466-1336.",
         is_production=True,
-        confirmed=False,
+        confirmed=True,
     ),
 }
 

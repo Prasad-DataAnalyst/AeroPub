@@ -180,9 +180,18 @@ class TestFilterValidation:
         with pytest.raises(NmsConfigurationError, match="fetch_initial_load"):
             _client(Router({})).notams()
 
-    def test_a_notam_number_without_a_location_is_refused(self):
-        with pytest.raises(NmsConfigurationError, match="location as well"):
+    def test_a_notam_number_alone_is_refused(self):
+        with pytest.raises(NmsConfigurationError, match="or an\s+accountability"):
             _client(Router({})).notams(notam_number="10/108")
+
+    def test_a_notam_number_with_an_accountability_is_accepted(self):
+        """The specification allows either. A NOTAM number is unique within an
+        accountability as well, and that is how an ARTCC's own are addressed."""
+        router = Router({"/v1/notams": (AIXM, 200, {})})
+        _client(router).notams(notam_number="10/108", accountability="ZFW")
+        url = router.requests[0].full_url
+        assert "accountability=ZFW" in url
+        assert "notamNumber=10%2F108" in url
 
     def test_a_partial_circle_is_refused(self):
         with pytest.raises(NmsConfigurationError, match="not defined by two"):

@@ -459,6 +459,7 @@ class NmsClient:
         nms_id: str | None = None,
         location: str | None = None,
         notam_number: str | None = None,
+        accountability: str | None = None,
         latitude: float | None = None,
         longitude: float | None = None,
         radius: float | None = None,
@@ -478,7 +479,7 @@ class NmsClient:
         """
         families = {
             "nms_id": nms_id is not None,
-            "location": location is not None,
+            "location": location is not None or accountability is not None,
             "geospatial": any(v is not None for v in (latitude, longitude, radius)),
         }
         chosen = [name for name, present in families.items() if present]
@@ -492,10 +493,13 @@ class NmsClient:
         # Checked before the "no filter at all" case, so someone who supplied
         # a NOTAM number is told what is missing rather than that they supplied
         # nothing.
-        if notam_number is not None and location is None:
+        # The specification allows either. Requiring location alone refused a
+        # legitimate query — a NOTAM number is unique within an accountability
+        # as well, and that is how an ARTCC's own NOTAM are addressed.
+        if notam_number is not None and location is None and accountability is None:
             raise NmsConfigurationError(
-                "notam_number identifies a NOTAM within a location; supply "
-                "location as well."
+                "notam_number identifies a NOTAM within a location or an "
+                "accountability; supply one of them as well."
             )
         if not chosen and last_updated is None:
             raise NmsConfigurationError(
@@ -518,6 +522,8 @@ class NmsClient:
             params["location"] = location.strip().upper()
         if notam_number is not None:
             params["notamNumber"] = notam_number
+        if accountability is not None:
+            params["accountability"] = accountability
         if latitude is not None:
             params["latitude"] = latitude
             params["longitude"] = longitude
