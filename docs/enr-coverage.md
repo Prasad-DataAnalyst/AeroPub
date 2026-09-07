@@ -33,6 +33,37 @@ it reports as absent, and a half-known code decodes to nothing at all —
 "taxiway <unknown>" reads as though the condition were understood, which is
 the misreading to avoid.
 
+## PANS-AIM and data quality
+
+Doc 10066 is where an AIP's shape comes from, and most of the structure it
+defines is already implemented here: `aip.py` carries 127 sections across GEN,
+ENR and AD, which is the Appendix 2 layout, and `quality.py` measures how a
+State publishes against its principles.
+
+`dataquality.py` covers the part that was missing — accuracy, publication
+resolution and integrity classification.
+
+**The data catalogue is not reproduced.** Doc 10066 is a copyrighted ICAO
+publication. What is held instead is better suited to the job: the values
+**each State publishes for itself**, cited to the section they were read from,
+which in most AIPs is GEN 2.1 and GEN 3.
+
+That is not a workaround. A State publishing coarser than the catalogue asks
+has said something, and screening against a copy of the ICAO table would make
+that finding *our* claim about *their* data. Screening against their own
+published figure makes it their claim about their own data — the version that
+survives a conversation with the authority.
+
+Three integrity classes: routine, essential, critical. They say what a
+corruption would cost, not how severe a finding is. `NOT_CLASSIFIED` and
+`UNREAD` have no rank at all, because sorting an unclassified item below a
+routine one would read as safer than the safest class.
+
+The one computed check is deliberately narrow: a coordinate held to whole
+seconds where the State publishes hundredths came from somewhere in our chain
+rather than from the AIP. Anything it cannot compare answers no — a resolution
+check that guessed would produce findings about its own arithmetic.
+
 ## The ICAO Annexes
 
 `annexes.py` — a citation index, **not the standards**. The Annexes are
