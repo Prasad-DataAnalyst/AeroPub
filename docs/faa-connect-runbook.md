@@ -27,9 +27,33 @@ pack's pair produces a 401 that looks exactly like a bad credential.
 
 ## 1. Install the credential
 
+**Read it from the file. Never transcribe it.**
+
 ```
-aeropub credentials --set AEROPUB_FAA_CLIENT_ID       # prompts; the spreadsheet KEY column
-aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET   # the SECRET column
+pip install "aeropub[onboarding]"     # once — openpyxl and msoffcrypto-tool
+aeropub credentials --import-pack AeroPub.xlsx --dry-run
+aeropub credentials --import-pack AeroPub.xlsx
+```
+
+The workbook is encrypted and its password arrives in a separate email; you
+are prompted for it, so it stays out of shell history. The value goes from the
+FAA's own file to a mode-600 file outside any repository, and is never
+rendered on the way. The same command reads a SoapUI project — pass whichever
+file you were sent.
+
+> **Why this matters, from this project's own history.** Transcribing this
+> secret from a photograph of the spreadsheet got one character wrong out of
+> sixty-four: a lowercase `l` read as a capital `I`, which in most screen fonts
+> is the same picture. Both are 64 characters, both look right, and the gateway
+> answers with a 401 that is indistinguishable from a revoked key — so the
+> hours go into chasing the credential instead of the typo. Reading the file is
+> the only version of this that cannot be wrong.
+
+If you must do it by hand:
+
+```
+aeropub credentials --set AEROPUB_FAA_CLIENT_ID       # the spreadsheet Key row
+aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET   # the Secret row
 ```
 
 Or, in anything hosted, set them as real environment variables instead — they
@@ -43,11 +67,6 @@ Expect `set (48 characters, mixed)` for the id and `set (64 characters, mixed)`
 for the secret. Those two lengths are the FAA's format; anything else means a
 truncated paste, and a truncated secret is indistinguishable from a wrong one
 once the gateway sees it.
-
-> Typing a 64-character opaque string by hand is where these leak and where
-> they get corrupted. If the FAA sent a SoapUI project whose profile has *your*
-> keys in it, `aeropub credentials --import-pack <file>` moves them across
-> without rendering them. Check the fingerprints against the spreadsheet first.
 
 ---
 

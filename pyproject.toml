@@ -16,6 +16,11 @@ aeropub = "aeropub.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+# Only for reading an authority's onboarding spreadsheet. The platform itself
+# is stdlib-only and stays that way: a deployment that never imports a
+# credential never needs these, and `aeropub credentials --set` is always
+# available instead.
+onboarding = ["openpyxl>=3.1", "msoffcrypto-tool>=5.4"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

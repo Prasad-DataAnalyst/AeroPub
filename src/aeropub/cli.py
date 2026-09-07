@@ -557,7 +557,9 @@ def _cmd_netcheck(args: argparse.Namespace) -> int:
     return netcheck.main(argv)
 
 
-def _import_pack(store, path: str, *, dry_run: bool = False) -> int:
+def _import_pack(
+    store, path: str, *, dry_run: bool = False, password: str | None = None
+) -> int:
     """Install a credential from an onboarding pack, never rendering it.
 
     The alternative is an operator opening the file, finding a 64-character
@@ -565,10 +567,27 @@ def _import_pack(store, path: str, *, dry_run: bool = False) -> int:
     history and the process list — or into a chat window to ask which field is
     which. This is the same operation without those copies.
     """
-    from aeropub.onboarding import PackError, read_soapui_pack
+    from pathlib import Path
+
+    from aeropub.onboarding import PackError, read_pack
+
+    # An encrypted workbook needs its password, and a password on the command
+    # line lands in shell history and the process list. Prompt for it.
+    if (
+        password is None
+        and Path(path).suffix.lower() in (".xlsx", ".xlsm", ".xls")
+        and sys.stdin.isatty()
+    ):
+        import getpass
+
+        try:
+            password = getpass.getpass(f"password for {Path(path).name}: ") or None
+        except (EOFError, KeyboardInterrupt):
+            print("\nnothing stored", file=sys.stderr)
+            return CANNOT_RUN
 
     try:
-        pack = read_soapui_pack(path)
+        pack = read_pack(path, password=password)
     except PackError as error:
         print(str(error), file=sys.stderr)
         return CANNOT_RUN
@@ -620,7 +639,11 @@ def _cmd_credentials(args: argparse.Namespace) -> int:
     store = CredentialStore()
 
     if getattr(args, "import_pack", None):
-        return _import_pack(store, args.import_pack, dry_run=args.dry_run)
+        return _import_pack(
+            store, args.import_pack,
+            dry_run=args.dry_run,
+            password=getattr(args, "pack_password", None),
+        )
 
     if args.set:
         import getpass
@@ -1702,6 +1725,14 @@ def _parser() -> argparse.ArgumentParser:
             "pack (the SoapUI project the FAA ships). The value goes from that "
             "file to the store without being rendered, which hand-copying "
             "cannot promise"
+        ),
+    )
+    secrets.add_argument(
+        "--pack-password", dest="pack_password", metavar="PASSWORD",
+        help=(
+            "password for an encrypted onboarding spreadsheet. The FAA sends "
+            "it in a separate email from the workbook. Omit it to be prompted "
+            "rather than leaving it in shell history"
         ),
     )
     secrets.add_argument(

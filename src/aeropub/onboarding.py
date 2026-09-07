@@ -20,6 +20,20 @@ never rendered on the way. Nothing here returns a secret to a caller that did
 not already have the file, nothing prints one, and the summary an operator sees
 names fields and lengths.
 
+Two shapes, one problem
+------------------------
+The FAA sends the credential twice: as an encrypted spreadsheet with a **Key**
+and **Secret** row — the password arriving in a separate email — and inside the
+SoapUI project's OAuth2 profile. Both are read here, because the alternative
+in both cases is a person retyping a 64-character opaque string.
+
+That is not a hypothetical cost. Transcribing this project's own secret from a
+photograph of the spreadsheet got one character wrong out of sixty-four: a
+lowercase ``l`` read as a capital ``I``, which in most screen fonts is the same
+picture. The resulting 401 is indistinguishable from a revoked key, so the
+hours go into chasing the credential rather than the typo. Reading the file is
+the only version of this that cannot be wrong.
+
 What is deliberately not imported
 ----------------------------------
 The **access token**. A bearer in an exported project is minutes old at best
@@ -35,6 +49,7 @@ only the authority can do. The importer says so every time.
 
 from __future__ import annotations
 
+import io
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,8 +58,19 @@ __all__ = [
     "PackError",
     "OnboardingPack",
     "read_soapui_pack",
+    "read_spreadsheet_pack",
+    "read_pack",
     "SOAPUI_FIELDS",
+    "SPREADSHEET_ROWS",
 ]
+
+#: The row labels the FAA's onboarding spreadsheet uses, and what each is to
+#: us. Matched case-insensitively on the label cell; the value is the cell
+#: beside it.
+SPREADSHEET_ROWS: dict[str, str] = {
+    "key": "AEROPUB_FAA_CLIENT_ID",
+    "secret": "AEROPUB_FAA_CLIENT_SECRET",
+}
 
 
 class PackError(ValueError):
@@ -175,3 +201,101 @@ def read_soapui_pack(path: Path | str) -> OnboardingPack:
         endpoint=_text(raw, "endpoint") or "",
         dropped=tuple(dropped),
     )
+
+
+def read_spreadsheet_pack(
+    path: Path | str, *, password: str | None = None
+) -> OnboardingPack:
+    """Read the FAA's onboarding spreadsheet — Key and Secret rows.
+
+    The workbook is encrypted and its password arrives in a separate email, so
+    both are needed. A wrong password is reported as a wrong password rather
+    than as a malformed file, because those send a person to different places.
+
+    Raises :class:`PackError` for anything it cannot read, including a
+    workbook that opens but carries no such rows.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise PackError(f"{path}: cannot be read — no such file")
+
+    try:
+        import openpyxl
+    except ImportError:  # pragma: no cover - environment-dependent
+        raise PackError(
+            "reading a spreadsheet needs openpyxl (pip install openpyxl); "
+            "or use 'aeropub credentials --set NAME' and paste the values."
+        ) from None
+
+    handle: object
+    if password:
+        try:
+            import msoffcrypto
+        except ImportError:  # pragma: no cover - environment-dependent
+            raise PackError(
+                "an encrypted workbook needs msoffcrypto-tool "
+                "(pip install msoffcrypto-tool)."
+            ) from None
+        buffer = io.BytesIO()
+        try:
+            with open(path, "rb") as raw:
+                office = msoffcrypto.OfficeFile(raw)
+                office.load_key(password=password)
+                office.decrypt(buffer)
+        except Exception as error:  # msoffcrypto raises several types
+            raise PackError(
+                f"{path}: could not be decrypted — {type(error).__name__}. "
+                "The FAA sends this workbook's password in a separate email "
+                "from the workbook itself."
+            ) from None
+        buffer.seek(0)
+        handle = buffer
+    else:
+        handle = path
+
+    try:
+        book = openpyxl.load_workbook(handle, data_only=True, read_only=True)
+    except Exception as error:
+        raise PackError(
+            f"{path}: could not be opened — {type(error).__name__}. "
+            "If it is password-protected, supply the password."
+        ) from None
+
+    secrets: dict[str, str] = {}
+    try:
+        for sheet in book.worksheets:
+            for row in sheet.iter_rows():
+                cells = [c.value for c in row if c.value is not None]
+                if len(cells) < 2:
+                    continue
+                label = str(cells[0]).strip().casefold()
+                name = SPREADSHEET_ROWS.get(label)
+                if name is not None and name not in secrets:
+                    value = str(cells[1]).strip()
+                    if value:
+                        secrets[name] = value
+    finally:
+        book.close()
+
+    absent = sorted(set(SPREADSHEET_ROWS.values()) - set(secrets))
+    if absent:
+        raise PackError(
+            f"{path}: no rows labelled "
+            f"{' and '.join(sorted(SPREADSHEET_ROWS))} carrying a value. The "
+            "FAA's onboarding spreadsheet puts the label in one column and "
+            "the value beside it."
+        )
+
+    return OnboardingPack(path=path, secrets=secrets)
+
+
+def read_pack(path: Path | str, *, password: str | None = None) -> OnboardingPack:
+    """Read whichever onboarding artefact this is, by extension.
+
+    An operator has whatever the FAA emailed them and should not have to know
+    which reader it needs.
+    """
+    path = Path(path)
+    if path.suffix.lower() in (".xlsx", ".xlsm", ".xls"):
+        return read_spreadsheet_pack(path, password=password)
+    return read_soapui_pack(path)

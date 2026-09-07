@@ -175,26 +175,45 @@ Two are needed:
 | `AEROPUB_FAA_CLIENT_ID` | OAuth2 client id, issued with registration |
 | `AEROPUB_FAA_CLIENT_SECRET` | OAuth2 client secret, issued with it |
 
-### Installing them from the pack, without ever seeing them
+### Installing them from the file, without ever seeing them
 
-The FAA does not issue a client id and secret in a form anything can consume.
-It ships the SoapUI project, with the OAuth2 profile filled in — client id,
-client secret, and whatever bearer the person who exported it happened to be
-holding, all in plain text. Import it directly:
+The FAA issues the credential twice, in two shapes, neither of which anything
+can consume directly:
+
+- an **encrypted spreadsheet** with a `Key` row and a `Secret` row, whose
+  password arrives in a separate email;
+- the **SoapUI project**, with the OAuth2 profile filled in — client id, client
+  secret, and whatever bearer the person who exported it was holding, in plain
+  text.
+
+Import either directly (`pip install "aeropub[onboarding]"` first for the
+spreadsheet):
 
 ```
-aeropub credentials --import-pack NMS-API-PreProd-soapui-project.xml --dry-run
-aeropub credentials --import-pack NMS-API-PreProd-soapui-project.xml
+aeropub credentials --import-pack AeroPub.xlsx --dry-run
+aeropub credentials --import-pack AeroPub.xlsx      # prompts for the password
 ```
 
 The value goes from the file the FAA sent to a mode-600 file outside any
-repository, and is never rendered on the way. That is the whole point: the
-alternative is an operator opening the project, finding a 64-character opaque
-string and moving it by hand into a terminal — where it lands in shell history
-and in the process list — or into a chat window to ask which field is which, or
-into a screenshot for a ticket. Every one of those is a copy of a live
-credential somewhere nobody is tracking, and nobody spots 64 characters of
-opaque text in a scrollback.
+repository, and is never rendered on the way. That is the whole point, and it
+is not only about leakage. Transcribing this project's own secret from a
+photograph of the spreadsheet got **one character wrong out of sixty-four** — a
+lowercase `l` read as a capital `I`, the same picture in most screen fonts.
+Both strings are 64 characters, both look right, and the gateway answers with a
+401 indistinguishable from a revoked key, so the investigation goes to the
+credential rather than the typo.
+
+The leakage argument is the other half: an operator opening the file, finding a
+64-character opaque string and moving it by hand into a terminal — where it
+lands in shell history and the process list — or into a chat window to ask
+which field is which, or into a screenshot for a ticket. Every one is a copy of
+a live credential somewhere nobody is tracking, and nobody spots 64 characters
+of opaque text in a scrollback.
+
+**Beware the sample.** The SoapUI project the FAA ships is named `..._sample`
+and carries the FAA's own demo key and secret, not yours. It is the right file
+for reading endpoints and request shapes and the wrong one to authenticate
+with. The spreadsheet is the credential.
 
 The **access token is deliberately not imported**. A bearer in an exported
 project is minutes old at best and is a third credential to leak; the client

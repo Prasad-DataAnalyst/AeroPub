@@ -256,3 +256,97 @@ class TestTheCommand:
         )
         assert code != 0
         assert not (tmp_path / "credentials.json").exists()
+
+
+# --------------------------------------------------------------------------
+# The spreadsheet the FAA actually emails
+# --------------------------------------------------------------------------
+
+
+def workbook(tmp_path, rows=None, name="AeroPub.xlsx", password=None):
+    """A workbook shaped like the FAA's: a label column and a value beside it."""
+    openpyxl = pytest.importorskip("openpyxl")
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    for index, (label, value) in enumerate(
+        rows if rows is not None else [("Key", FAKE_ID), ("Secret", FAKE_SECRET)],
+        start=2,
+    ):
+        sheet.cell(row=index * 2, column=1, value=label)
+        sheet.cell(row=index * 2, column=2, value=value)
+    path = tmp_path / name
+    book.save(path)
+    return path
+
+
+class TestSpreadsheet:
+    def test_the_key_and_secret_rows_are_read(self, tmp_path):
+        from aeropub.onboarding import read_spreadsheet_pack
+
+        pack = read_spreadsheet_pack(workbook(tmp_path))
+        assert pack.secrets == {
+            "AEROPUB_FAA_CLIENT_ID": FAKE_ID,
+            "AEROPUB_FAA_CLIENT_SECRET": FAKE_SECRET,
+        }
+
+    def test_the_labels_are_matched_whatever_their_case(self, tmp_path):
+        from aeropub.onboarding import read_spreadsheet_pack
+
+        path = workbook(tmp_path, rows=[("KEY", FAKE_ID), ("secret", FAKE_SECRET)])
+        assert len(read_spreadsheet_pack(path).secrets) == 2
+
+    def test_surrounding_whitespace_is_not_part_of_the_secret(self, tmp_path):
+        """A trailing space in a cell is invisible and produces a 401."""
+        from aeropub.onboarding import read_spreadsheet_pack
+
+        path = workbook(
+            tmp_path, rows=[("Key", f"  {FAKE_ID} "), ("Secret", f"{FAKE_SECRET}  ")]
+        )
+        assert read_spreadsheet_pack(path).secrets["AEROPUB_FAA_CLIENT_ID"] == FAKE_ID
+
+    def test_half_a_pair_is_refused(self, tmp_path):
+        from aeropub.onboarding import PackError, read_spreadsheet_pack
+
+        path = workbook(tmp_path, rows=[("Key", FAKE_ID)])
+        with pytest.raises(PackError, match="no rows labelled"):
+            read_spreadsheet_pack(path)
+
+    def test_a_workbook_with_neither_row_says_what_it_wanted(self, tmp_path):
+        from aeropub.onboarding import PackError, read_spreadsheet_pack
+
+        path = workbook(tmp_path, rows=[("Something", "else")])
+        with pytest.raises(PackError, match="key and secret"):
+            read_spreadsheet_pack(path)
+
+    def test_a_missing_file_is_an_error(self, tmp_path):
+        from aeropub.onboarding import PackError, read_spreadsheet_pack
+
+        with pytest.raises(PackError, match="cannot be read"):
+            read_spreadsheet_pack(tmp_path / "nothing.xlsx")
+
+    def test_the_summary_still_gives_lengths_and_not_values(self, tmp_path):
+        from aeropub.onboarding import read_spreadsheet_pack
+
+        summary = read_spreadsheet_pack(workbook(tmp_path)).summary()
+        assert FAKE_SECRET not in summary
+        assert f"({len(FAKE_SECRET)} characters)" in summary
+
+
+class TestReadPack:
+    def test_a_spreadsheet_is_routed_by_its_extension(self, tmp_path):
+        from aeropub.onboarding import read_pack
+
+        assert len(read_pack(workbook(tmp_path)).secrets) == 2
+
+    def test_a_soapui_project_is_routed_by_its_extension(self, tmp_path):
+        from aeropub.onboarding import read_pack
+
+        assert len(read_pack(write(tmp_path, pack_xml())).secrets) == 2
+
+    def test_an_operator_need_not_know_which_reader_it_needs(self, tmp_path):
+        """They have whatever the FAA emailed them."""
+        from aeropub.onboarding import read_pack
+
+        both = [read_pack(workbook(tmp_path)), read_pack(write(tmp_path, pack_xml()))]
+        assert all("AEROPUB_FAA_CLIENT_SECRET" in p.secrets for p in both)
