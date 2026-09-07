@@ -105,6 +105,7 @@ from aeropub.store import open_store
 from aeropub.sweep import sweep as sweep_network
 from aeropub.suitability import Assessment, assess_suitability
 from aeropub.atlas import atlas_html, build_atlas
+from aeropub.briefing import briefing_html
 from aeropub.tables import (
     ColumnError,
     TableError,
@@ -978,6 +979,29 @@ def _cmd_route(args: argparse.Namespace) -> int:
             _write_profile(document, args.profile)
         if args.plan:
             _write_plan(document, structure, navaids, args.plan)
+        if args.briefing:
+            # The same structures that produced the dossier, drawn. A briefing
+            # without a map is still a briefing, so the map is best-effort:
+            # nothing here fails because there was no geometry to draw.
+            sheet = build_atlas(
+                airspace=airspace,
+                structure=structure,
+                navaids=navaids,
+                hazards=hazards,
+                regions=[j.designator for j in crosses],
+                level_ft=args.level,
+                filed=filed,
+                title=args.reference or "",
+            )
+            Path(args.briefing).write_text(
+                briefing_html(
+                    document,
+                    atlas=sheet if sheet.bounds is not None else None,
+                    title=args.reference or "",
+                ),
+                encoding="utf-8",
+            )
+            print(f"\n  briefing written to {args.briefing}")
         if args.network:
             if structure is None:
                 print(
@@ -1795,6 +1819,13 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--surveillance-template", dest="surveillance_template",
         action="store_true", help="print a blank ENR 1.6 extract",
+    )
+    sector.add_argument(
+        "--briefing", metavar="FILE",
+        help=(
+            "write the whole sector as one page: the map, the open items "
+            "ranked, and what was not looked at"
+        ),
     )
     sector.add_argument(
         "--notice-hours", dest="notice_hours", type=float, default=None,

@@ -252,6 +252,27 @@ State does not publish, with its basis. If the State's checklist then lists it,
 the reconciliation says so: a wrong absence closes a question a gap would have
 kept open.
 
+## The whole sector as one page
+
+`--briefing` puts the map and the findings in one document — the drawing at
+the top, the open items ranked under it, and what was not looked at in a
+section of its own:
+
+```
+python -m aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+  --crosses OTDF --crosses OIIX --level 35000 \
+  --route "ALSEM UM688 KUKLA L604 RASKI" \
+  --structure enr3.json --airspace enr2.json --navaids enr4.json \
+  --hazards enr5.json --surveillance enr16.json --supps enr18.json \
+  --briefing sector.html
+```
+
+The headline on that page is coverage, not comfort. A dossier that read both
+ends of a route and none of the middle would otherwise print "nothing found"
+in the same typeface as one that read everything, so a page that cannot speak
+for the whole sector says so before it says anything else and never shows a
+settled verdict.
+
 ## What will still not be answered
 
 Nothing tells you whether a point is inside an area. Not a route against an
