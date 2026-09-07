@@ -123,7 +123,19 @@ to report it rather than work around it.
 The data is not unavailable — it is one machine away. Anyone with a normal
 connection fetches the bundle and hands the file over.
 
-**On a machine that can reach CGI Federal**, two commands:
+**On a machine that can reach CGI Federal** — one command, standard library
+only, nothing to install:
+
+```
+python3 tools/fetch_faa_othh.py --xlsx AeroPub.xlsx --initial-load
+```
+
+It reads the key and secret straight out of the workbook (prompting for its
+password), gets a token, fetches OTHH's international NOTAM and the whole
+INTERNATIONAL baseline, and writes both beside itself. The secret is never
+echoed and never reaches a command line.
+
+Or by hand, if you prefer to see every step:
 
 ```
 TOKEN=$(curl -s -X POST --location "https://api-staging.cgifederal-aim.com/v1/auth/token" \
