@@ -359,7 +359,10 @@ def _data(report: ConnectionReport, client: NmsClient) -> bool:
             report.exit_code = EXIT_PROTOCOL
         return ok
 
-    return _run(report, "data", lambda: client.fetch_initial_load("DOMESTIC"),
+    # INTERNATIONAL, not DOMESTIC: this platform reads international NOTAM in
+    # ICAO format, and a domestic load proves the transport while exercising
+    # none of the parsing the application actually depends on.
+    return _run(report, "data", lambda: client.fetch_initial_load("INTERNATIONAL"),
                 on_success=succeeded)
 
 
@@ -530,11 +533,12 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--classification", metavar="KIND",
+        "--classification", metavar="KIND", default="INTERNATIONAL",
         help=(
-            "narrow --notams to one classification: INTERNATIONAL, DOMESTIC, "
-            "FDC, MILITARY, LOCAL_MILITARY. A foreign aerodrome's NOTAM are "
-            "INTERNATIONAL in the FAA's holdings."
+            "which classification to read. Defaults to INTERNATIONAL, which "
+            "is what this platform is built on: ICAO-format messages with a "
+            "Q-line. DOMESTIC, FDC, MILITARY and LOCAL_MILITARY are also "
+            "accepted, and 'ALL' disables the filter."
         ),
     )
     parser.add_argument(
@@ -578,10 +582,11 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return EXIT_PROTOCOL
+        wanted = args.classification
         return _fetch_notams(
             env, environ, archive,
             location=args.notams,
-            classification=args.classification,
+            classification=None if str(wanted).upper() == "ALL" else wanted,
             out=args.out,
         )
 

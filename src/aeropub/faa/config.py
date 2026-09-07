@@ -76,6 +76,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
@@ -115,6 +116,73 @@ DEFAULT_ENVIRONMENT = "prod"
 #: the long form (``DOMESTIC``) while the AIXM payload reports the short form
 #: (``DOM``) in ``fnse:classification``.
 KNOWN_CLASSIFICATIONS: tuple[str, ...] = ("DOMESTIC", "INTERNATIONAL", "MILITARY", "LMIL", "FDC")
+
+
+class Classification(str, Enum):
+    """A NOTAM classification, in both the forms the API uses.
+
+    The asymmetry above is real and catches people: a request says
+    ``INTERNATIONAL`` and the payload that comes back says ``INTL``. Held as a
+    comment, that fact could not be acted on — nothing could match a NOTAM's
+    own classification against the one that was asked for, so a filter written
+    the obvious way silently matched nothing.
+    """
+
+    INTERNATIONAL = "INTERNATIONAL"
+    DOMESTIC = "DOMESTIC"
+    MILITARY = "MILITARY"
+    LOCAL_MILITARY = "LOCAL_MILITARY"
+    FDC = "FDC"
+
+    @property
+    def payload_form(self) -> str:
+        """What ``fnse:classification`` says for this classification."""
+        return {
+            Classification.INTERNATIONAL: "INTL",
+            Classification.DOMESTIC: "DOM",
+            Classification.MILITARY: "MIL",
+            Classification.LOCAL_MILITARY: "LMIL",
+            Classification.FDC: "FDC",
+        }[self]
+
+    @property
+    def request_form(self) -> str:
+        """What a query parameter or path segment says for it."""
+        return self.value
+
+    @property
+    def is_icao_format(self) -> bool | None:
+        """Whether messages of this kind are written in ICAO format.
+
+        ``None`` for the classifications where it varies. International NOTAM
+        are ICAO-format by definition — that is what makes them international.
+        FAA domestic and FDC NOTAM use the FAA's own format, which has no
+        Q-line and no lettered items. Military holdings are mixed.
+        """
+        if self is Classification.INTERNATIONAL:
+            return True
+        if self in (Classification.DOMESTIC, Classification.FDC):
+            return False
+        return None
+
+    @classmethod
+    def read(cls, value: object) -> "Classification | None":
+        """Read either form, or ``None`` for anything unrecognised.
+
+        ``None`` rather than a guess: a classification the FAA introduces
+        after this build should read as *not one we know*, which a caller can
+        report, rather than being forced into the nearest member.
+        """
+        text = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+        if not text:
+            return None
+        for member in cls:
+            if text in (member.value, member.payload_form):
+                return member
+        # The two spellings the FAA uses for the same thing in different places.
+        if text in ("LOCAL_MILITARY", "LMIL"):
+            return cls.LOCAL_MILITARY
+        return None
 
 
 @dataclass(frozen=True, slots=True)

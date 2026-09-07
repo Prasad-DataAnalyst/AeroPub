@@ -150,7 +150,7 @@ def relay_initial_load(
     path: Path | str,
     *,
     archive: Archive,
-    classification: str | None = None,
+    classification: str | None = "INTERNATIONAL",
     obtained_from: str = "",
     read_at: datetime | None = None,
 ) -> RelayedLoad:

@@ -212,9 +212,10 @@ python -m aeropub.faa.check --notams OTHH --classification INTERNATIONAL \
   --archive raw/ --out othh-notams.json
 ```
 
-A **foreign** aerodrome's NOTAM are `INTERNATIONAL` in the FAA's holdings;
-US ones are `DOMESTIC`. `--archive` is required — a NOTAM answered from a
-response nobody kept is not citable.
+`INTERNATIONAL` is the default and can be omitted — it is what this platform
+is built on. US NOTAM are `DOMESTIC`, and `--classification ALL` disables the
+filter. `--archive` is required: a NOTAM answered from a response nobody kept
+is not citable.
 
 > **The FAA is not the source of record for a foreign aerodrome.** It
 > redistributes international NOTAM; the State's own AIS issues them. For OTHH

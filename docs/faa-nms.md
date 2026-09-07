@@ -15,6 +15,39 @@ Support: `7-AWA-NAIMES@faa.gov`, or 866-466-1336. Report test-environment
 problems there; ask the same address for production onboarding once testing is
 validated.
 
+## What this platform reads
+
+**International NOTAM, in ICAO format, out of AIXM.** That is an architectural
+commitment, not a default:
+
+- `INTERNATIONAL` is the default classification everywhere — the `--data`
+  stage, `--notams`, and a relayed bundle. `--classification ALL` disables the
+  filter where somebody genuinely wants everything.
+- An international NOTAM is ICAO-format by definition, which is what makes the
+  Q-line available: the FIR, the subject and condition, the traffic, purpose
+  and scope, the level band, and the centre and radius. FAA domestic and FDC
+  NOTAM use the FAA's own format, which carries none of that.
+- `register_feed(..., only=[...])` restricts what reaches a register, and
+  `take_feed` returns the counts alongside it. A register holding four hundred
+  NOTAM out of twenty thousand is either a correct filter or a broken one, and
+  only those counts tell them apart.
+
+Two edges this has to hold, both of which were defects:
+
+**The two spellings.** A request says `INTERNATIONAL`; the payload that comes
+back says `INTL`. That was a comment rather than a type, so a filter written
+the obvious way matched nothing at all — silently, returning an empty
+international-only register that looked like a quiet day. `Classification`
+reads either form.
+
+**Unknown is not a match.** A NOTAM carrying no classification is not
+international, and it is not known not to be. It is never admitted by a
+filter, and it is counted separately from the ones positively excluded.
+
+A NOTAM admitted with no ICAO translation is counted too: it is in the
+register and it cannot be screened, and those are different enough to say
+apart. Printable, not screenable.
+
 ## Hosts
 
 | Environment | Host | Source |

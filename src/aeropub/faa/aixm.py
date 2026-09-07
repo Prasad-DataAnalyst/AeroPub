@@ -365,6 +365,45 @@ class NmsNotam:
     def runways(self) -> tuple[AffectedFeature, ...]:
         return tuple(f for f in self.features if f.kind in ("Runway", "RunwayDirection"))
 
+    @property
+    def classification_read(self):
+        """This NOTAM's classification as a typed value, or ``None``.
+
+        ``None`` where the payload carried none, or carried one this build
+        does not know — which a caller can report, rather than being forced
+        into the nearest member.
+        """
+        from aeropub.faa.config import Classification
+
+        return Classification.read(self.classification)
+
+    @property
+    def is_international(self) -> bool | None:
+        """Whether this is an international NOTAM.
+
+        Three-valued. ``None`` means the payload said nothing about
+        classification, and a NOTAM whose classification is unknown is not
+        thereby international — an application that reads only international
+        NOTAM must be able to tell "not international" from "we cannot say".
+        """
+        found = self.classification_read
+        if found is None:
+            return None
+        from aeropub.faa.config import Classification
+
+        return found is Classification.INTERNATIONAL
+
+    @property
+    def has_icao_reading(self) -> bool:
+        """Whether the ICAO form of this message is available to be parsed.
+
+        An international NOTAM without one is a real gap: everything the
+        Q-line carries — the FIR, the subject and condition, the level band,
+        the centre and radius — is unavailable, and the message can only be
+        printed, not screened.
+        """
+        return self.to_icao_notam() is not None
+
     def to_icao_notam(self) -> Notam | None:
         """The ICAO-format reading, where the text is in ICAO format.
 

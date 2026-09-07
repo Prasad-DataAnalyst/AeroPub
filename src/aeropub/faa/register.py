@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from dataclasses import dataclass
+
 from aeropub.archive import ArchiveEntry
 from aeropub.entities import compose, normalise
 from aeropub.faa.aixm import NmsNotam, NotamFeed
@@ -167,11 +169,57 @@ def registered(notam: NmsNotam, entry: ArchiveEntry) -> RegisteredNotam:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class FeedIntake:
+    """What one feed put into a register, and what it did not.
+
+    Returned alongside the register because the numbers are the finding. A
+    register holding four hundred NOTAM out of twenty thousand is either a
+    correct filter or a broken one, and only these counts tell them apart.
+    """
+
+    register: NotamRegister
+    read: int = 0
+    indexed: int = 0
+    unkeyed: int = 0
+    """Read, and nothing to index them under — no linked feature, no
+    location."""
+
+    excluded: tuple[str, ...] = ()
+    """Classifications seen and filtered out, with their counts, as text."""
+
+    without_classification: int = 0
+    """The payload said nothing about what they are. Not international, and
+    not known not to be — kept apart from both."""
+
+    without_icao_reading: int = 0
+    """Admitted, and carrying no ICAO form to parse. For an application
+    reading the Q-line, these are present but not screenable."""
+
+    def describe(self) -> str:
+        parts = [f"{self.indexed} of {self.read} NOTAM indexed"]
+        if self.excluded:
+            parts.append("excluded " + ", ".join(self.excluded))
+        if self.without_classification:
+            parts.append(
+                f"{self.without_classification} carry no classification"
+            )
+        if self.unkeyed:
+            parts.append(f"{self.unkeyed} could not be keyed to anything")
+        if self.without_icao_reading:
+            parts.append(
+                f"{self.without_icao_reading} admitted with no ICAO reading — "
+                "printable, not screenable"
+            )
+        return "  ·  ".join(parts)
+
+
 def register_feed(
     notams: Iterable[NmsNotam] | NotamFeed,
     entry: ArchiveEntry,
     *,
     into: NotamRegister | None = None,
+    only: Iterable[object] | None = None,
 ) -> NotamRegister:
     """Index a whole feed.
 
@@ -179,17 +227,79 @@ def register_feed(
     in the register cites the exact bytes it came from. Pass ``into`` to
     accumulate several classifications into one register.
 
+    ``only`` restricts what is admitted, by classification — accepting either
+    spelling, since a request says ``INTERNATIONAL`` and the payload says
+    ``INTL``. A NOTAM carrying *no* classification is never admitted by a
+    filter: unknown is not a match, and an application that reads only
+    international NOTAM must not have unclassified ones arrive as if they
+    were.
+
     A NOTAM the mapping could not key at all is skipped, and the count is the
     difference between the register's length and the feed's ``notams_read`` —
     which is why callers should check both rather than trusting the length.
+    Use :func:`take_feed` to get those counts directly.
     """
+    return take_feed(notams, entry, into=into, only=only).register
+
+
+def take_feed(
+    notams: Iterable[NmsNotam] | NotamFeed,
+    entry: ArchiveEntry,
+    *,
+    into: NotamRegister | None = None,
+    only: Iterable[object] | None = None,
+) -> FeedIntake:
+    """Index a feed and report what was admitted, filtered and dropped."""
+    from aeropub.faa.config import Classification
+
+    wanted: set[Classification] | None = None
+    if only is not None:
+        wanted = set()
+        for value in only:
+            found = value if isinstance(value, Classification) else Classification.read(value)
+            if found is None:
+                raise ValueError(
+                    f"unknown NOTAM classification {value!r}; known: "
+                    + ", ".join(m.value for m in Classification)
+                )
+            wanted.add(found)
+
     register = into if into is not None else NotamRegister()
+    read = indexed = unkeyed = unclassified = no_icao = 0
+    filtered: dict[str, int] = {}
+
     for notam in notams:
+        read += 1
+        if wanted is not None:
+            found = notam.classification_read
+            if found is None:
+                # Unknown is not a match. Admitting it would let an
+                # unclassified NOTAM into an international-only register.
+                unclassified += 1
+                continue
+            if found not in wanted:
+                filtered[found.value] = filtered.get(found.value, 0) + 1
+                continue
         item = registered(notam, entry)
         if not item.subjects:
             # Nothing to index it under: no linked feature and no location.
             # Skipped rather than filed under a placeholder key, which would
             # make it findable only by someone who already knew it existed.
+            unkeyed += 1
             continue
         register.add(item)
-    return register
+        indexed += 1
+        if not notam.has_icao_reading:
+            no_icao += 1
+
+    return FeedIntake(
+        register=register,
+        read=read,
+        indexed=indexed,
+        unkeyed=unkeyed,
+        excluded=tuple(
+            f"{count} {name}" for name, count in sorted(filtered.items())
+        ),
+        without_classification=unclassified,
+        without_icao_reading=no_icao,
+    )
