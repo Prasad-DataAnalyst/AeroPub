@@ -33,6 +33,31 @@ it reports as absent, and a half-known code decodes to nothing at all —
 "taxiway <unknown>" reads as though the condition were understood, which is
 the misreading to avoid.
 
+## The ICAO Annexes
+
+`annexes.py` — a citation index, **not the standards**. The Annexes are
+copyrighted publications sold by ICAO and may not be reproduced; nothing here
+quotes one. What is held is the bibliographic frame: which Annex governs what,
+how it is divided into volumes and parts, and which modules here stand on it.
+
+That last part was already true and simply uncountable. Eighteen modules rest
+on Annexes 2, 10, 11, 14 and 15, spread across docstrings where nothing could
+list them. An amendment to Annex 14 touches six modules, and knowing which six
+is the difference between a review and a search. A test keeps the index honest
+by checking each named module actually mentions its Annex.
+
+A multi-volume Annex refuses to be cited without its volume: a bare "Annex 6"
+is ambiguous across four Parts governing different operations, and a citation
+nobody can follow is not a citation.
+
+Editions are recorded only where checked, and left empty otherwise. A stale
+edition asserted confidently invites a reader to conclude they are current when
+they are not.
+
+**To hold the Annexes themselves** you need a licence from ICAO —
+`store.icao.int`, or a State copy through your authority. This index tells you
+which one to open; it cannot tell you what it says.
+
 ## Reading a NOTAM against its own Q-code
 
 `notam_review.py`. The Q-code is not derived from the text — a person at a NOF
