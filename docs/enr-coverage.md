@@ -33,6 +33,45 @@ it reports as absent, and a half-known code decodes to nothing at all —
 "taxiway <unknown>" reads as though the condition were understood, which is
 the misreading to avoid.
 
+## Reading a NOTAM against its own Q-code
+
+`notam_review.py`. The Q-code is not derived from the text — a person at a NOF
+reads the event and types five letters, and the two halves travel together
+whether or not they agree. Everything downstream screens on the code, so a
+mismatch does not read as a mismatch. It reads as a NOTAM that is not there.
+
+Doha's 967 says *PORTION OF TWY P3 CLSD* and carries `QMXXX` — taxiway, no
+specific condition. It is a closed taxiway that no filter for closed taxiways
+returns, and nothing about the output looks wrong.
+
+**What was tried first is not in the code.** Matching the coded subject against
+words in the text: it flagged 23 of 33 real NOTAM, nearly all wrongly, because
+a text mentions many things and only one of them is its subject. *MINIMA FOR
+OTHH ILS RWY 16R CHANGED* mentions an ILS and a runway while being about
+neither. It also missed the one real subject error in the set. A checker people
+learn to ignore is worse than no checker.
+
+Two things are checked instead, both established rather than guessed:
+
+- **Peers.** NOTAM whose texts say the same thing must carry the same code. No
+  dictionary, no semantics — four messages reading *PUBLISHED MISSED APPROACH
+  PROCEDURE … SUSPENDED* cannot correctly carry two different subjects. Doha
+  issued exactly that: three `QPI`, one `QPU`.
+- **`XX` over a text that names a condition.** Narrowly, on the earliest one
+  named, because what follows *due to* is a reason and not the condition.
+
+Seven of the 33 flag, and each holds up.
+
+**Nothing is corrected.** A corrected Q-code is our inference wearing the
+State's authority, and this platform cites every value to whoever published
+it. Both readings stand and the disagreement is the finding. What changes is
+trust: `NotamReview.is_screenable` is `False` for a disputed NOTAM, so a screen
+keeps it rather than dropping it. Showing a planner a NOTAM they did not need
+is the survivable direction.
+
+Nothing screens on the Q-code yet, so that guard is not consumed anywhere. It
+has to be honoured when screening is built.
+
 ## ENR 0 — Preface, amendments, supplements, checklists
 
 | Subsection | Content | Status |
