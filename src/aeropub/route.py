@@ -59,6 +59,7 @@ from aeropub.airspace import (
     view_airspace,
 )
 from aeropub.ats import (
+    ATS_ROUTE,
     AtsStructure,
     FiledRoute,
     LevelFinding,
@@ -84,6 +85,7 @@ from aeropub.gnss import (
     view_gnss,
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
+from aeropub.supplement import ForcePeriod, Supplement, SupplementRegister
 from aeropub.supps import SuppsRegister, SuppsView, view_supps
 from aeropub.surveillance import (
     SurveillanceRegister,
@@ -103,7 +105,7 @@ from aeropub.hazards import (
     notams_on_hazards,
     screen_hazards,
 )
-from aeropub.entities import named, normalise
+from aeropub.entities import aerodrome_of, named, normalise
 from aeropub.notam_register import NotamRegister
 from aeropub.operator import Exposure, OperatorProfile, Role, worst_exposure
 from aeropub.sweep import DEFAULT_DAYS, NetworkSweep, sweep
@@ -535,6 +537,12 @@ class RouteDossier:
     """ENR 5 — what those regions publish as prohibited, restricted or
     hazardous. Same distinction: absent and empty are different answers."""
 
+    supplements: tuple[tuple[str, Supplement, ForcePeriod], ...] = ()
+    """Supplements in force against anything on this sector, each with the
+    entity it was found against. A supplement outranks the AIP and nothing
+    here reads a value out of one, so what it produces is a pointer: the
+    published value is no longer the whole answer."""
+
     surveillance: SurveillanceView | None = None
     """ENR 1.6 — how separation is actually provided in each region crossed,
     and where the plan falls below the coverage the State publishes. ``None``
@@ -871,6 +879,7 @@ def _open_items(
     planning: PlanningView | None = None,
     supps: SuppsView | None = None,
     surveillance: SurveillanceView | None = None,
+    supplements: Iterable[tuple[str, Supplement, ForcePeriod]] = (),
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1308,6 +1317,27 @@ def _open_items(
                 )
             )
 
+    for entity, supplement, period in supplements:
+        items.append(
+            OpenItem(
+                where=entity,
+                what=f"superseded by SUP {supplement.identifier}",
+                # Not a defect in anything held. The held value is the base
+                # AIP and a supplement outranks it, so what is held is no
+                # longer the whole answer — which is a different statement
+                # from its being wrong, and needs a person to read the SUP.
+                severity=Exposure.HIGH
+                if supplement.supersession.invalidates_held_values
+                else Exposure.MEDIUM,
+                why=supplement.describe()
+                + (
+                    "  ·  no validity window read, so nothing says it has ended"
+                    if period is ForcePeriod.UNDATED
+                    else ""
+                ),
+            )
+        )
+
     for entity, notam, state in enroute_notams:
         items.append(
             OpenItem(
@@ -1351,6 +1381,7 @@ def build_route_dossier(
     planning: PlanningRegister | None = None,
     supps: SuppsRegister | None = None,
     surveillance: SurveillanceRegister | None = None,
+    supplements: SupplementRegister | None = None,
     item18: str = "",
     slip_minutes: float | None = None,
     notice_hours: float | None = None,
@@ -1452,6 +1483,44 @@ def build_route_dossier(
         view_supps(supps, regions=regions) if supps is not None else None
     )
 
+    # A supplement reaches whatever a NOTAM would: the regions crossed, the
+    # aerodromes, every point and airway the filed route names, and — this is
+    # the part a region designator does not cover — the ENR 2 volumes and the
+    # ENR 5 areas as those sections key them. A jurisdiction crossed is
+    # ``FIR:OTDF``; the same region published in ENR 2.1 is ``AIRSPACE:OTDF``,
+    # and a supplement written against the table would reach neither the
+    # dossier nor the map if only the first were looked up.
+    held_supplements: list[tuple[str, Supplement, ForcePeriod]] = []
+    if supplements is not None:
+        keys = [named(FIR, j.designator) for j in route.crosses]
+        keys += [aerodrome_of(a) for a in route.aerodromes]
+        if airspace_view is not None:
+            keys += [v.key for v in airspace_view.volumes]
+            keys += [v.key for v in airspace_view.unbounded]
+        if hazard_screen is not None:
+            keys += [h.key for h in hazard_screen.candidates]
+            keys += [h.key for h in hazard_screen.unbounded]
+        if expansion is not None:
+            for point in expansion.route.points:
+                keys += [f"FIX:{point}", f"NAVAID:{point}"]
+            for leg in expansion.legs:
+                if not leg.leg.is_direct:
+                    keys.append(named(ATS_ROUTE, leg.leg.via))
+        for key in dict.fromkeys(keys):
+            for supplement, period in supplements.at(key, day):
+                held_supplements.append((key, supplement, period))
+        # A supplement heading a whole section names no object, so every
+        # lookup above returns nothing — while the dossier goes on drawing
+        # everything that section published. Keyed by the section instead.
+        for supplement, period in supplements.section_wide(day):
+            held_supplements.append((supplement.section, supplement, period))
+        # One in force that nobody has placed is still in force.
+        for orphan in supplements.unattached():
+            if orphan.state_on(day).applies is not False:
+                held_supplements.append(
+                    ("not placed", orphan, orphan.state_on(day))
+                )
+
     # The class ENR 2 publishes is what makes a surveillance gap land: Class A
     # at a level with no coverage is still Class A. Taken from the volumes the
     # airspace view did not rule out, so it is the class at the planned level
@@ -1532,7 +1601,7 @@ def build_route_dossier(
         open_items=_open_items(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
             airspace_view, hazard_screen, aids, gnss_view, planning_view,
-            supps_view, surveillance_view,
+            supps_view, surveillance_view, tuple(held_supplements),
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1548,4 +1617,5 @@ def build_route_dossier(
         planning=planning_view,
         supps=supps_view,
         surveillance=surveillance_view,
+        supplements=tuple(held_supplements),
     )

@@ -56,6 +56,11 @@ from aeropub.planning import (
     load_planning,
     planning_template,
 )
+from aeropub.supplement import (
+    SupplementRegister,
+    load_supplements,
+    supplement_template,
+)
 from aeropub.supps import SuppsRegister, load_supps, supps_template
 from aeropub.surveillance import (
     SurveillanceRegister,
@@ -858,6 +863,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.surveillance_template:
         print(surveillance_template())
         return OK
+    if args.supplement_template:
+        print(supplement_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -895,6 +903,13 @@ def _cmd_route(args: argparse.Namespace) -> int:
         gnss = GnssRegister(
             services=tuple(s for held in loaded for s in held.services),
             covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    held_supplements = None
+    if args.supplement:
+        loaded = [load_supplements(path) for path in args.supplement]
+        held_supplements = SupplementRegister(
+            supplements=tuple(s for held in loaded for s in held.supplements)
         )
 
     surveillance = None
@@ -971,6 +986,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             planning=planning,
             supps=supps,
             surveillance=surveillance,
+            supplements=held_supplements,
             item18=args.item18 or "",
             slip_minutes=args.slip_minutes,
             notice_hours=args.notice_hours,
@@ -990,6 +1006,8 @@ def _cmd_route(args: argparse.Namespace) -> int:
                 hazards=hazards,
                 regions=[j.designator for j in crosses],
                 level_ft=args.level,
+                supplements=held_supplements,
+                on=document.on,
                 filed=filed,
                 title=args.reference or "",
             )
@@ -1819,6 +1837,18 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--surveillance-template", dest="surveillance_template",
         action="store_true", help="print a blank ENR 1.6 extract",
+    )
+    sector.add_argument(
+        "--supplement", action="append", metavar="FILE",
+        help=(
+            "path to an AIP Supplement extract, repeatable — what it bears on "
+            "and when. A supplement outranks the AIP, and nothing here reads a "
+            "value out of one: it reopens the question"
+        ),
+    )
+    sector.add_argument(
+        "--supplement-template", dest="supplement_template",
+        action="store_true", help="print a blank supplement extract",
     )
     sector.add_argument(
         "--briefing", metavar="FILE",

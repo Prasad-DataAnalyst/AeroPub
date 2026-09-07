@@ -15,11 +15,39 @@ table: it is false while anything below is unread for the regions in question.
 |---|---|---|
 | ENR 0.1–0.5 | Preface, record of amendments and supplements, checklist of pages | **Built** — `checklist.py`. Page-level reconciliation against the State's own GEN 0.4, plus the GEN 0.2 amendment sequence and the GEN 0.3 record of supplements |
 | ENR 0.6 | Table of contents | Not held. Low value on its own |
+| AIP SUP | Supplements — temporary changes of long duration | **Built** — `supplement.py`. A supplement outranks the base AIP, and every ENR structure was blind to one |
 
 **The gap that matters, now closed.** A State's own checklist is the audit
 trail against what we hold. Reconciling it page by page is the difference
 between "we hold everything we fetched" and "we hold everything the State says
 exists", and only the second is a coverage claim.
+
+**The layer between the amendment and the NOTAM.** A supplement is how a State
+publishes a temporary change too long-lived for a NOTAM and too short-lived
+for an amendment — a danger area established for a month, ENR 5.1 replaced for
+a season. It sits at `Precedence.SUP`, above every value the AIP publishes, and
+until `supplement.py` landed nothing on a route or a chart could see one: the
+dossier read the base AIP, cited it, and answered from it, while the State had
+said in writing that the base AIP was no longer the whole answer.
+
+It is carried as **a pointer, not a patch**. Nothing reads a value out of a
+supplement's prose — what is held is that the section or the object has been
+superseded, by which document, and over what window. A person reads the SUP.
+A parser that thought it had extracted the new upper limit from a paragraph
+would produce a number with an AIP's authority and a guess's provenance.
+
+Reaching one takes two lookups, because a supplement names an object *or* a
+section and the two are not the same question. One naming ENR 5.1 and no area
+at all — the commonest kind — is invisible to every lookup by object, and the
+sheet goes on drawing every area that section published. `section_wide()` is
+the query that starts from the absence of a subject; one naming neither is
+`unattached()`, a visible category rather than a discard pile.
+
+A region has two keys and they are not interchangeable either. Crossed, it is
+`FIR:OTDF`; published in ENR 2.1 — which is where a supplement against it is
+written — it is `AIRSPACE:OTDF`. A route dossier looks up both, along with the
+ENR 5 areas its screen could not rule out, so a supplement written against the
+table reaches the document that draws from that table.
 
 `holdings_from_manifests` derives what we hold from the manifests actually
 loaded, so the reconciliation runs against what ingestion produced rather than

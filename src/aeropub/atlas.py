@@ -48,7 +48,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Iterable, Mapping, Sequence
 
 from aeropub.airspace import Airspace, AirspaceStructure, AirspaceType
@@ -69,6 +69,7 @@ from aeropub.geo import (
 from aeropub.hazards import Hazard, HazardRegister
 from aeropub.navaids import NavaidRegister
 from aeropub.notam_register import NotamRegister
+from aeropub.supplement import SupplementRegister
 
 __all__ = [
     "Atlas",
@@ -148,6 +149,11 @@ class DrawnArea:
     is this" — never the country under the point."""
 
     notams: int = 0
+    supplements: tuple[str, ...] = ()
+    """Supplements in force against it. A supplement never changes what is
+    drawn — nothing reads a value out of its prose — it says the published
+    value is no longer the whole answer."""
+
 
     @property
     def is_drawable(self) -> bool:
@@ -166,6 +172,7 @@ class DrawnRoute:
     detail: str = ""
     published_in: str = ""
     notams: int = 0
+    supplements: tuple[str, ...] = ()
 
     @property
     def is_drawable(self) -> bool:
@@ -183,6 +190,7 @@ class DrawnPoint:
     detail: str = ""
     published_in: str = ""
     notams: int = 0
+    supplements: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +292,24 @@ class Atlas:
             and not self.unplaced
             and not self.open_edges
             and not any(r.gaps for r in self.routes)
+            # A sheet drawn entirely from a base AIP that a supplement has
+            # superseded is a complete drawing of the wrong thing.
+            and not self.superseded
+        )
+
+    @property
+    def superseded(self) -> tuple[DrawnArea | DrawnRoute | DrawnPoint, ...]:
+        """Everything drawn that a supplement in force bears on.
+
+        What is drawn is the base AIP. Nothing here reads a value out of a
+        supplement's prose, so the drawing is not wrong — it is no longer the
+        whole answer, and that is a different thing to say.
+        """
+        return tuple(
+            thing
+            for group in (self.areas, self.routes, self.points)
+            for thing in group
+            if thing.supplements
         )
 
     def render(self) -> str:
@@ -326,6 +352,22 @@ class Atlas:
                     + _count(area.narrative, "edge")
                     + " the AIP gives no coordinates for"
                 )
+        superseded = [
+            (thing.designator, thing.supplements)
+            for group in (self.areas, self.routes, self.points)
+            for thing in group
+            if thing.supplements
+        ]
+        if superseded:
+            lines += [
+                "",
+                "A SUPPLEMENT IS IN FORCE AGAINST THESE",
+                "  What is drawn is the base AIP. A supplement outranks it, and",
+                "  nothing here reads a value out of one — go and read it.",
+            ]
+            for designator, held in superseded:
+                lines.append(f"  {designator}: SUP {', '.join(held)}")
+
         partial = [r for r in self.routes if r.gaps]
         if partial:
             lines += ["", "ROUTES DRAWN THROUGH FEWER POINTS THAN PUBLISHED"]
@@ -383,6 +425,7 @@ def _drawn_from(
     detail: str,
     published_in: str,
     notams: int = 0,
+    supplements: tuple[str, ...] = (),
 ) -> DrawnArea | None:
     if boundary is None or not boundary.is_held:
         return None
@@ -400,6 +443,7 @@ def _drawn_from(
         detail=detail,
         published_in=published_in,
         notams=notams,
+        supplements=tuple(dict.fromkeys(supplements)),
     )
 
 
@@ -414,6 +458,8 @@ def build_atlas(
     level_ft: float | None = None,
     notams: NotamRegister | None = None,
     at: datetime | None = None,
+    supplements: SupplementRegister | None = None,
+    on: date | None = None,
     filed: FiledRoute | None = None,
     basemap: Basemap | None = None,
     title: str = "",
@@ -433,6 +479,21 @@ def build_atlas(
             return 0
         return len(notams.at(key, at))
 
+    # A supplement outranks the AIP and is outranked by a NOTAM. It never
+    # changes what is drawn — nothing here reads a value out of its prose — it
+    # says the published value is no longer the whole answer.
+    day = on or (at.date() if at is not None else None)
+
+    def modified_by(key: str) -> tuple[str, ...]:
+        if supplements is None or day is None:
+            return ()
+        return tuple(s.identifier for s, _ in supplements.at(key, day))
+
+    def modifying(code: str) -> tuple[str, ...]:
+        if supplements is None or day is None or not code:
+            return ()
+        return tuple(s.identifier for s, _ in supplements.for_section(code, day))
+
     # ---- ENR 2: the regions and the terminal areas inside them -----------
     areas: list[DrawnArea] = []
     for volume in (airspace.volumes if airspace is not None else ()):
@@ -449,6 +510,8 @@ def build_atlas(
             detail=_area_detail(volume),
             published_in=volume.source.document,
             notams=against(volume.key),
+            supplements=modified_by(volume.key)
+            + modifying(volume.source.locator.split(" row")[0].strip()),
         )
         if drawn is None:
             unplaced.append(f"{volume.designator} (ENR 2, no boundary read)")
@@ -467,6 +530,10 @@ def build_atlas(
             detail=_hazard_detail(hazard),
             published_in=hazard.source.document,
             notams=against(hazard.key),
+            # ENR 5.1 replaced for a month names no area in its heading, and
+            # that is the commonest section-wide supplement there is.
+            supplements=modified_by(hazard.key)
+            + modifying(hazard.source.locator.split(" row")[0].strip()),
         )
         if drawn is None:
             unplaced.append(f"{hazard.designator} (ENR 5, no boundary read)")
@@ -541,6 +608,7 @@ def build_atlas(
                         else ""
                     ),
                     notams=against(named(ATS_ROUTE, designator)),
+                    supplements=modified_by(named(ATS_ROUTE, designator)),
                 )
             )
             for point in profile.points:
@@ -556,6 +624,8 @@ def build_atlas(
             detail=details.get(designator, ""),
             published_in=published_in.get(designator, ""),
             notams=against(f"FIX:{designator}") + against(f"NAVAID:{designator}"),
+            supplements=modified_by(f"FIX:{designator}")
+            + modified_by(f"NAVAID:{designator}"),
         )
         for designator, position in positions.items()
         # A point nothing draws through is still a published point, but a chart
@@ -642,19 +712,28 @@ def _escape(text: str) -> str:
     )
 
 
-def _info(name: str, kind: str, where: str, detail: str, published: str, notams: int) -> str:
-    return _escape(
-        json.dumps(
-            {
-                "name": name,
-                "kind": kind,
-                "position": where,
-                "detail": detail,
-                "published": published or "source not recorded",
-                "notams": notams,
-            }
-        )
-    )
+def _info(
+    name: str,
+    kind: str,
+    where: str,
+    detail: str,
+    published: str,
+    notams: int,
+    supplements: tuple[str, ...] = (),
+) -> str:
+    payload = {
+        "name": name,
+        "kind": kind,
+        "position": where,
+        "detail": detail,
+        "published": published or "source not recorded",
+        "notams": notams,
+    }
+    if supplements:
+        # Named, not counted. A reader has to go and read the supplement, and
+        # a number does not tell them which one.
+        payload["supplements"] = ", ".join(supplements)
+    return _escape(json.dumps(payload))
 
 
 def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> str:
@@ -754,6 +833,7 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
                 area.detail,
                 area.published_in,
                 area.notams,
+                area.supplements,
             )
             classes = css + ("" if area.closed else f" {css}-open")
             out.append(
@@ -790,6 +870,7 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
             route.detail,
             route.published_in,
             route.notams,
+            route.supplements,
         )
         classes = "at-route" + (" at-route-notam" if route.notams else "")
         out.append(
@@ -844,6 +925,7 @@ def atlas_svg(atlas: Atlas, *, width: float = 1100.0, height: float = 680.0) -> 
             ),
             point.published_in,
             point.notams,
+            point.supplements,
         )
         out.append(
             f'<g class="at-point at-{point.kind}" tabindex="0" role="button" '
@@ -1052,6 +1134,7 @@ ATLAS_JS = """
     row(dl, 'where', info.position);
     if (info.detail) row(dl, 'published', info.detail);
     row(dl, 'source', info.published);
+    if (info.supplements) row(dl, 'supplement', info.supplements + ' in force');
     if (info.notams) row(dl, 'NOTAM', info.notams + ' in force');
     panel.appendChild(dl);
   }

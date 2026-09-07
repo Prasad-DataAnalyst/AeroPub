@@ -26,9 +26,11 @@ from datetime import date, datetime, timezone
 import pytest
 
 from aeropub.aip import AipCoverage
+from aeropub.airspace import AIRSPACE
 from aeropub.aircraft import AircraftType, Characteristic, Origin
 from aeropub.entities import named
 from aeropub.facts import Fact, FactStore, Precedence
+from aeropub.hazards import HAZARD
 from aeropub.notam_register import NotamRegister
 from aeropub.operator import Exposure, Fleet, Role
 from aeropub.provenance import SourceRef
@@ -216,6 +218,167 @@ class TestRoute:
         """An FIR and the State that publishes for it are not always one to one."""
         assert BBBB.publisher == "BX"
         assert AAAA.publisher == "AAAA"
+
+
+# --------------------------------------------------------------------------
+# Supplements
+# --------------------------------------------------------------------------
+
+
+class TestSupplements:
+    """A supplement outranks the AIP, and until now nothing on a route could
+    see one."""
+
+    def register(self, *supplements):
+        from aeropub.supplement import SupplementRegister
+
+        return SupplementRegister(supplements=supplements)
+
+    def supplement(self, **overrides):
+        from aeropub.supplement import Supersession, Supplement
+
+        fields = dict(
+            identifier="A05/26",
+            source=ref(document="AIP AA SUP A05/26"),
+            section="ENR 2.1",
+            subjects=(named(FIR, "AAAA"),),
+            effective_from=date(2026, 1, 1),
+            supersession=Supersession.REPLACES,
+            summary="AAAA FIR upper limit revised",
+        )
+        fields.update(overrides)
+        return Supplement(**fields)
+
+    def crossing(self, *designators):
+        return route(crosses=tuple(Jurisdiction(designator=d) for d in designators))
+
+    def test_a_supplement_against_a_region_reaches_the_dossier(self):
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(self.supplement()),
+        )
+        assert [s.identifier for _, s, _ in found.supplements] == ["A05/26"]
+
+    def test_it_becomes_an_open_item_naming_the_supplement(self):
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(self.supplement()),
+        )
+        item = next(i for i in found.open_items if "A05/26" in i.what)
+        assert item.severity is Exposure.HIGH
+        assert "AAAA FIR upper limit revised" in item.why
+
+    def test_one_that_only_adds_is_not_raised_as_high(self):
+        """Adding a procedure does not make what is held wrong."""
+        from aeropub.supplement import Supersession
+
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(
+                self.supplement(
+                    identifier="A09/26",
+                    supersession=Supersession.ADDS,
+                    summary="temporary danger area established",
+                )
+            ),
+        )
+        item = next(i for i in found.open_items if "A09/26" in i.what)
+        assert item.severity is Exposure.MEDIUM
+
+    def test_a_region_the_route_does_not_cross_is_not_raised(self):
+        found = dossier(
+            self.crossing("BBBB"),
+            supplements=self.register(self.supplement()),
+        )
+        assert found.supplements == ()
+
+    def test_one_heading_a_whole_section_is_carried_by_its_section(self):
+        """The case no lookup by object can reach.
+
+        A State supersedes the whole of ENR 5.1 for a month and names no
+        danger area in the heading. Every ``at()`` returns nothing, and the
+        dossier goes on drawing every area that section published.
+        """
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(
+                self.supplement(
+                    identifier="A08/26",
+                    section="ENR 5.1",
+                    subjects=(),
+                    summary="ENR 5.1 replaced in its entirety",
+                )
+            ),
+        )
+        assert [e for e, _, _ in found.supplements] == ["ENR 5.1"]
+
+    def test_one_nobody_placed_is_still_in_force(self):
+        """A supplement whose reach nobody has established is not thereby
+        irrelevant — it is unplaced, which is a different thing."""
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(
+                self.supplement(
+                    identifier="A10/26",
+                    section="",
+                    subjects=(),
+                    summary="something nobody placed",
+                )
+            ),
+        )
+        assert [e for e, _, _ in found.supplements] == ["not placed"]
+
+    def test_one_that_has_expired_is_not_carried(self):
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(
+                self.supplement(effective_to=date(2026, 2, 1))
+            ),
+        )
+        assert found.supplements == ()
+
+    def test_one_with_no_window_says_nothing_ended_it(self):
+        found = dossier(
+            self.crossing("AAAA"),
+            supplements=self.register(self.supplement(effective_from=None)),
+        )
+        item = next(i for i in found.open_items if "A05/26" in i.what)
+        assert "nothing says it has ended" in item.why
+
+    def test_no_register_finds_nothing(self):
+        assert dossier(self.crossing("AAAA")).supplements == ()
+
+    def test_it_reaches_an_enr_2_volume_by_the_key_enr_2_uses(self):
+        """A region has two keys and they are not interchangeable.
+
+        Crossed, it is ``FIR:AAAA``. Published in ENR 2.1 — which is where a
+        supplement against it is written, and where ``aeropub tables`` keys
+        it — it is ``AIRSPACE:AAAA``. Looking up only the first loses the
+        document while the dossier goes on reporting the volume.
+        """
+        found = dossier(
+            self.crossing("AAAA"),
+            airspace=TestEnrIntegration.airspace(),
+            supplements=self.register(
+                self.supplement(subjects=(named(AIRSPACE, "AAAA"),))
+            ),
+        )
+        assert [e for e, _, _ in found.supplements] == [named(AIRSPACE, "AAAA")]
+
+    def test_it_reaches_an_enr_5_area_the_screen_could_not_rule_out(self):
+        found = dossier(
+            route(crosses=(AAAA,), planned_level_ft=35000),
+            hazards=TestEnrIntegration.hazards(),
+            supplements=self.register(
+                self.supplement(
+                    identifier="A11/26",
+                    section="ENR 5.1",
+                    subjects=(named(HAZARD, "AD-3"),),
+                    summary="AD-3 upper limit raised",
+                )
+            ),
+        )
+        assert [s.identifier for _, s, _ in found.supplements] == ["A11/26"]
 
 
 # --------------------------------------------------------------------------

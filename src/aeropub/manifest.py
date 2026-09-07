@@ -94,7 +94,14 @@ def to_moment(text: Any, *, where: str) -> datetime:
 
 
 def to_date(text: Any, *, where: str, field: str) -> date | None:
-    if text is None:
+    """An ISO date, or nothing where the manifest gave nothing.
+
+    A blank cell means "not given" everywhere else in these readers, and the
+    templates emit blanks for the fields a State may leave empty. Refusing one
+    here made an unstated date an error rather than an absence, which is the
+    opposite of how the rest of this treats a value nobody wrote down.
+    """
+    if text is None or (isinstance(text, str) and not text.strip()):
         return None
     if not isinstance(text, str):
         raise ManifestError(f"{where}: {field} must be an ISO-8601 date (YYYY-MM-DD)")

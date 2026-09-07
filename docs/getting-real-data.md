@@ -174,6 +174,7 @@ python -m aeropub route --from OTHH --to EGLL --aircraft a.json --navaid-templat
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --hazard-template      # ENR 5
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --gnss-template        # ENR 4.3
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --planning-template    # ENR 1.10
+python -m aeropub route --from OTHH --to EGLL --aircraft a.json --supplement-template  # AIP SUP
 python -m aeropub checklist --template                                                 # GEN 0.4
 ```
 
@@ -229,6 +230,34 @@ Re-run it each cycle. Nothing is cached between runs, so the map is whatever
 the manifests currently say — and `aeropub checklist` reconciles those against
 the State's own GEN 0.4 to catch the page that is a cycle out of date while
 still rendering perfectly.
+
+## The supplements in force
+
+An AIP page is only current until a supplement says otherwise, and a State
+publishes those on a list of their own — GEN 0.3 or an AIP SUP index. A
+supplement outranks every value on the page it names, so a dossier drawn from
+the base AIP alone is a complete drawing of a superseded thing.
+
+```
+python -m aeropub route --from OTHH --to EGLL --aircraft b77w.json \
+  --crosses OTDF --airspace enr2.json --hazards enr5.json \
+  --supplement sup.json
+```
+
+Fill `subjects` with the entity key the section itself uses — `AIRSPACE:OTDF`
+for a region as ENR 2.1 publishes it, `AIRSPACE:AD-31` for a danger area,
+`ATS:UM688` for a route, `FIX:ALSEM` for a point. A supplement heading a whole
+section names no object at all, and that is the common case: leave `subjects`
+empty and put `ENR 5.1` in `section`, and it reaches every area the section
+published. One naming neither is carried too, as *not placed* — a real
+document in force whose reach nobody has established, which is a different
+statement from an irrelevant one.
+
+Nothing reads a value out of a supplement. What lands on the route and the map
+is that the object has been superseded, by which document, over what window,
+and whether the State said it *replaces*, *amends* or merely *adds* — an
+addition does not make what is held wrong, and the severity says so. The new
+number is in the SUP, and a person reads it.
 
 ## Checking it against the State's own list
 

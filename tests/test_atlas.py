@@ -39,7 +39,13 @@ from aeropub.ats import (
 from aeropub.boundary import Boundary, BoundaryEdge, Circle, EdgeKind, boundary_from_points
 from aeropub.entities import named
 from aeropub.geo import Position
-from aeropub.hazards import Activation, Hazard, HazardKind, HazardRegister
+from aeropub.hazards import (
+    HAZARD,
+    Activation,
+    Hazard,
+    HazardKind,
+    HazardRegister,
+)
 from aeropub.navaids import Navaid, NavaidKind, NavaidRegister
 from aeropub.notam_register import (
     NotamRegister,
@@ -357,6 +363,145 @@ class TestRefusals:
         svg = atlas_svg(found)
         assert "coverage gap" in svg
         assert "not empty airspace" in svg
+
+
+class TestSupplements:
+    """The layer between the amendment and the NOTAM, which the atlas could
+    not see until it could."""
+
+    def register(self):
+        from datetime import date
+
+        from aeropub.supplement import Supersession, Supplement, SupplementRegister
+
+        return SupplementRegister(
+            supplements=(
+                Supplement(
+                    identifier="A05/26",
+                    source=ref(document="AIP AA SUP A05/26"),
+                    section="ENR 5.1",
+                    # ENR 5 shares ENR 2's key space deliberately, so a
+                    # supplement about a danger area is keyed the same way as
+                    # one about an FIR.
+                    subjects=(named(HAZARD, "AD-31"),),
+                    effective_from=date(2026, 6, 1),
+                    effective_to=date(2026, 11, 30),
+                    supersession=Supersession.AMENDS,
+                    summary="AD-31 upper limit raised for the season",
+                ),
+                Supplement(
+                    identifier="A06/26",
+                    source=ref(document="AIP AA SUP A06/26"),
+                    section="ENR 3.2",
+                    subjects=(named("ATS", "UM688"),),
+                    effective_from=date(2026, 9, 1),
+                    supersession=Supersession.REPLACES,
+                ),
+            )
+        )
+
+    def test_a_supplement_reaches_the_area_it_names(self):
+        found = atlas(supplements=self.register(), on=NOW.date())
+        assert found.hazards[0].supplements == ("A05/26",)
+
+    def test_a_supplement_reaches_the_route_it_names(self):
+        found = atlas(supplements=self.register(), on=NOW.date())
+        route = next(r for r in found.routes if r.designator == "UM688")
+        assert route.supplements == ("A06/26",)
+
+    def test_the_day_can_come_from_the_notam_moment(self):
+        """One date for the sheet, however it was given."""
+        found = atlas(supplements=self.register(), at=NOW)
+        assert found.hazards[0].supplements == ("A05/26",)
+
+    def test_an_expired_supplement_reaches_nothing(self):
+        from datetime import date
+
+        found = atlas(supplements=self.register(), on=date(2027, 6, 1))
+        assert found.hazards[0].supplements == ()
+
+    def test_no_register_marks_nothing(self):
+        assert all(a.supplements == () for a in atlas().areas)
+
+    def test_one_heading_the_whole_section_marks_every_area_in_it(self):
+        """The commonest supplement there is names no area at all.
+
+        A State replaces ENR 5.1 for a month; the heading names the section
+        and nothing else. Keyed by object it reaches nothing, and the sheet
+        goes on drawing every danger area the superseded section published.
+        """
+        from datetime import date
+
+        from aeropub.supplement import Supersession, Supplement, SupplementRegister
+
+        held = SupplementRegister(
+            supplements=(
+                Supplement(
+                    identifier="A08/26",
+                    source=ref(document="AIP AA SUP A08/26"),
+                    section="ENR 5.1",
+                    effective_from=date(2026, 6, 1),
+                    supersession=Supersession.REPLACES,
+                    summary="ENR 5.1 replaced in its entirety",
+                ),
+            )
+        )
+        found = atlas(
+            hazards=HazardRegister(
+                hazards=(
+                    danger(
+                        source=ref(
+                            document="AIP AA ENR 5.1", locator="ENR 5.1 row 4"
+                        )
+                    ),
+                )
+            ),
+            supplements=held,
+            on=NOW.date(),
+        )
+        assert found.hazards[0].supplements == ("A08/26",)
+
+    def test_a_superseded_sheet_is_never_complete(self):
+        """A sheet drawn entirely from a base AIP that a supplement has
+        superseded is a complete drawing of the wrong thing."""
+        held = AtsStructure(
+            points=(point("ALSEM"), point("MIDLE")),
+            segments=(seg("UM688", "ALSEM", "MIDLE"),),
+        )
+        clean = build_atlas(
+            airspace=AirspaceStructure(volumes=(fir(),)), structure=held
+        )
+        assert clean.is_complete
+        marked = build_atlas(
+            airspace=AirspaceStructure(volumes=(fir(),)),
+            structure=held,
+            supplements=self.register(),
+            on=NOW.date(),
+        )
+        assert marked.superseded
+        assert not marked.is_complete
+
+    def test_the_render_names_the_supplement_not_a_count(self):
+        """A reader has to go and read it, and a number does not tell them
+        which one."""
+        text = atlas(supplements=self.register(), on=NOW.date()).render()
+        assert "A SUPPLEMENT IS IN FORCE AGAINST THESE" in text
+        assert "AD-31: SUP A05/26" in text
+        assert "nothing here reads a value out of one" in text
+
+    def test_the_panel_carries_it(self):
+        svg = atlas_svg(atlas(supplements=self.register(), on=NOW.date()))
+        assert "supplements" in svg
+        assert "A05/26" in svg
+
+    def test_the_drawing_is_still_the_base_aip(self):
+        """A supplement never changes what is drawn — nothing reads a value
+        out of its prose."""
+        plain = atlas()
+        marked = atlas(supplements=self.register(), on=NOW.date())
+        assert [a.rings for a in plain.hazards] == [
+            a.rings for a in marked.hazards
+        ]
 
 
 class TestNoContainment:
