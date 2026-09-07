@@ -273,6 +273,19 @@ class NmsNotam:
     simple_text: str | None = None
     """The NOTAM as the FAA prints it, from ``NOTAMTranslation``."""
 
+    icao_text: str | None = None
+    """The ICAO-format reading, where the FAA supplies one.
+
+    A NOTAM may carry more than one translation, and the FAA's own examples
+    show international messages carrying two: ``LOCAL_FORMAT`` first with a
+    ``simpleText``, then ``ICAO`` with a ``formattedText``. Taking the first
+    translation and reading only ``simpleText`` — which is what this did —
+    dropped the ICAO reading entirely for exactly the messages it exists for.
+    What went with it was everything an international NOTAM carries and a
+    domestic one does not: the Q-line, the FIR, the traffic, purpose and
+    scope, the flight-level band, and the centre and radius.
+    """
+
     translation_type: str | None = None
     classification: str | None = None
     """``DOM``, ``INTL``, ``MIL``, ``LMIL``, ``FDC`` — the short form used in
@@ -360,8 +373,12 @@ class NmsNotam:
         refuse it. International-series messages generally are. Returns
         ``None`` rather than a partial parse, so a caller can tell the
         difference between "not applicable" and "failed".
+
+        :attr:`icao_text` is tried first, because where the FAA supplies an
+        ICAO translation that is the reading it intends — falling through to
+        the local text would parse the same NOTAM into a worse answer.
         """
-        for candidate in (self.simple_text, self.text):
+        for candidate in (self.icao_text, self.simple_text, self.text):
             if candidate and _ICAO_HEADER.search(candidate):
                 try:
                     return parse_icao_notam(candidate)
@@ -483,9 +500,27 @@ def _read_message(message: ET.Element) -> NmsNotam | None:
     if raw_type in ("N", "R", "C"):
         kind = {"N": NotamKind.NEW, "R": NotamKind.REPLACE, "C": NotamKind.CANCEL}[raw_type]
 
-    translation = next(
-        (c for c in notam_el.iter() if _local(c.tag) == "NOTAMTranslation"), None
-    )
+    # Every translation, not the first. An international NOTAM carries the
+    # local reading and the ICAO one, in that order, and the one worth having
+    # is the second.
+    translations = [c for c in notam_el.iter() if _local(c.tag) == "NOTAMTranslation"]
+
+    def _translated(kind: str | None) -> ET.Element | None:
+        for candidate in translations:
+            found = (_child_text(candidate, "type") or "").strip().upper()
+            if kind is None or found == kind:
+                return candidate
+        return None
+
+    local = _translated("LOCAL_FORMAT") or _translated(None)
+    icao = _translated("ICAO")
+    # Either element may carry either field; the FAA uses simpleText for the
+    # local reading and formattedText for the ICAO one, but reading both means
+    # a State or a release that swaps them is still understood.
+    def _reading(element: ET.Element | None) -> str | None:
+        if element is None:
+            return None
+        return _child_text(element, "formattedText") or _child_text(element, "simpleText")
 
     extension = next(
         (c for c in event.iter() if _local(c.tag) == "EventExtension"), None
@@ -505,8 +540,11 @@ def _read_message(message: ET.Element) -> NmsNotam | None:
         estimated=start_est or end_est,
         schedule=_child_text(notam_el, "schedule"),
         text=_child_text(notam_el, "text") or "",
-        simple_text=_child_text(translation, "simpleText") if translation is not None else None,
-        translation_type=_child_text(translation, "type") if translation is not None else None,
+        simple_text=_reading(local),
+        icao_text=_reading(icao),
+        translation_type=(
+            _child_text(local, "type") if local is not None else None
+        ),
         classification=_child_text(extension, "classification") if extension is not None else None,
         account_id=_child_text(extension, "accountId") if extension is not None else None,
         airport_name=_child_text(extension, "airportname") if extension is not None else None,

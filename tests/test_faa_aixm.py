@@ -304,3 +304,100 @@ class TestStreaming:
         assert list(feed) == []
         assert feed.messages_seen == 1
         assert feed.messages_without_notam == 1
+
+
+# --------------------------------------------------------------------------
+# International NOTAM carry two translations
+# --------------------------------------------------------------------------
+
+
+INTERNATIONAL = b"""<?xml version="1.0"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"><soap:Body>
+<ns3:FeatureCollection xmlns:ns3="http://www.opengis.net/wfs/2.0"
+ xmlns="http://www.aixm.aero/schema/5.1/message" xmlns:aixm="http://www.aixm.aero/schema/5.1"
+ xmlns:event="http://www.aixm.aero/schema/5.1/event" xmlns:gml="http://www.opengis.net/gml/3.2"
+ xmlns:fnse="http://www.aixm.aero/schema/5.1/extensions/FAA/FNSE"
+ numberReturned="1" timeStamp="2026-09-07T06:00:00.000Z">
+<aixm:member><AIXMBasicMessage gml:id="NMS_ID_1"><hasMember>
+<event:Event gml:id="E1"><event:timeSlice><event:EventTimeSlice gml:id="TS1">
+<event:textNOTAM><event:NOTAM gml:id="N1">
+<event:number>1234</event:number><event:year>2026</event:year><event:type>N</event:type>
+<event:location>OTHH</event:location>
+<event:effectiveStart>202609070600</event:effectiveStart>
+<event:effectiveEnd>202609302359</event:effectiveEnd>
+<event:text>RWY 16L/34R CLSD</event:text>
+<event:translation><event:NOTAMTranslation gml:id="T1">
+  <event:type>LOCAL_FORMAT</event:type>
+  <event:simpleText>OTHH 09/1234 RWY 16L/34R CLSD</event:simpleText>
+</event:NOTAMTranslation></event:translation>
+<event:translation><event:NOTAMTranslation gml:id="T2">
+  <event:type>ICAO</event:type>
+  <event:formattedText>A1234/26 NOTAMN
+Q) OTDF/QMRLC/IV/NBO/A/000/999/2516N05136E005
+A) OTHH B) 2609070600 C) 2609302359
+E) RWY 16L/34R CLSD</event:formattedText>
+</event:NOTAMTranslation></event:translation>
+</event:NOTAM></event:textNOTAM>
+<event:extension><fnse:EventExtension gml:id="X1">
+<fnse:classification>INTL</fnse:classification><fnse:icaoLocation>OTHH</fnse:icaoLocation>
+</fnse:EventExtension></event:extension>
+</event:EventTimeSlice></event:timeSlice></event:Event></hasMember></AIXMBasicMessage></aixm:member>
+</ns3:FeatureCollection></soap:Body></soap:Envelope>"""
+
+
+def international():
+    import io
+
+    return list(NotamFeed(io.BytesIO(INTERNATIONAL)))[0]
+
+
+class TestInternationalTranslations:
+    """The FAA's own examples show an international message carrying two
+    translations: LOCAL_FORMAT first with simpleText, then ICAO with
+    formattedText. Taking the first and reading only simpleText dropped the
+    ICAO reading entirely — for exactly the messages it exists for.
+    """
+
+    def test_the_icao_translation_is_read(self):
+        assert international().icao_text is not None
+        assert "Q) OTDF/QMRLC" in international().icao_text
+
+    def test_the_local_translation_is_still_read(self):
+        found = international()
+        assert found.simple_text == "OTHH 09/1234 RWY 16L/34R CLSD"
+        assert found.translation_type == "LOCAL_FORMAT"
+
+    def test_the_icao_reading_parses(self):
+        """What was lost: the whole ICAO message."""
+        icao = international().to_icao_notam()
+        assert icao is not None
+        assert (icao.series, icao.number, icao.year) == ("A", 1234, 26)
+
+    def test_the_q_line_survives(self):
+        """Everything an international NOTAM carries and a domestic one does
+        not: the FIR, the subject and condition, the level band, the centre
+        and radius."""
+        q = international().to_icao_notam().q
+        assert q.fir == "OTDF"
+        assert q.code == "QMRLC"
+        assert (q.subject, q.condition) == ("runway", "closed")
+        assert (q.lower_fl, q.upper_fl) == (0, 999)
+        assert q.radius_nm == 5
+
+    def test_the_icao_reading_is_preferred_over_the_local_one(self):
+        """Where the FAA supplies an ICAO translation that is the reading it
+        intends; falling through to the local text parses the same NOTAM into
+        a worse answer."""
+        found = international()
+        assert found.to_icao_notam().q is not None
+
+    def test_a_domestic_notam_with_one_translation_is_unchanged(self):
+        """The fix must not disturb the common case: an FAA domestic NOTAM
+        carries one LOCAL_FORMAT translation and no ICAO reading."""
+        import io
+
+        held = list(NotamFeed(io.BytesIO(FIXTURE.read_bytes())))
+        assert held
+        assert held[0].simple_text
+        assert held[0].icao_text is None
+        assert held[0].to_icao_notam() is None
