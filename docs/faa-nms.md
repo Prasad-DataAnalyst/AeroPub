@@ -294,6 +294,13 @@ was tested.
 `403` at the gateway before the request leaves the building. That is a policy on
 our side, not anything the FAA or CGI did.
 
+### When the allowlist is not coming
+
+`--relay` ingests a bundle fetched on a machine that has a route, checked
+against the FAA's own `numberReturned` and dated by its own `timeStamp`, and
+cited as relayed rather than as something this platform fetched. See
+[the runbook, step 3a](faa-connect-runbook.md).
+
 ### The allowlist request
 
 Everything except the wire is verified: configuration resolves, both credential

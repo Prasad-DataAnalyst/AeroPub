@@ -440,6 +440,18 @@ def main(argv: list[str] | None = None) -> int:
         help="also pull and parse the domestic initial load. Needs --archive.",
     )
     parser.add_argument("--archive", help="directory for the raw store.")
+    parser.add_argument(
+        "--relay", metavar="FILE",
+        help=(
+            "ingest an initial load fetched elsewhere, instead of calling the "
+            "FAA. For a network with no route to CGI Federal: fetch on a "
+            "machine that has one and hand the file over. Needs --archive."
+        ),
+    )
+    parser.add_argument(
+        "--relayed-by", dest="relayed_by", default="", metavar="WHO",
+        help="who fetched the --relay file. Recorded on the citation.",
+    )
     parser.add_argument("--json", action="store_true", help="emit the report as JSON.")
     args = parser.parse_args(argv)
 
@@ -456,6 +468,39 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_PROTOCOL
 
     archive = Archive(args.archive) if args.archive else None
+
+    if args.relay:
+        if archive is None:
+            print(
+                "--relay needs --archive: a bundle nobody watched arrive is "
+                "evidence, and evidence that is not stored cannot be cited "
+                "later.",
+                file=sys.stderr,
+            )
+            return EXIT_PROTOCOL
+        from aeropub.faa.relay import RelayError, relay_initial_load
+
+        try:
+            relayed = relay_initial_load(
+                args.relay, archive=archive, obtained_from=args.relayed_by
+            )
+        except RelayError as error:
+            print(str(error), file=sys.stderr)
+            return EXIT_PROTOCOL
+        print(relayed.describe())
+        print(f"  archived as {relayed.load.entry.digest[:12]}")
+        if relayed.is_stale:
+            print(
+                "  This baseline is older than the FAA's own pull cadence. "
+                "Re-fetch before operating on it."
+            )
+        if relayed.is_complete is None:
+            print(
+                "  The wrapper states no count, so nothing here can say the "
+                "file is whole."
+            )
+        return EXIT_OK
+
     if args.data and archive is None:
         print(
             "--data needs --archive: the bundle is evidence, and evidence that "

@@ -103,7 +103,10 @@ No credential is used or sent. An authority answering `401` counts as
 | `2` | an egress proxy refused | your network administrator |
 | `3` | our own config, usually an untrusted intercepting CA | you |
 
-**On `2`** — the allowlist request, in the form a network team needs it:
+**On `2`** — you have two options. The allowlist below, or **step 3a**, which
+does not need one.
+
+The allowlist request, in the form a network team needs it:
 
 > Permit outbound TLS on port 443 to `api-staging.cgifederal-aim.com` and
 > `api-fit.cgifederal-aim.com`. These are CGI Federal hosts operating the FAA's
@@ -112,6 +115,52 @@ No credential is used or sent. An authority answering `401` counts as
 
 Do not route around a `2`. It is a policy decision, and the connector is built
 to report it rather than work around it.
+
+---
+
+## 3a. When the allowlist is not coming
+
+The data is not unavailable — it is one machine away. Anyone with a normal
+connection fetches the bundle and hands the file over.
+
+**On a machine that can reach CGI Federal**, two commands:
+
+```
+TOKEN=$(curl -s -X POST --location "https://api-staging.cgifederal-aim.com/v1/auth/token" \
+  -d grant_type=client_credentials -u "$KEY:$SECRET" | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+
+curl -sL -o initial-load.gz "https://api-staging.cgifederal-aim.com/nmsapi/v1/notams/il/DOMESTIC" \
+  --header "Authorization: Bearer $TOKEN"
+```
+
+**Then, here:**
+
+```
+python -m aeropub.faa.check --relay initial-load.gz --archive raw/ \
+  --relayed-by "ops workstation"
+```
+
+Two things make this an ingest rather than an act of trust, and both come from
+the FAA's own wrapper rather than from whoever carried the file:
+
+- **`numberReturned`** — the count the FAA states, checked against what
+  actually parses. A file truncated in transfer looks exactly like a quiet
+  day, so a short read is refused rather than loaded, exit `3`. This is not
+  theoretical: the sample bundle the FAA ships declares 21 468 NOTAM and
+  contains two, and a naive loader reports it as a successful load.
+- **`timeStamp`** — when the FAA generated the bundle. This dates the
+  citation, *not* the moment the file was opened here. A baseline carried
+  across a network boundary can be hours old, and dating it to its arrival
+  would make stale NOTAM look fresh. Read from the file, so the person
+  relaying it cannot fudge it. Anything older than 24 hours is called stale.
+
+A relayed bundle is cited as **relayed** — `FAA-RELAY`, naming who handed it
+over — never as something this platform fetched. The difference between a
+moment we witnessed and one we were told about is the whole basis of a
+citation.
+
+The bundle comes back in the same shape a fetched one takes, so everything
+downstream is unchanged.
 
 ---
 
