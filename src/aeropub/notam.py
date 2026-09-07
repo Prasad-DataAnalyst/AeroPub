@@ -106,15 +106,21 @@ _HEADER = re.compile(
     re.MULTILINE,
 )
 
+#: Fields are space-padded to a fixed width by some originators, so a
+#: single-letter traffic or scope arrives as ``I `` and ``A ``. Real Qatar
+#: messages do it — ``Q) OTDF/QPICH/I /NBO/A /000/999/...`` — and a pattern
+#: that demanded the letter immediately before the slash silently failed the
+#: whole Q-line, taking the FIR, the subject, the level band and the centre
+#: with it. The NOTAM still rendered as text, so nothing looked wrong.
 _QLINE = re.compile(
     r"\bQ\)\s*"
-    r"(?P<fir>[A-Z]{4})/"
-    r"(?P<code>Q[A-Z]{4})/"
-    r"(?P<traffic>[IVK]{1,2})/"
-    r"(?P<purpose>[NBOM]{1,3})/"
-    r"(?P<scope>[AEWK]{1,2})/"
-    r"(?P<lower>\d{3})/"
-    r"(?P<upper>\d{3})/"
+    r"(?P<fir>[A-Z]{4})\s*/\s*"
+    r"(?P<code>Q[A-Z]{4})\s*/\s*"
+    r"(?P<traffic>[IVK]{1,2})\s*/\s*"
+    r"(?P<purpose>[NBOM]{1,3})\s*/\s*"
+    r"(?P<scope>[AEWK]{1,2})\s*/\s*"
+    r"(?P<lower>\d{3})\s*/\s*"
+    r"(?P<upper>\d{3})\s*/\s*"
     r"(?P<lat>\d{4}[NS])(?P<lon>\d{5}[EW])(?P<radius>\d{3})"
 )
 
@@ -256,6 +262,14 @@ def _item(body: str, letter: str) -> str | None:
     return value or None
 
 
+def _unbracketed(message: str) -> str:
+    """A NOTAM with its ICAO enclosing brackets removed, if it has them."""
+    stripped = message.strip()
+    if stripped.startswith("(") and stripped.endswith(")"):
+        return stripped[1:-1].strip()
+    return message
+
+
 def parse(message: str) -> Notam:
     """Parse a NOTAM message.
 
@@ -263,6 +277,12 @@ def parse(message: str) -> Notam:
     message that cannot be identified is not partially accepted — an
     unidentifiable NOTAM has nothing to attach a finding to.
     """
+    # ICAO Doc 8126 encloses a NOTAM in brackets, and real traffic carries
+    # them: Qatar's own messages arrive as "(A0739/26 NOTAMN ... )". Stripped
+    # only when the message is bracketed at both ends, so a bracket inside
+    # item E — which is common — is left alone.
+    message = _unbracketed(message)
+
     header = _HEADER.search(message)
     if header is None:
         raise ValueError("no NOTAM header found (expected e.g. 'A1234/26 NOTAMN')")

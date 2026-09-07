@@ -189,6 +189,25 @@ def _find(parent: ET.Element, *names: str) -> ET.Element | None:
     return current
 
 
+def _flattened(element: ET.Element | None) -> str | None:
+    """All text under an element, with an XHTML wrapper taken off.
+
+    ``formattedText`` is not text. The FAA wraps the ICAO message in an XHTML
+    ``div`` containing an escaped ``pre`` block, so reading the element's own
+    ``.text`` returns whitespace and the message is lost. Every descendant's
+    text is joined instead, the ``pre`` markers are dropped, and the carriage
+    returns the FAA emits as ``&#13;`` are removed so the lettered items land
+    on their own lines for the ICAO parser.
+    """
+    if element is None:
+        return None
+    joined = "".join(element.itertext())
+    for marker in ("<pre>", "</pre>"):
+        joined = joined.replace(marker, "")
+    joined = joined.replace("\r\n", "\n").replace("\r", "\n").strip()
+    return joined or None
+
+
 def _child_text(parent: ET.Element, name: str) -> str | None:
     """Text of the named field: a direct child for preference, else a descendant.
 
@@ -545,21 +564,38 @@ def _read_message(message: ET.Element) -> NmsNotam | None:
     translations = [c for c in notam_el.iter() if _local(c.tag) == "NOTAMTranslation"]
 
     def _translated(kind: str | None) -> ET.Element | None:
+        """The translation of a kind, matched after any prefix.
+
+        Real FAA international NOTAM label the ICAO translation
+        ``OTHER:ICAO``, not ``ICAO``. An equality check never fired, so every
+        international message came back with no ICAO reading at all — which is
+        the whole reason those messages are worth having.
+        """
         for candidate in translations:
             found = (_child_text(candidate, "type") or "").strip().upper()
-            if kind is None or found == kind:
+            if kind is None or found.rsplit(":", 1)[-1] == kind:
                 return candidate
         return None
 
-    local = _translated("LOCAL_FORMAT") or _translated(None)
     icao = _translated("ICAO")
+    local = _translated("LOCAL_FORMAT")
+    if local is None and icao is None:
+        # One translation carrying no recognisable type: take it as the local
+        # reading, since something is better than nothing. Only when there is
+        # no ICAO one — otherwise the ICAO text would be reported as
+        # ``simple_text`` too, and a caller asking whether a plain-language
+        # rendering exists would get a misleading yes.
+        local = _translated(None)
     # Either element may carry either field; the FAA uses simpleText for the
     # local reading and formattedText for the ICAO one, but reading both means
     # a State or a release that swaps them is still understood.
     def _reading(element: ET.Element | None) -> str | None:
         if element is None:
             return None
-        return _child_text(element, "formattedText") or _child_text(element, "simpleText")
+        formatted = next(
+            (c for c in element.iter() if _local(c.tag) == "formattedText"), None
+        )
+        return _flattened(formatted) or _child_text(element, "simpleText")
 
     extension = next(
         (c for c in event.iter() if _local(c.tag) == "EventExtension"), None
