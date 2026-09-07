@@ -386,6 +386,116 @@ class TestSupplements:
 # --------------------------------------------------------------------------
 
 
+class TestInterception:
+    """ENR 1.12 — the section skipped because nothing ever comes of it."""
+
+    def register(self, *procedures):
+        from aeropub.interception import Conformance, Interception, InterceptionRegister
+
+        held = procedures or (
+            Interception(
+                region="AAAA", source=ref(locator="ENR 1.12"),
+                conformance=Conformance.ANNEX_2, frequencies=("121.500",),
+            ),
+        )
+        return InterceptionRegister(
+            procedures=held, covers=frozenset(p.region for p in held)
+        )
+
+    def armed(self, region="BBBB"):
+        from aeropub.interception import Conformance, Departure, Interception
+
+        return Interception(
+            region=region, source=ref(locator="ENR 1.12 para 4"),
+            conformance=Conformance.DEPARTS, departures=(Departure.FORCE,),
+            published_text="a non-complying aircraft may be fired upon",
+        )
+
+    def test_an_unread_region_never_reads_as_conforming(self):
+        """The one error here whose cost is not a delay."""
+        from aeropub.interception import InterceptionRegister
+
+        built = dossier(route(crosses=(AAAA,)), interception=InterceptionRegister())
+        found = [i for i in built.open_items if i.what == "ENR 1.12 never read"]
+        assert found and found[0].severity is Exposure.UNKNOWN
+        assert "has not published that it follows Annex 2" in found[0].why
+
+    def test_published_use_of_force_is_high(self):
+        built = dossier(
+            route(crosses=(AAAA, BBBB)),
+            interception=self.register(self.register().procedures[0], self.armed()),
+        )
+        found = [
+            i for i in built.open_items
+            if i.what == "published use of force against a non-complying aircraft"
+        ]
+        assert found and found[0].severity is Exposure.HIGH
+        assert "fired upon" in found[0].why
+
+    def test_a_boundary_into_force_is_not_raised_twice(self):
+        """It is already reported against the region itself."""
+        built = dossier(
+            route(crosses=(AAAA, BBBB)),
+            interception=self.register(self.register().procedures[0], self.armed()),
+        )
+        changes = [
+            i for i in built.open_items
+            if i.what == "interception procedure changes at this boundary"
+        ]
+        assert changes == []
+
+    def test_a_boundary_into_a_lesser_departure_is_raised(self):
+        from aeropub.interception import Conformance, Departure, Interception
+
+        differing = Interception(
+            region="BBBB", source=ref(locator="ENR 1.12"),
+            conformance=Conformance.DEPARTS, departures=(Departure.SIGNALS,),
+        )
+        built = dossier(
+            route(crosses=(AAAA, BBBB)),
+            interception=self.register(self.register().procedures[0], differing),
+        )
+        found = [
+            i for i in built.open_items
+            if i.what == "interception procedure changes at this boundary"
+        ]
+        assert found and found[0].severity is Exposure.MEDIUM
+
+    def test_a_listening_watch_states_only_itself(self):
+        from aeropub.interception import Conformance, Departure, Interception
+
+        watching = Interception(
+            region="AAAA", source=ref(locator="ENR 1.12"),
+            conformance=Conformance.DEPARTS,
+            departures=(Departure.LISTENING_WATCH,),
+            frequencies=("121.500",), listening_watch=True,
+            listening_watch_airspace="AAAA UIR",
+        )
+        built = dossier(route(crosses=(AAAA,)), interception=self.register(watching))
+        found = next(
+            i for i in built.open_items
+            if i.what == "continuous listening watch required"
+        )
+        assert found.why == "AAAA requires a continuous watch on 121.500 in AAAA UIR"
+
+    def test_a_missing_emergency_frequency_is_raised(self):
+        from aeropub.interception import Conformance, Interception
+
+        odd = Interception(
+            region="AAAA", source=ref(locator="ENR 1.12"),
+            conformance=Conformance.ANNEX_2, frequencies=("243.000",),
+        )
+        built = dossier(route(crosses=(AAAA,)), interception=self.register(odd))
+        assert any("121.5 is not among" in i.what for i in built.open_items)
+
+    def test_no_section_supplied_produces_nothing(self):
+        assert dossier(route(crosses=(AAAA,))).interception is None
+
+    def test_the_section_renders_into_the_dossier(self):
+        built = dossier(route(crosses=(AAAA,)), interception=self.register())
+        assert "INTERCEPTION — ENR 1.12" in built.render()
+
+
 class TestFlightRules:
     """ENR 1.3 — the rule the blank direction column defers to.
 

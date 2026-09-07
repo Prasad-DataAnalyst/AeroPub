@@ -61,6 +61,11 @@ from aeropub.supplement import (
     load_supplements,
     supplement_template,
 )
+from aeropub.interception import (
+    InterceptionRegister,
+    interception_template,
+    load_interception,
+)
 from aeropub.flightrules import (
     FlightRulesRegister,
     flight_rules_template,
@@ -971,6 +976,9 @@ def _cmd_route(args: argparse.Namespace) -> int:
     if args.flight_rules_template:
         print(flight_rules_template())
         return OK
+    if args.interception_template:
+        print(interception_template())
+        return OK
 
     aircraft = merge(*(load_aircraft(path) for path in args.aircraft))
     crosses = tuple(
@@ -1022,6 +1030,14 @@ def _cmd_route(args: argparse.Namespace) -> int:
         loaded = [load_surveillance(path) for path in args.surveillance]
         surveillance = SurveillanceRegister(
             services=tuple(s for held in loaded for s in held.services),
+            covers=frozenset().union(*(held.covers for held in loaded)),
+        )
+
+    interception = None
+    if args.interception:
+        loaded = [load_interception(path) for path in args.interception]
+        interception = InterceptionRegister(
+            procedures=tuple(p for held in loaded for p in held.procedures),
             covers=frozenset().union(*(held.covers for held in loaded)),
         )
 
@@ -1100,6 +1116,7 @@ def _cmd_route(args: argparse.Namespace) -> int:
             supps=supps,
             surveillance=surveillance,
             flight_rules=flight_rules,
+            interception=interception,
             supplements=held_supplements,
             item18=args.item18 or "",
             slip_minutes=args.slip_minutes,
@@ -1993,6 +2010,18 @@ def _parser() -> argparse.ArgumentParser:
     sector.add_argument(
         "--surveillance-template", dest="surveillance_template",
         action="store_true", help="print a blank ENR 1.6 extract",
+    )
+    sector.add_argument(
+        "--interception", action="append", metavar="FILE",
+        help=(
+            "path to an ENR 1.12 extract, repeatable — what each State "
+            "publishes about interception. An unread State is never reported "
+            "as following Annex 2"
+        ),
+    )
+    sector.add_argument(
+        "--interception-template", dest="interception_template",
+        action="store_true", help="print a blank ENR 1.12 extract",
     )
     sector.add_argument(
         "--flight-rules", dest="flight_rules", action="append", metavar="FILE",

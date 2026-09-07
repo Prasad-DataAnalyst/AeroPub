@@ -86,6 +86,11 @@ from aeropub.gnss import (
     view_gnss,
 )
 from aeropub.navaids import NavaidRegister, NavaidUse, screen_navaids
+from aeropub.interception import (
+    InterceptionRegister,
+    InterceptionView,
+    view_interception,
+)
 from aeropub.flightrules import (
     FlightRulesRegister,
     FlightRulesView,
@@ -554,6 +559,11 @@ class RouteDossier:
     and where the plan falls below the coverage the State publishes. ``None``
     where no ENR 1.6 was supplied."""
 
+    interception: InterceptionView | None = None
+    """ENR 1.12 — what each State crossed publishes about interception, and
+    where that changes between them. ``None`` where no ENR 1.12 was supplied;
+    an unread region is never reported as conforming to Annex 2."""
+
     flight_rules: FlightRulesView | None = None
     """ENR 1.3 — the State's own cruising-level rule, screened against the
     segments whose ENR 3 direction column is blank. That blank is the
@@ -812,6 +822,8 @@ class RouteDossier:
             lines += ["", self.surveillance.render()]
         if self.flight_rules is not None:
             lines += ["", self.flight_rules.render()]
+        if self.interception is not None:
+            lines += ["", self.interception.render()]
 
         if self.altimetry.changes:
             lines += ["", "ALTIMETRY — where the transition altitude moves"]
@@ -896,6 +908,7 @@ def _open_items(
     surveillance: SurveillanceView | None = None,
     supplements: Iterable[tuple[str, Supplement, ForcePeriod]] = (),
     flight_rules: FlightRulesView | None = None,
+    interception: InterceptionView | None = None,
 ) -> tuple[OpenItem, ...]:
     """Everything unresolved, from every part of the assembly, in one list."""
     items: list[OpenItem] = []
@@ -1381,6 +1394,67 @@ def _open_items(
                 )
             )
 
+    if interception is not None:
+        for region in interception.unread_regions:
+            items.append(
+                OpenItem(
+                    where=region,
+                    what="ENR 1.12 never read",
+                    severity=Exposure.UNKNOWN,
+                    why=(
+                        "a State nobody has read has not published that it "
+                        "follows Annex 2, and the signals a crew would fly "
+                        "are the right ones only where a State says so"
+                    ),
+                )
+            )
+        for found in interception.armed:
+            items.append(
+                OpenItem(
+                    where=found.region,
+                    what="published use of force against a non-complying aircraft",
+                    # The most consequential thing this section can carry, and
+                    # kept out of the general "departs" so it cannot be read
+                    # past.
+                    severity=Exposure.HIGH,
+                    why=found.published_text or found.describe(),
+                )
+            )
+        for boundary in interception.crossings_into_a_departure:
+            if boundary.enters_force:
+                continue  # already raised against the region itself
+            items.append(
+                OpenItem(
+                    where=boundary.entering,
+                    what="interception procedure changes at this boundary",
+                    severity=Exposure.MEDIUM,
+                    why=boundary.describe(),
+                )
+            )
+        for found in interception.listening_watch_required:
+            items.append(
+                OpenItem(
+                    where=found.region,
+                    what="continuous listening watch required",
+                    severity=Exposure.MEDIUM,
+                    why=found.describe_watch(),
+                )
+            )
+        for found in interception.procedures:
+            if found.omits_emergency_frequency:
+                items.append(
+                    OpenItem(
+                        where=found.region,
+                        what="121.5 is not among the published interception frequencies",
+                        severity=Exposure.UNKNOWN,
+                        why=(
+                            "published: "
+                            + ", ".join(found.frequencies)
+                            + ". A crew will call on 121.5 regardless"
+                        ),
+                    )
+                )
+
     for entity, supplement, period in supplements:
         items.append(
             OpenItem(
@@ -1446,6 +1520,7 @@ def build_route_dossier(
     supps: SuppsRegister | None = None,
     surveillance: SurveillanceRegister | None = None,
     flight_rules: FlightRulesRegister | None = None,
+    interception: InterceptionRegister | None = None,
     supplements: SupplementRegister | None = None,
     item18: str = "",
     slip_minutes: float | None = None,
@@ -1623,6 +1698,12 @@ def build_route_dossier(
         else None
     )
 
+    interception_view = (
+        view_interception(interception, regions=regions)
+        if interception is not None
+        else None
+    )
+
     surveillance_view = (
         view_surveillance(
             surveillance,
@@ -1690,7 +1771,7 @@ def build_route_dossier(
             route, swept, jurisdictions, expansion, levels, enroute, traps,
             airspace_view, hazard_screen, aids, gnss_view, planning_view,
             supps_view, surveillance_view, tuple(held_supplements),
-            flight_rules_view,
+            flight_rules_view, interception_view,
         ),
         not_addressed=tuple(not_addressed),
         expansion=expansion,
@@ -1707,5 +1788,6 @@ def build_route_dossier(
         supps=supps_view,
         surveillance=surveillance_view,
         flight_rules=flight_rules_view,
+        interception=interception_view,
         supplements=tuple(held_supplements),
     )

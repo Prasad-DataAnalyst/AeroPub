@@ -85,6 +85,7 @@ def sections_of(dossier: RouteDossier) -> tuple[tuple[str, str], ...]:
         ("Navigation warnings — ENR 5", dossier.hazards),
         ("Surveillance — ENR 1.6", dossier.surveillance),
         ("Flight rules — ENR 1.3", dossier.flight_rules),
+        ("Interception — ENR 1.12", dossier.interception),
         ("Supplementary procedures — ENR 1.8", dossier.supps),
         ("GNSS — ENR 4.3", dossier.gnss),
         ("Flight planning — ENR 1.10", dossier.planning),

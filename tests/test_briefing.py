@@ -213,6 +213,14 @@ class TestSections:
         assert "Flight rules — ENR 1.3" in page
         assert "AAAA: never read" in page
 
+    def test_the_interception_section_appears_where_one_is_given(self):
+        from aeropub.interception import InterceptionRegister, view_interception
+
+        view = view_interception(InterceptionRegister(), regions=["AAAA"])
+        page = briefing_html(dossier(interception=view))
+        assert "Interception — ENR 1.12" in page
+        assert "NOT READ IS NOT CONFORMING" in page
+
     def test_sections_are_collapsed_out_of_the_way(self):
         from aeropub.surveillance import SurveillanceRegister, view_surveillance
 

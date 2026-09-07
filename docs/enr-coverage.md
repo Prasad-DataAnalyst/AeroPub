@@ -80,7 +80,7 @@ the checklist is the document to refetch.
 | 1.9 | ATFM and airspace management | Not held. Slots and CTOT are operational rather than published-state, and belong with a live feed |
 | 1.10 | Flight planning | **Built** — `planning.py`. Filing window (both ends), repetitive-plan acceptance, required Item 18 indicators against the Item 18 as filed, and the EOBT slip a delay message covers |
 | 1.11 | Addressing of flight plan messages | Not held |
-| 1.12 | Interception of civil aircraft | Not held. Procedural, and worth carrying for the conflict-zone case |
+| 1.12 | Interception of civil aircraft | **Built** — `interception.py`. What each State publishes about interception, where that changes between the regions crossed, and which States publish a willingness to use force |
 | 1.13 | Unlawful interference | Not held |
 | 1.14 | Air traffic incidents | Not held |
 
@@ -118,6 +118,36 @@ The sector bounds and which set each takes are held as published rather than
 assumed from the Annex, because the departure is the whole reason ENR 1.3
 prints them: a State drawing the split at 090°/270°, or reversing which set the
 sector takes, has said something the Annex does not.
+
+**What ENR 1.12 does, and the assumption it refuses.** *"Everybody follows
+ICAO Annex 2."* Most States publish that they do, and that published statement
+is worth having. But a State that has never been read has not said so, and
+treating silence as conformance is the one error in this section whose cost is
+not a delay: a crew flying the Annex 2 signals — rocking wings, flashing
+navigation lights, the 121.5 call — into a State that publishes its own is
+doing the wrong thing confidently, and nothing en route says so.
+
+`Conformance` therefore has four states and `is_annex_2` returns `None` for
+two of them. Read-and-silent is kept apart from never-read, because a State
+that publishes nothing has at least been asked.
+
+The finding is the boundary, the same shape ENR 1.8 uses: conforming for four
+regions and departing in the fifth is a briefing item, five paragraphs of
+near-identical text is not. Direction matters — conforming into departing is
+the finding; the reverse is a crew being more conservative than it needs to be.
+
+**Force is its own category.** Some States publish that an aircraft failing to
+comply may be fired on. Folded into a general "departs from Annex 2" it would
+be read past, so it is separate, it is raised HIGH against the region, and the
+render says it in words rather than a code.
+
+Two smaller things the section carries. A **continuous listening watch** is
+mandated in named airspace by some States — a blank column is read as *not
+stated*, never as *not required*, because a State silent about a watch has not
+excused you from one. And where a State publishes interception frequencies
+**without 121.5 among them**, that is flagged: an observation about the
+published list rather than a claim the State is wrong, and it matters because
+a crew will call on 121.5 whatever the page says.
 
 **What ENR 1.10 does.** Everything else here is about the air; this is about
 the paperwork, and for a non-scheduled operation the paperwork is what stops

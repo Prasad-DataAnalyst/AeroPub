@@ -176,6 +176,7 @@ python -m aeropub route --from OTHH --to EGLL --aircraft a.json --gnss-template 
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --planning-template    # ENR 1.10
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --supplement-template  # AIP SUP
 python -m aeropub route --from OTHH --to EGLL --aircraft a.json --flight-rules-template # ENR 1.3
+python -m aeropub route --from OTHH --to EGLL --aircraft a.json --interception-template # ENR 1.12
 python -m aeropub checklist --template                                                 # GEN 0.4
 ```
 
