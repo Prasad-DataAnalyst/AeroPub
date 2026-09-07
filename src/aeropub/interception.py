@@ -175,15 +175,19 @@ class Interception:
         for departure in self.departures:
             if not isinstance(departure, Departure):
                 raise TypeError("Interception.departures must be Departure members")
-        if self.departures and self.conformance is Conformance.ANNEX_2:
-            raise ValueError(
-                f"{self.region}: a departure was recorded but the conformance "
-                "says Annex 2. A State publishing something the Annex does not "
-                "is departing from it, and recording both would let the "
-                "departure be read past."
-            )
         if not isinstance(self.source, SourceRef):
             raise TypeError("Interception.source must be a SourceRef")
+
+    @property
+    def contradicts_itself(self) -> bool:
+        """Published as conforming to Annex 2 while also stating a departure.
+
+        Reported, never refused. A State can publish an inconsistency, and
+        the record is still the record — dropping it would lose the departure
+        as well as the contradiction, which is the opposite of careful. A
+        planner reads both and asks the authority.
+        """
+        return bool(self.departures) and self.conformance is Conformance.ANNEX_2
 
     @property
     def uses_force(self) -> bool:
@@ -233,6 +237,11 @@ class Interception:
         if self.listening_watch:
             where = f" in {self.listening_watch_airspace}" if self.listening_watch_airspace else ""
             parts.append(f"continuous listening watch required{where}")
+        if self.contradicts_itself:
+            parts.append(
+                "PUBLISHED AS CONFORMING TO ANNEX 2 WHILE ALSO STATING A "
+                "DEPARTURE — the section contradicts itself"
+            )
         if self.uses_force:
             parts.append(
                 "THE STATE PUBLISHES THAT A NON-COMPLYING AIRCRAFT MAY BE "
@@ -356,6 +365,15 @@ class InterceptionView:
         )
 
     @property
+    def self_contradicting(self) -> tuple[Interception, ...]:
+        """Regions whose ENR 1.12 disagrees with itself.
+
+        Held and reported rather than dropped: the data is still the State's,
+        and refusing it would lose the departure along with the contradiction.
+        """
+        return tuple(p for p in self.procedures if p.contradicts_itself)
+
+    @property
     def armed(self) -> tuple[Interception, ...]:
         """Regions publishing that a non-complying aircraft may be fired on."""
         return tuple(p for p in self.procedures if p.uses_force)
@@ -390,6 +408,14 @@ class InterceptionView:
                 "  signals a crew would fly are the right ones only where a "
                 "State says so.",
             ]
+        if self.self_contradicting:
+            lines += ["", "THE SECTION CONTRADICTS ITSELF"]
+            for procedure in self.self_contradicting:
+                named = ", ".join(d.value for d in procedure.departures)
+                lines.append(
+                    f"  {procedure.region}: published as conforming to Annex 2 "
+                    f"and as departing from it ({named}). Both are held."
+                )
         if self.armed:
             lines += ["", "PUBLISHED USE OF FORCE"]
             for procedure in self.armed:

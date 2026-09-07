@@ -258,12 +258,35 @@ class TestListeningWatch:
 
 
 class TestConsistency:
-    def test_a_departure_recorded_against_annex_2_conformance_is_refused(self):
-        """Recording both would let the departure be read past."""
-        with pytest.raises(ValueError, match="read past"):
-            procedure(
-                conformance=Conformance.ANNEX_2, departures=(Departure.SIGNALS,)
-            )
+    def test_a_section_that_contradicts_itself_is_held_not_refused(self):
+        """A State can publish an inconsistency, and the record is still the
+        record. Refusing it would lose the departure along with the
+        contradiction, which is the opposite of careful."""
+        found = procedure(
+            conformance=Conformance.ANNEX_2, departures=(Departure.SIGNALS,)
+        )
+        assert found.contradicts_itself
+        assert found.departures == (Departure.SIGNALS,)
+
+    def test_the_contradiction_is_reported_on_the_page(self):
+        view = view_interception(
+            register(
+                procedure(
+                    conformance=Conformance.ANNEX_2,
+                    departures=(Departure.SIGNALS,),
+                )
+            ),
+            regions=["AAAA"],
+        )
+        assert len(view.self_contradicting) == 1
+        assert "THE SECTION CONTRADICTS ITSELF" in view.render()
+        assert "Both are held" in view.render()
+
+    def test_a_consistent_section_is_not_flagged(self):
+        assert not procedure().contradicts_itself
+        assert not procedure(
+            conformance=Conformance.DEPARTS, departures=(Departure.SIGNALS,)
+        ).contradicts_itself
 
     def test_a_region_must_be_named(self):
         with pytest.raises(ValueError, match="region must be named"):

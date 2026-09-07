@@ -33,6 +33,32 @@ it reports as absent, and a half-known code decodes to nothing at all —
 "taxiway <unknown>" reads as though the condition were understood, which is
 the misreading to avoid.
 
+## Quality flags, it does not deny
+
+A finding about how a State publishes is a finding, not a filter. When an AIP
+or a NOTAM is wrong — a Q-code disagreeing with its own text, a resolution
+coarser than the State's own statement, a section contradicting itself — the
+data is still that State's data and it still gets processed. The alternative
+is a platform that quietly holds less than the AIP contains, which is a worse
+failure than holding something imperfect and saying so.
+
+The line is between *cannot read it* and *read it and it looks wrong*:
+
+- **Cannot read it** is a refusal. A truncated bundle, a minimum en-route
+  altitude that is not a number, a coordinate that is not a coordinate. There
+  is no value to carry.
+- **Read it and it looks wrong** is a flag. Both readings are kept, the
+  disagreement is reported, and downstream decides.
+
+`notam_review` follows it: a NOTAM whose Q-code its text disputes is marked
+unscreenable so a filter **keeps** it. `dataquality` follows it: a coarser-
+than-published coordinate is reported, not dropped.
+
+`interception` did not, and was corrected. It refused to load a State's ENR
+1.12 when the section claimed Annex 2 conformance while also stating a
+departure — throwing away the departure along with the contradiction. It now
+holds both and reports `contradicts_itself`.
+
 ## PANS-AIM and data quality
 
 Doc 10066 is where an AIP's shape comes from, and most of the structure it
