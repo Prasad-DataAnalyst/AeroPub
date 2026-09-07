@@ -48,7 +48,7 @@ FAA_TOKEN_RESPONSE = {
     "status": "approved",
 }
 
-CREDENTIALS = {"FAA_NMS_CLIENT_ID": "key-value", "FAA_NMS_CLIENT_SECRET": "secret-value"}
+CREDENTIALS = {"AEROPUB_FAA_CLIENT_ID": "key-value", "AEROPUB_FAA_CLIENT_SECRET": "secret-value"}
 
 
 class Replay:
@@ -122,8 +122,17 @@ class TestTheRequest:
         with pytest.raises(NmsConfigurationError) as caught:
             _client(Replay(FAA_TOKEN_RESPONSE), environ={}).token()
         message = str(caught.value)
-        assert "FAA_NMS_CLIENT_ID" in message and "FAA_NMS_CLIENT_SECRET" in message
+        assert "AEROPUB_FAA_CLIENT_ID" in message and "AEROPUB_FAA_CLIENT_SECRET" in message
         assert "spreadsheet" in message
+
+    def test_the_message_names_both_ways_to_install_one(self):
+        """Saying only "set X" left an operator to guess, and the guess that
+        looked most obvious wrote to a file the connector did not read."""
+        with pytest.raises(NmsConfigurationError) as caught:
+            _client(Replay(FAA_TOKEN_RESPONSE), environ={}).token()
+        message = str(caught.value)
+        assert "aeropub credentials --set" in message
+        assert "environment variables" in message
 
 
 class TestTheResponse:

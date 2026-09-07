@@ -539,6 +539,24 @@ KNOWN_CREDENTIALS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _cmd_netcheck(args: argparse.Namespace) -> int:
+    """Reachability, credential-free.
+
+    A thin front on :mod:`aeropub.netcheck` so the answer is one command away
+    from the dossier that failed, rather than a module path an operator has to
+    already know.
+    """
+    from aeropub import netcheck
+
+    argv: list[str] = list(args.url)
+    if args.environment:
+        argv += ["--environment", args.environment]
+    if args.all_environments:
+        argv.append("--all")
+    argv += ["--timeout", str(args.timeout)]
+    return netcheck.main(argv)
+
+
 def _cmd_credentials(args: argparse.Namespace) -> int:
     """Show, set or remove a stored secret. Never prints a value.
 
@@ -1622,6 +1640,27 @@ def _parser() -> argparse.ArgumentParser:
                          help="store a secret, read from a prompt")
     secrets.add_argument("--forget", metavar="NAME", help="remove a stored secret")
     secrets.set_defaults(handler=_cmd_credentials)
+
+    reach = sub.add_parser(
+        "netcheck",
+        help="which layer is broken: the network, the proxy, TLS, or the authority",
+        description=(
+            "Probe the hosts a connector needs, without a credential. An "
+            "authority answering 401 has proved DNS, the proxy, TLS and its "
+            "own front door all work, so reachability is established without "
+            "a key — which is what somebody needs to know before concluding "
+            "their key is bad."
+        ),
+    )
+    reach.add_argument("url", nargs="*",
+                       help="a URL or bare hostname. Defaults to the FAA NMS-API host")
+    reach.add_argument("--environment", "-e",
+                       help="FAA environment whose host to probe: fit, staging or prod")
+    reach.add_argument("--all", dest="all_environments", action="store_true",
+                       help="probe every configured FAA environment")
+    reach.add_argument("--timeout", type=int, default=20,
+                       help="seconds per probe (default 20)")
+    reach.set_defaults(handler=_cmd_netcheck)
 
     back = add(
         "retrospect",

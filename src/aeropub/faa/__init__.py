@@ -22,10 +22,18 @@ shape it establishes:
 
 Getting started::
 
-    export FAA_NMS_CLIENT_ID=...        # the KEY column of the FAA spreadsheet
-    export FAA_NMS_CLIENT_SECRET=...    # the SECRET column
-    export FAA_NMS_ENVIRONMENT=fit      # fit, staging or prod
-    python -m aeropub.faa.check
+    aeropub credentials --set AEROPUB_FAA_CLIENT_ID      # prompts, never echoes
+    aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET
+    export FAA_NMS_ENVIRONMENT=fit                        # fit, staging or prod
+    aeropub netcheck                                      # reachability, no key used
+    python -m aeropub.faa.check                           # the whole chain
+
+Anything hosted should set ``AEROPUB_FAA_CLIENT_ID`` and
+``AEROPUB_FAA_CLIENT_SECRET`` as real environment variables instead: they
+survive a restart and touch no disk. Either way the connector reads the
+environment first and the credential file second. ``FAA_NMS_CLIENT_ID`` and
+``FAA_NMS_CLIENT_SECRET`` are the earlier names and are still read, and the
+check command says so when it finds one.
 """
 
 from __future__ import annotations

@@ -34,16 +34,25 @@ from __future__ import annotations
 
 import os
 import socket
+import sys
 import ssl
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 from urllib.parse import urlsplit
 
-__all__ = ["Layer", "Probe", "opener_for", "probe"]
+__all__ = [
+    "Layer",
+    "Probe",
+    "opener_for",
+    "probe",
+    "report",
+    "verdict",
+    "main",
+]
 
 #: Environment variables that already carry a CA bundle, in the order a
 #: sensible tool consults them. Set by most managed environments and by
@@ -345,3 +354,149 @@ def probe(
             url=url, host=host, layer=layer, detail=detail, proxy=via,
             ca_bundle=bundle, duration_ms=int((time.monotonic() - started) * 1000),
         )
+
+
+# --------------------------------------------------------------------------
+# The console
+# --------------------------------------------------------------------------
+
+#: Exit codes, chosen so a health check can act on the verdict rather than
+#: parse the text. A blocked host is not the same failure as a broken one and
+#: does not go to the same team.
+EXIT_OK = 0
+EXIT_UNREACHABLE = 1
+EXIT_NETWORK_POLICY = 2
+EXIT_OURS = 3
+
+
+def report(probes: Iterable[Probe]) -> str:
+    """One line per host, then the remedy for anything that failed."""
+    found = list(probes)
+    if not found:
+        return "nothing to probe"
+
+    width = max(len(p.host) for p in found)
+    lines = ["REACHABILITY — no credential used"]
+    for p in found:
+        mark = "ok  " if p.reachable else "FAIL"
+        timing = f" [{p.duration_ms}ms]" if p.duration_ms is not None else ""
+        lines.append(f"  {mark}  {p.host:<{width}}  {p.describe()}{timing}")
+
+    via = next((p.proxy for p in found if p.proxy), None)
+    bundle = next((p.ca_bundle for p in found if p.ca_bundle), None)
+    if via or bundle:
+        lines.append("")
+        if via:
+            lines.append(f"  proxy       {via}")
+        if bundle:
+            lines.append(f"  ca bundle   {bundle}")
+
+    blocked = [p for p in found if not p.reachable]
+    if not blocked:
+        lines += [
+            "",
+            "Every host answered. Reachability is established without a "
+            "credential, so a",
+            "failure after this point is the credential or the request, not "
+            "the network.",
+        ]
+        return "\n".join(lines)
+
+    lines += ["", "WHAT TO DO"]
+    for p in blocked:
+        owner = (
+            "your network administrator"
+            if p.layer.is_network_policy
+            else "this side" if p.layer.is_ours else "the authority"
+        )
+        lines.append(f"  {p.host} — {owner}")
+        lines.append(f"    {p.remedy()}")
+
+    # A host that never answered has said nothing about a credential, and the
+    # commonest wrong move at this point is to go and rotate a good one.
+    lines += [
+        "",
+        "No credential was used and none was tested. A host that did not "
+        "answer has said",
+        "nothing about whether a key is valid.",
+    ]
+    return "\n".join(lines)
+
+
+def verdict(probes: Iterable[Probe]) -> int:
+    found = list(probes)
+    if not found:
+        return EXIT_UNREACHABLE
+    if all(p.reachable for p in found):
+        return EXIT_OK
+    blocked = [p for p in found if not p.reachable]
+    if any(p.layer.is_network_policy for p in blocked):
+        return EXIT_NETWORK_POLICY
+    if any(p.layer.is_ours for p in blocked):
+        return EXIT_OURS
+    return EXIT_UNREACHABLE
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Probe the hosts this platform needs, without a credential.
+
+    Documented as the first thing to run when a connector fails, because it
+    answers the question every other tool leaves open: was it us, the network,
+    or them.
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m aeropub.netcheck",
+        description=(
+            "Which layer is broken: the network, the proxy, TLS, or the "
+            "authority. Uses no credential and sends none."
+        ),
+    )
+    parser.add_argument(
+        "url",
+        nargs="*",
+        help="a URL or bare hostname to probe. Defaults to the FAA NMS-API "
+        "environment's own host.",
+    )
+    parser.add_argument(
+        "--environment", "-e",
+        help="FAA environment whose host to probe: fit, staging or prod.",
+    )
+    parser.add_argument(
+        "--all", action="store_true",
+        help="probe every configured FAA environment rather than one.",
+    )
+    parser.add_argument(
+        "--timeout", type=int, default=20, help="seconds per probe (default 20)."
+    )
+    args = parser.parse_args(argv)
+
+    targets: list[str] = []
+    for value in args.url:
+        targets.append(value if "://" in value else f"https://{value}/")
+
+    if not targets:
+        # Imported here rather than at module scope: this module is the one
+        # thing that must keep working when the rest of a connector does not.
+        try:
+            from aeropub.faa.config import ENVIRONMENTS, load_environment
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"no default target available: {exc}", file=sys.stderr)
+            return EXIT_UNREACHABLE
+        if args.all:
+            targets = [env.url("ping") for env in ENVIRONMENTS.values()]
+        else:
+            try:
+                targets = [load_environment(args.environment).url("ping")]
+            except (KeyError, OSError, ValueError) as exc:
+                print(f"configuration error: {exc}", file=sys.stderr)
+                return EXIT_UNREACHABLE
+
+    probes = [probe(url, timeout=args.timeout) for url in targets]
+    print(report(probes))
+    return verdict(probes)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

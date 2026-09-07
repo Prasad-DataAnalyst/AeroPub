@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Mapping
 
+from aeropub.credentials import CredentialStore
 from aeropub.faa.config import ClientCredentials, NmsEnvironment, load_environment
 from aeropub.registry import (
     CredentialStatus,
@@ -133,14 +134,29 @@ class CredentialRow:
     status: CredentialStatus
     present: bool
     hint: str | None = None
+    found_as: str = ""
+    """The name that actually carried the value, where that is not
+    :attr:`env_var`. An operator whose key works under a name the platform no
+    longer documents needs to be told, or the migration never happens and two
+    names stay live for one secret."""
 
     @property
     def needs_attention(self) -> bool:
         return self.status is not CredentialStatus.CONFIGURED
 
+    @property
+    def is_deprecated_name(self) -> bool:
+        return bool(self.found_as) and self.found_as != self.env_var
+
     def describe(self) -> str:
-        return f"{self.env_var}: {self.status.value}" + (
-            f" ({self.hint})" if self.hint else ""
+        return (
+            f"{self.env_var}: {self.status.value}"
+            + (f" ({self.hint})" if self.hint else "")
+            + (
+                f" — set as {self.found_as}, which is the earlier name"
+                if self.is_deprecated_name
+                else ""
+            )
         )
 
 
@@ -149,24 +165,31 @@ def credential_rows(
     *,
     environ: Mapping[str, str] | None = None,
     rejected: bool = False,
+    store: CredentialStore | None = None,
 ) -> tuple[CredentialRow, ...]:
     """Both halves of the pair, for the key-status screen.
 
     ``rejected`` is what the last live call learned, not what we can see from
     here: a key that is present and well-formed is indistinguishable from a
     valid one until the FAA has been asked.
+
+    Read through the same store the connector uses, so this screen and the
+    connection agree about what is installed. A screen that read only the
+    environment showed a credential missing while the connector held it, or
+    the reverse, and either way the operator debugs the wrong thing.
     """
     creds = credentials or ClientCredentials.default()
-    env = dict(environ) if environ is not None else None
+    held = ClientCredentials._store(environ, store)
     rows = []
     for ref in creds.refs():
         rows.append(
             CredentialRow(
                 env_var=ref.env_var,
                 label=ref.label,
-                status=ref.status(env, rejected=rejected),
-                present=ref.is_present(env),
+                status=ref.status(rejected=rejected, store=held),
+                present=ref.is_present(store=held),
                 hint=ref.hint,
+                found_as=ref.found_in(store=held) or "",
             )
         )
     return tuple(rows)

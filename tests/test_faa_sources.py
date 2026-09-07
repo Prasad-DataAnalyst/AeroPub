@@ -41,7 +41,7 @@ from aeropub.registry import (
 from aeropub.states import get_profile
 from aeropub.states.united_states import profile as us_profile
 
-BOTH = {"FAA_NMS_CLIENT_ID": "id-value-xyz", "FAA_NMS_CLIENT_SECRET": "secret-value-xyz"}
+BOTH = {"AEROPUB_FAA_CLIENT_ID": "id-value-xyz", "AEROPUB_FAA_CLIENT_SECRET": "secret-value-xyz"}
 NOW = datetime(2025, 9, 12, 17, 25, tzinfo=timezone.utc)
 
 
@@ -86,7 +86,7 @@ class TestSources:
     def test_the_secret_is_the_credential_the_board_watches(self):
         for source in nms_sources(ENVIRONMENTS["prod"], environ={}):
             assert source.credential is not None
-            assert source.credential.env_var == "FAA_NMS_CLIENT_SECRET"
+            assert source.credential.env_var == "AEROPUB_FAA_CLIENT_SECRET"
 
     def test_the_sources_go_on_the_same_board_as_everything_else(self):
         registry = SourceRegistry(nms_sources(ENVIRONMENTS["prod"], environ={}))
@@ -100,14 +100,28 @@ class TestSources:
 
 class TestCredentialRows:
     def test_reports_each_half_separately(self):
-        rows = credential_rows(environ={"FAA_NMS_CLIENT_ID": "key"})
+        rows = credential_rows(environ={"AEROPUB_FAA_CLIENT_ID": "key"})
         by_var = {r.env_var: r for r in rows}
-        assert by_var["FAA_NMS_CLIENT_ID"].status is CredentialStatus.UNVERIFIED
-        assert by_var["FAA_NMS_CLIENT_SECRET"].status is CredentialStatus.MISSING
+        assert by_var["AEROPUB_FAA_CLIENT_ID"].status is CredentialStatus.UNVERIFIED
+        assert by_var["AEROPUB_FAA_CLIENT_SECRET"].status is CredentialStatus.MISSING
 
     def test_a_rejected_key_reads_invalid_not_missing(self):
         rows = credential_rows(environ=BOTH, rejected=True)
         assert all(r.status is CredentialStatus.INVALID for r in rows)
+
+    def test_a_key_installed_under_the_earlier_name_still_shows_present(self):
+        """A rename that only changed the code would show every working
+        installation as unconfigured on the next upgrade."""
+        rows = credential_rows(environ={"FAA_NMS_CLIENT_ID": "key"})
+        by_var = {r.env_var: r for r in rows}
+        assert by_var["AEROPUB_FAA_CLIENT_ID"].present
+        assert by_var["AEROPUB_FAA_CLIENT_ID"].is_deprecated_name
+        assert "the earlier name" in by_var["AEROPUB_FAA_CLIENT_ID"].describe()
+
+    def test_a_key_under_the_current_name_is_not_flagged(self):
+        rows = credential_rows(environ={"AEROPUB_FAA_CLIENT_ID": "key"})
+        by_var = {r.env_var: r for r in rows}
+        assert not by_var["AEROPUB_FAA_CLIENT_ID"].is_deprecated_name
 
     def test_a_row_carries_no_value(self):
         # The env var name and the label are meant to be visible; the value
@@ -116,7 +130,7 @@ class TestCredentialRows:
         rendered = repr(rows)
         assert "id-value-xyz" not in rendered
         assert "secret-value-xyz" not in rendered
-        assert "FAA_NMS_CLIENT_SECRET" in rendered
+        assert "AEROPUB_FAA_CLIENT_SECRET" in rendered
         assert all(r.hint is None for r in rows)
 
 
@@ -199,7 +213,7 @@ class TestVerify:
         report = verify(ENVIRONMENTS["staging"], environ={})
         assert report.exit_code == EXIT_CREDENTIALS
         assert [s.name for s in report.stages] == ["configuration", "credentials"]
-        assert "FAA_NMS_CLIENT_ID" in report.stages[-1].detail
+        assert "AEROPUB_FAA_CLIENT_ID" in report.stages[-1].detail
         assert "spreadsheet" in report.stages[-1].detail
 
     def test_a_working_connection_reaches_ping(self):
@@ -317,13 +331,13 @@ class TestVerify:
 
 class TestCli:
     def test_exits_non_zero_when_the_key_is_absent(self, capsys, monkeypatch):
-        monkeypatch.delenv("FAA_NMS_CLIENT_ID", raising=False)
-        monkeypatch.delenv("FAA_NMS_CLIENT_SECRET", raising=False)
+        monkeypatch.delenv("AEROPUB_FAA_CLIENT_ID", raising=False)
+        monkeypatch.delenv("AEROPUB_FAA_CLIENT_SECRET", raising=False)
         assert main(["--environment", "staging"]) == EXIT_CREDENTIALS
-        assert "FAA_NMS_CLIENT_ID" in capsys.readouterr().out
+        assert "AEROPUB_FAA_CLIENT_ID" in capsys.readouterr().out
 
     def test_json_output_is_a_document(self, capsys, monkeypatch):
-        monkeypatch.delenv("FAA_NMS_CLIENT_ID", raising=False)
+        monkeypatch.delenv("AEROPUB_FAA_CLIENT_ID", raising=False)
         main(["--environment", "staging", "--json"])
         document = json.loads(capsys.readouterr().out)
         assert document["environment"] == "staging"

@@ -222,7 +222,11 @@ class TokenClient:
             raise NmsConfigurationError(
                 f"FAA NMS credentials are not installed: set {missing}. "
                 "The FAA issues these on the onboarding spreadsheet — the KEY "
-                "column is the client id, the SECRET column the client secret."
+                "column is the client id, the SECRET column the client secret. "
+                "Install with 'aeropub credentials --set <NAME>', which prompts "
+                "and writes outside any repository, or set them as environment "
+                "variables — which is the better answer for anything hosted. "
+                "Both are read, the environment first."
             )
         client_id, client_secret = pair
 

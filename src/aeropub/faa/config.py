@@ -80,6 +80,7 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from aeropub.credentials import CredentialStore
 from aeropub.registry import CredentialRef, CredentialStatus
 
 __all__ = [
@@ -463,10 +464,13 @@ class ClientCredentials:
     def default(cls, *, label: str = "FAA NMS-API") -> "ClientCredentials":
         return cls(
             client_id=CredentialRef(
-                env_var="FAA_NMS_CLIENT_ID", label=f"{label} client id (spreadsheet KEY)"
+                env_var="AEROPUB_FAA_CLIENT_ID",
+                aliases=("FAA_NMS_CLIENT_ID",),
+                label=f"{label} client id (spreadsheet KEY)",
             ),
             client_secret=CredentialRef(
-                env_var="FAA_NMS_CLIENT_SECRET",
+                env_var="AEROPUB_FAA_CLIENT_SECRET",
+                aliases=("FAA_NMS_CLIENT_SECRET",),
                 label=f"{label} client secret (spreadsheet SECRET)",
             ),
         )
@@ -474,30 +478,78 @@ class ClientCredentials:
     def refs(self) -> tuple[CredentialRef, CredentialRef]:
         return (self.client_id, self.client_secret)
 
+    @staticmethod
+    def _store(
+        environ: Mapping[str, str] | None, store: CredentialStore | None
+    ) -> CredentialStore:
+        """Where the secrets are looked for.
+
+        Always a store, never a bare mapping. ``aeropub credentials --set``
+        writes to a file outside any repository, and a connector reading only
+        the environment cannot see it — so the documented way to install a
+        credential produced a connector that reported it missing. The store
+        reads the environment first and that file second, which is the order
+        the documentation states.
+        """
+        if store is not None:
+            return store
+        return CredentialStore(environ=dict(environ) if environ is not None else None)
+
     def resolve(
-        self, environ: Mapping[str, str] | None = None
+        self,
+        environ: Mapping[str, str] | None = None,
+        *,
+        store: CredentialStore | None = None,
     ) -> tuple[str, str] | None:
         """Both halves, read at point of use, or ``None`` if either is absent."""
-        env = dict(os.environ if environ is None else environ)
-        key = self.client_id.resolve(env)
-        secret = self.client_secret.resolve(env)
+        held = self._store(environ, store)
+        key = self.client_id.resolve(store=held)
+        secret = self.client_secret.resolve(store=held)
         if not key or not secret:
             return None
         return key, secret
 
-    def missing(self, environ: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    def missing(
+        self,
+        environ: Mapping[str, str] | None = None,
+        *,
+        store: CredentialStore | None = None,
+    ) -> tuple[str, ...]:
         """Names of the variables that are not set. What the console shows."""
-        env = dict(os.environ if environ is None else environ)
-        return tuple(ref.env_var for ref in self.refs() if not ref.is_present(env))
+        held = self._store(environ, store)
+        return tuple(
+            ref.env_var for ref in self.refs() if not ref.is_present(store=held)
+        )
+
+    def deprecated_names(
+        self,
+        environ: Mapping[str, str] | None = None,
+        *,
+        store: CredentialStore | None = None,
+    ) -> tuple[tuple[str, str], ...]:
+        """Halves supplied under an old name, as ``(found_as, current)``.
+
+        Reported rather than silently accepted: two live names for one secret
+        is how a rotated credential loses to a stale one still sitting in an
+        environment nobody remembers setting.
+        """
+        held = self._store(environ, store)
+        found: list[tuple[str, str]] = []
+        for ref in self.refs():
+            name = ref.found_in(store=held)
+            if name is not None and name != ref.env_var:
+                found.append((name, ref.env_var))
+        return tuple(found)
 
     def status(
         self,
         environ: Mapping[str, str] | None = None,
         *,
         rejected: bool = False,
+        store: CredentialStore | None = None,
     ) -> CredentialStatus:
         """The worse of the two halves — a pair is only as good as both."""
-        env = dict(os.environ if environ is None else environ)
+        held = self._store(environ, store)
         order = [
             CredentialStatus.MISSING,
             CredentialStatus.INVALID,
@@ -505,5 +557,7 @@ class ClientCredentials:
             CredentialStatus.UNVERIFIED,
             CredentialStatus.CONFIGURED,
         ]
-        statuses = [ref.status(env, rejected=rejected) for ref in self.refs()]
+        statuses = [
+            ref.status(rejected=rejected, store=held) for ref in self.refs()
+        ]
         return min(statuses, key=order.index)

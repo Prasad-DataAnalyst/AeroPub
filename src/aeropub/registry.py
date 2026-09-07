@@ -95,6 +95,17 @@ class CredentialRef:
     label: str
     """What a human calls it, e.g. ``"FAA NOTAM API"``."""
 
+    aliases: tuple[str, ...] = ()
+    """Other names this secret has been published under.
+
+    Read after :attr:`env_var` and reported when one of them carried the
+    value. A rename that only changed the code would break every working
+    installation on the next upgrade; one that accepted the old name silently
+    for ever would leave two names for one secret, which is how a rotated
+    credential loses to a stale one. Naming the alias in the output is what
+    lets an operator finish the migration.
+    """
+
     added_at: datetime = field(default_factory=_utcnow)
     last_verified_at: datetime | None = None
     expires_at: datetime | None = None
@@ -107,15 +118,47 @@ class CredentialRef:
         if not self.label.strip():
             raise ValueError("CredentialRef.label must be a non-empty string")
 
-    def is_present(self, environ: dict[str, str] | None = None) -> bool:
-        env = os.environ if environ is None else environ
-        return bool(env.get(self.env_var, "").strip())
+    def names(self) -> tuple[str, ...]:
+        """Every name this secret answers to, current one first."""
+        return (self.env_var, *self.aliases)
 
-    def resolve(self, environ: dict[str, str] | None = None) -> str | None:
+    def _lookup(
+        self, environ: dict[str, str] | None, store: object | None
+    ) -> tuple[str | None, str | None]:
+        """The first name carrying a value, and the value.
+
+        A store, where one is given, is the whole world: it consults the
+        environment itself and then the file the platform writes, in that
+        order. Without one this reads the environment alone — which is what a
+        caller passing an explicit mapping means.
+        """
+        for name in self.names():
+            if store is not None:
+                found = store.get(name)
+            else:
+                env = os.environ if environ is None else environ
+                found = env.get(name)
+            value = (found or "").strip()
+            if value:
+                return name, value
+        return None, None
+
+    def found_in(
+        self, environ: dict[str, str] | None = None, *, store: object | None = None
+    ) -> str | None:
+        """Which of :meth:`names` actually carried the value, if any."""
+        return self._lookup(environ, store)[0]
+
+    def is_present(
+        self, environ: dict[str, str] | None = None, *, store: object | None = None
+    ) -> bool:
+        return self._lookup(environ, store)[0] is not None
+
+    def resolve(
+        self, environ: dict[str, str] | None = None, *, store: object | None = None
+    ) -> str | None:
         """The secret, read at point of use. Never stored, never cached."""
-        env = os.environ if environ is None else environ
-        value = env.get(self.env_var, "").strip()
-        return value or None
+        return self._lookup(environ, store)[1]
 
     def status(
         self,
@@ -123,8 +166,9 @@ class CredentialRef:
         *,
         now: datetime | None = None,
         rejected: bool = False,
+        store: object | None = None,
     ) -> CredentialStatus:
-        if not self.is_present(environ):
+        if not self.is_present(environ, store=store):
             return CredentialStatus.MISSING
         if rejected:
             return CredentialStatus.INVALID

@@ -153,7 +153,8 @@ Two are needed:
 Set them once:
 
 ```
-aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET   # prompts, never echoes
+aeropub credentials --set AEROPUB_FAA_CLIENT_ID       # prompts, never echoes
+aeropub credentials --set AEROPUB_FAA_CLIENT_SECRET
 aeropub credentials                                    # shows what is set, never a value
 ```
 
@@ -161,6 +162,18 @@ They are stored in `~/.aeropub/credentials.json`, owner-readable only, **outside
 any repository** so they cannot be committed by accident. In a hosted
 environment prefer real environment variables — they survive restarts and touch
 no disk this project can read; the store checks the environment first.
+
+**Earlier names.** `FAA_NMS_CLIENT_ID` and `FAA_NMS_CLIENT_SECRET` are still
+read, so an installation predating the rename keeps working. `aeropub.faa.check`
+says which name carried the value whenever it is not the current one — two live
+names for one secret is how a rotated credential loses to a stale one still
+sitting in an environment nobody remembers setting.
+
+There was a period in which none of this worked: the connector read only the
+environment, so a credential installed with `aeropub credentials --set` went
+into a file the connector never opened and the check reported it missing. It
+now resolves through the same store the command writes to, environment first
+and file second.
 
 `tests/test_credentials.py` scans every tracked file on each test run for
 credential-shaped content, and fails the build if it finds any.
@@ -179,5 +192,30 @@ because nothing else ever held them.
 This connector needs outbound HTTPS to the CGI Federal hosts. In a restricted
 environment the allowlist entry is `api-staging.cgifederal-aim.com` (and
 `api-sit.cgifederal-aim.com` if testing there) — **not** any `faa.gov` host.
-`python -m aeropub.netcheck` reports whether egress reaches them, without
-needing a credential.
+
+Run this first when anything fails:
+
+```
+aeropub netcheck --all          # or: python -m aeropub.netcheck --all
+```
+
+It probes every configured host, uses no credential and sends none, and names
+who can fix what it finds. The exit code is the verdict, so a health check does
+not have to read prose:
+
+| Code | Means |
+|---|---|
+| `0` | every host answered — the network is not the problem |
+| `1` | a host did not answer, and it is the authority's end |
+| `2` | an egress proxy refused — a network administrator, not a code change |
+| `3` | our own configuration, usually an untrusted intercepting CA |
+
+An authority answering `401` counts as reachable: that proves DNS, the proxy,
+TLS and its front door all work, and only the key is missing. The distinction
+matters because the commonest wrong move after a blocked host is to rotate a
+perfectly good credential — so a failed probe says in as many words that no key
+was tested.
+
+**As of this writing, this environment's egress refuses all three hosts** with a
+`403` at the gateway before the request leaves the building. That is a policy on
+our side, not anything the FAA or CGI did.

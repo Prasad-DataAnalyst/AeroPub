@@ -122,9 +122,19 @@ class ConnectionReport:
             lines.append(f"  overlay   {self.overlay_file}")
         lines.append("")
         lines.append("Credentials")
+        width = max(
+            (len(row["env_var"]) for row in self.credentials), default=0
+        )
         for row in self.credentials:
             mark = "ok  " if row["status"] == "configured" else "----"
-            lines.append(f"  {mark}  {row['env_var']:24} {row['status']}")
+            note = (
+                f"  — set as {row['found_as']}, which is the earlier name"
+                if row.get("found_as") and row["found_as"] != row["env_var"]
+                else ""
+            )
+            lines.append(
+                f"  {mark}  {row['env_var']:<{width}}  {row['status']}{note}"
+            )
         lines.append("")
         lines.append("Connection")
         lines.extend(stage.line() for stage in self.stages)
@@ -195,6 +205,7 @@ def _credentials(
             "status": row.status.value,
             "present": row.present,
             "hint": row.hint,
+            "found_as": row.found_as,
         }
         for row in credential_rows(creds, environ=env_map)
     ]
@@ -209,6 +220,20 @@ def _credentials(
         )
         report.exit_code = EXIT_CREDENTIALS
         return False
+    stale = creds.deprecated_names(env_map)
+    if stale:
+        report.stages.append(
+            StageResult(
+                "credentials", True,
+                "both halves present, but "
+                + "; ".join(
+                    f"{found} is the earlier name for {current}" for found, current in stale
+                )
+                + ". Two live names for one secret is how a rotated credential "
+                "loses to a stale one — move it and unset the old name.",
+            )
+        )
+        return True
     report.stages.append(StageResult("credentials", True, "both halves present"))
     return True
 

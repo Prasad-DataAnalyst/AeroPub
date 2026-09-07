@@ -10,6 +10,7 @@ a release.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -205,35 +206,124 @@ class TestLoadEnvironment:
             load_environment(environ={CONFIG_PATH_VAR: str(config)})
 
 
+def isolated(environ=None, tmp_path=None):
+    """A store that reads the given mapping and no real credentials file.
+
+    Without the path override every one of these would read whatever the
+    developer happens to have installed in ``~/.aeropub``, and would pass or
+    fail by machine.
+    """
+    from aeropub.credentials import CredentialStore
+
+    return CredentialStore(
+        environ=dict(environ or {}),
+        path=(tmp_path / "nothing.json") if tmp_path is not None else Path("/nonexistent/aeropub.json"),
+    )
+
+
 class TestClientCredentials:
-    def test_names_the_two_variables_the_faa_spreadsheet_maps_to(self):
+    def test_the_current_names_are_the_documented_ones(self):
+        """The name in the docs, the name `aeropub credentials` offers, and
+        the name the connector reads have to be one name."""
         creds = ClientCredentials.default()
-        assert creds.client_id.env_var == "FAA_NMS_CLIENT_ID"
-        assert creds.client_secret.env_var == "FAA_NMS_CLIENT_SECRET"
+        assert creds.client_id.env_var == "AEROPUB_FAA_CLIENT_ID"
+        assert creds.client_secret.env_var == "AEROPUB_FAA_CLIENT_SECRET"
         assert "KEY" in creds.client_id.label
         assert "SECRET" in creds.client_secret.label
 
+    def test_the_earlier_names_are_still_read(self):
+        """A rename that only changed the code would break every working
+        installation on the next upgrade."""
+        creds = ClientCredentials.default()
+        assert creds.client_id.aliases == ("FAA_NMS_CLIENT_ID",)
+        held = isolated({"FAA_NMS_CLIENT_ID": "k", "FAA_NMS_CLIENT_SECRET": "s"})
+        assert creds.resolve(store=held) == ("k", "s")
+
+    def test_an_old_name_is_reported_rather_than_silently_accepted(self):
+        """Two live names for one secret is how a rotated credential loses to
+        a stale one."""
+        creds = ClientCredentials.default()
+        held = isolated({"FAA_NMS_CLIENT_ID": "k", "AEROPUB_FAA_CLIENT_SECRET": "s"})
+        assert creds.deprecated_names(store=held) == (
+            ("FAA_NMS_CLIENT_ID", "AEROPUB_FAA_CLIENT_ID"),
+        )
+
+    def test_the_current_name_wins_over_the_old_one(self):
+        creds = ClientCredentials.default()
+        held = isolated(
+            {"AEROPUB_FAA_CLIENT_ID": "new", "FAA_NMS_CLIENT_ID": "old",
+             "AEROPUB_FAA_CLIENT_SECRET": "s"}
+        )
+        assert creds.resolve(store=held) == ("new", "s")
+        assert creds.deprecated_names(store=held) == ()
+
     def test_resolve_needs_both_halves(self):
         creds = ClientCredentials.default()
-        assert creds.resolve({"FAA_NMS_CLIENT_ID": "k"}) is None
-        assert creds.resolve({"FAA_NMS_CLIENT_SECRET": "s"}) is None
-        assert creds.resolve(
-            {"FAA_NMS_CLIENT_ID": "k", "FAA_NMS_CLIENT_SECRET": "s"}
-        ) == ("k", "s")
+        assert creds.resolve(store=isolated({"AEROPUB_FAA_CLIENT_ID": "k"})) is None
+        assert creds.resolve(store=isolated({"AEROPUB_FAA_CLIENT_SECRET": "s"})) is None
+        both = isolated(
+            {"AEROPUB_FAA_CLIENT_ID": "k", "AEROPUB_FAA_CLIENT_SECRET": "s"}
+        )
+        assert creds.resolve(store=both) == ("k", "s")
 
     def test_missing_names_the_absent_half(self):
         # Half a pair installed is the commonest onboarding mistake, and it
         # produces a 401 that says nothing about which half.
         creds = ClientCredentials.default()
-        assert creds.missing({"FAA_NMS_CLIENT_ID": "k"}) == ("FAA_NMS_CLIENT_SECRET",)
+        assert creds.missing(store=isolated({"AEROPUB_FAA_CLIENT_ID": "k"})) == (
+            "AEROPUB_FAA_CLIENT_SECRET",
+        )
+
+    def test_missing_names_the_current_name_even_when_the_old_one_is_set(self):
+        """The operator is being told what to set next, not what they set
+        last."""
+        creds = ClientCredentials.default()
+        assert creds.missing(store=isolated({"FAA_NMS_CLIENT_ID": "k"})) == (
+            "AEROPUB_FAA_CLIENT_SECRET",
+        )
+
+    def test_a_credential_set_through_the_documented_command_is_found(self, tmp_path):
+        """The defect this replaced: `aeropub credentials --set` writes to a
+        file outside any repository, and the connector read only the
+        environment — so the documented way to install a credential produced a
+        connector that reported it missing.
+        """
+        from aeropub.credentials import CredentialStore
+
+        store = CredentialStore(environ={}, path=tmp_path / "credentials.json")
+        store.set_secret("AEROPUB_FAA_CLIENT_ID", "from-the-file")
+        store.set_secret("AEROPUB_FAA_CLIENT_SECRET", "also-from-the-file")
+
+        creds = ClientCredentials.default()
+        assert creds.resolve(store=store) == ("from-the-file", "also-from-the-file")
+        assert creds.missing(store=store) == ()
+
+    def test_the_environment_still_wins_over_the_file(self, tmp_path):
+        """Hosted deployments set real environment variables, and those are
+        the ones that survive a restart."""
+        from aeropub.credentials import CredentialStore
+
+        store = CredentialStore(
+            environ={"AEROPUB_FAA_CLIENT_ID": "from-the-environment"},
+            path=tmp_path / "credentials.json",
+        )
+        store.set_secret("AEROPUB_FAA_CLIENT_ID", "from-the-file")
+        store.set_secret("AEROPUB_FAA_CLIENT_SECRET", "s")
+        creds = ClientCredentials.default()
+        assert creds.resolve(store=store) == ("from-the-environment", "s")
 
     def test_status_is_the_worse_of_the_two(self):
         creds = ClientCredentials.default()
-        assert creds.status({}) is CredentialStatus.MISSING
-        assert creds.status({"FAA_NMS_CLIENT_ID": "k"}) is CredentialStatus.MISSING
-        both = {"FAA_NMS_CLIENT_ID": "k", "FAA_NMS_CLIENT_SECRET": "s"}
-        assert creds.status(both) is CredentialStatus.UNVERIFIED
-        assert creds.status(both, rejected=True) is CredentialStatus.INVALID
+        assert creds.status(store=isolated()) is CredentialStatus.MISSING
+        assert (
+            creds.status(store=isolated({"AEROPUB_FAA_CLIENT_ID": "k"}))
+            is CredentialStatus.MISSING
+        )
+        both = isolated(
+            {"AEROPUB_FAA_CLIENT_ID": "k", "AEROPUB_FAA_CLIENT_SECRET": "s"}
+        )
+        assert creds.status(store=both) is CredentialStatus.UNVERIFIED
+        assert creds.status(store=both, rejected=True) is CredentialStatus.INVALID
 
     def test_no_configuration_object_can_carry_a_secret(self):
         creds = ClientCredentials.default()
