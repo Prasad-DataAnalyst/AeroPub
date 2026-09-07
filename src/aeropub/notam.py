@@ -24,6 +24,8 @@ more dangerous than an admitted gap, so the gap is admitted.
 
 from __future__ import annotations
 
+from aeropub import notam_code as _CODE
+
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -51,53 +53,22 @@ class NotamKind(str, Enum):
 
 #: Q-code subjects, second and third characters. Deliberately partial: only
 #: entries carrying no doubt. Complete from ICAO Doc 8126 before relying on it.
-SUBJECTS: dict[str, str] = {
-    "FA": "aerodrome",
-    "FF": "fire fighting and rescue",
-    "FU": "fuel availability",
-    "IC": "instrument landing system",
-    "ID": "DME associated with ILS",
-    "IG": "glide path",
-    "IL": "localizer",
-    "LA": "approach lighting system",
-    "LC": "runway centre line lights",
-    "LE": "runway edge lights",
-    "LP": "precision approach path indicator",
-    "LT": "threshold lights",
-    "MA": "movement area",
-    "MR": "runway",
-    "MS": "stopway",
-    "MT": "threshold",
-    "MX": "taxiway",
-    "NB": "non-directional radio beacon",
-    "NV": "VOR",
-    "PA": "standard instrument arrival",
-    "PD": "standard instrument departure",
-    "PI": "instrument approach procedure",
-    "RD": "danger area",
-    "RP": "prohibited area",
-    "RR": "restricted area",
-    "RT": "temporary restricted area",
-}
-
-#: Q-code conditions, fourth and fifth characters. Same discipline.
-CONDITIONS: dict[str, str] = {
-    "AS": "unserviceable",
-    "AU": "not available",
-    "AW": "completely withdrawn",
-    "CC": "completed",
-    "CH": "changed",
-    "CN": "cancelled",
-    "CS": "installed",
-    "HW": "work in progress",
-    "HV": "work completed",
-    "HX": "concentration of birds",
-    "LC": "closed",
-    "LT": "limited to",
-    "LV": "closed to VFR operations",
-    "LI": "closed to IFR operations",
-    "XX": "plain language",
-}
+# The NOTAM Code proper lives in ``notam_code``, generated from ICAO Doc 8400
+# by ``tools/build_notam_code.py``. Re-exported here because this is where
+# every caller already looks for it.
+#
+# What was here before was a hand-picked 26 subjects and 15 conditions —
+# enough for the cases somebody had met, which is a different thing from the
+# code. Real Doha traffic used six subjects it did not contain, among them
+# GNSS area-wide operations and aircraft stands.
+SUBJECTS = _CODE.SUBJECTS
+CONDITIONS = _CODE.CONDITIONS
+SUBJECT_GROUPS = _CODE.SUBJECT_GROUPS
+CONDITION_GROUPS = _CODE.CONDITION_GROUPS
+TRAFFIC_RULES = _CODE.TRAFFIC
+PURPOSES = _CODE.PURPOSES
+SCOPES = _CODE.SCOPES
+CONTRACTIONS = _CODE.CONTRACTIONS
 
 _HEADER = re.compile(
     r"^\s*(?P<series>[A-Z])(?P<number>\d{4})/(?P<year>\d{2})\s+"

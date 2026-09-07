@@ -91,7 +91,7 @@ class TestTheQuirksEachMessagePins:
         q = held[941].to_icao_notam().q
         assert q.fir == "OTDF"
         assert q.code == "QMXLC"
-        assert (q.subject, q.condition) == ("taxiway", "closed")
+        assert (q.subject, q.condition) == ("taxiway(s)", "closed")
         assert (q.lower_fl, q.upper_fl) == (0, 999)
         assert q.radius_nm == 5
 
@@ -116,7 +116,7 @@ class TestTheQuirksEachMessagePins:
         assert q.fir == "OTDF"
         assert q.traffic == "I"
         assert q.scope == "A"
-        assert q.subject == "instrument approach procedure"
+        assert q.subject.startswith("instrument approach procedure")
 
     def test_744_carries_an_estimated_end(self, held):
         """C) 2608122359EST — estimated, which is not the same as a firm end
