@@ -95,9 +95,79 @@ class TestFindingSections:
         page = '<a href="QA-ENR-4.40-en-GB.html">x</a>'
         assert tool.sections_on(page, BASE, ("ENR-4.4",)) == {}
 
-    def test_the_default_order_puts_coordinates_first(self, tool):
+    def test_the_quick_set_puts_coordinates_first(self, tool):
         """Without ENR 4.4 the route structure draws as a list of names."""
-        assert tool.DEFAULT_SECTIONS[0] == "ENR-4.4"
+        assert tool.QUICK_SECTIONS[0] == "ENR-4.4"
+
+
+FULL_INDEX = """<html><body>
+<a href="QA-GEN-0.4-en-GB.html">GEN 0.4</a>
+<a href="QA-GEN-2.1-en-GB.html">GEN 2.1</a>
+<a href="QA-ENR-4.4-en-GB.html">ENR 4.4</a>
+<a href="QA-ENR-10.1-en-GB.html">ENR 10.1</a>
+<a href="QA-ENR-3.2-en-GB.html">ENR 3.2</a>
+<a href="QA-AD-2-OTHH-en-GB.html">OTHH</a>
+<a href="QA-AD-2-OTBD-en-GB.html">OTBD</a>
+<a href="index-en-GB.html">index</a>
+<a href="QA-menu-en-GB.html">menu</a>
+<a href="/contact.html">contact us</a>
+<a href="QA-history-en-GB.html">history</a>
+</body></html>"""
+
+
+class TestTheWholeAip:
+    """The default is every section, not a chosen few. An AIP platform that
+    holds five sections of an AIP holds five sections of an AIP."""
+
+    def test_every_section_is_discovered(self, tool):
+        found = tool.all_sections_on(FULL_INDEX, BASE)
+        assert set(found) == {
+            "GEN-0.4", "GEN-2.1", "ENR-4.4", "ENR-10.1", "ENR-3.2",
+            "AD-2-OTHH", "AD-2-OTBD",
+        }
+
+    def test_navigation_pages_are_not_sections(self, tool):
+        """The index, the menu, the history and a contact page are not AIP
+        content and would each parse as an empty section."""
+        found = tool.all_sections_on(FULL_INDEX, BASE)
+        assert not any(
+            k.lower().startswith(("index", "menu", "history", "contact"))
+            for k in found
+        )
+
+    def test_per_aerodrome_pages_are_kept_apart(self, tool):
+        """AD 2 is published once per aerodrome, and they are different
+        documents."""
+        found = tool.all_sections_on(FULL_INDEX, BASE)
+        assert found["AD-2-OTHH"] != found["AD-2-OTBD"]
+
+    def test_the_state_prefix_and_language_suffix_are_stripped(self, tool):
+        """QA-ENR-4.4-en-GB.html files under ENR-4.4, so a code means the same
+        thing across States."""
+        assert "ENR-4.4" in tool.all_sections_on(FULL_INDEX, BASE)
+
+    def test_a_page_that_is_not_an_aip_section_is_left_out(self, tool):
+        page = '<a href="QA-styles-en-GB.html">styles</a>'
+        assert tool.all_sections_on(page, BASE) == {}
+
+
+class TestOrdering:
+    def test_sections_come_out_in_aip_order(self, tool):
+        """GEN, then ENR, then AD — where a reader expects them."""
+        codes = ["AD-1.1", "ENR-3.2", "GEN-0.4"]
+        assert sorted(codes, key=tool._sort_key) == ["GEN-0.4", "ENR-3.2", "AD-1.1"]
+
+    def test_numbers_sort_as_numbers(self, tool):
+        """ENR 3.2 before ENR 10.1, which sorting as text gets backwards."""
+        codes = ["ENR-10.1", "ENR-3.2"]
+        assert sorted(codes, key=tool._sort_key) == ["ENR-3.2", "ENR-10.1"]
+
+
+class TestCourtesy:
+    def test_there_is_a_delay_between_requests(self, tool):
+        """A full AIP is a hundred and more pages and a State's AIM server is
+        not a CDN."""
+        assert tool.POLITE_DELAY > 0
 
 
 class TestLinks:

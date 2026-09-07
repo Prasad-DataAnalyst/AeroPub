@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -38,9 +39,28 @@ AIM = "https://aim.gov.qa"
 HISTORY = f"{AIM}/AIP/QA-history-en-GB.html"
 AGENT = "AeroPub/0.1 (aeronautical information analysis)"
 
-#: Most useful first. Without coordinates the route structure draws as a list
-#: of names, so ENR 4.4 leads.
-DEFAULT_SECTIONS = ("ENR-4.4", "ENR-3.2", "ENR-3.1", "ENR-2.1", "ENR-5.1")
+#: A starter set for --quick. Without coordinates the route structure draws as
+#: a list of names, so ENR 4.4 leads.
+QUICK_SECTIONS = ("ENR-4.4", "ENR-3.2", "ENR-3.1", "ENR-2.1", "ENR-5.1")
+
+#: What an AIP page looks like, by filename. GEN, ENR and AD parts, plus the
+#: per-aerodrome AD 2 pages. Deliberately broad: the whole AIP is the point,
+#: and a page this does not recognise is reported rather than skipped
+#: silently.
+_SECTION_FILE = re.compile(
+    r"(?:^|[-_])(GEN|ENR|AD)[-_ ]?\d", re.I
+)
+
+#: Pages that are navigation rather than content. Fetched anyway where they
+#: are small, but not counted as sections.
+_NOT_A_SECTION = re.compile(
+    r"(?:index|menu|frame|toc|contents|history|banner|search)", re.I
+)
+
+#: Seconds between requests. A full AIP is a hundred and more pages, and a
+#: State's AIM server is not a CDN — this is a courtesy, not a rate limit
+#: anybody imposed.
+POLITE_DELAY = 0.5
 
 
 def die(message: str) -> "NoReturn":  # noqa: F821
@@ -110,6 +130,30 @@ def sections_on(html: str, base: str, wanted: tuple[str, ...]) -> dict[str, str]
     return found
 
 
+def all_sections_on(html: str, base: str) -> dict[str, str]:
+    """Every AIP section the page links to: code -> url.
+
+    The whole AIP rather than a chosen few. The code is taken from the
+    filename with the State prefix and language suffix removed, so
+    ``QA-ENR-4.4-en-GB.html`` files under ``ENR-4.4`` and
+    ``QA-AD-2-OTHH-en-GB.html`` under ``AD-2-OTHH``.
+    """
+    found: dict[str, str] = {}
+    for url, _ in links(html, base):
+        name = url.rsplit("/", 1)[-1].split("?")[0]
+        if not name.lower().endswith((".html", ".htm")):
+            continue
+        if _NOT_A_SECTION.search(name):
+            continue
+        if not _SECTION_FILE.search(name):
+            continue
+        code = re.sub(r"\.html?$", "", name, flags=re.I)
+        code = re.sub(r"^[A-Z]{2}-", "", code)            # QA- prefix
+        code = re.sub(r"-[a-z]{2}-[A-Z]{2}$", "", code)   # -en-GB suffix
+        found.setdefault(code, url)
+    return found
+
+
 def save(out: Path, name: str, body: bytes) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     path = out / name
@@ -119,21 +163,34 @@ def save(out: Path, name: str, body: bytes) -> Path:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Fetch Qatar's published eAIP.")
+    parser = argparse.ArgumentParser(
+        description="Fetch Qatar's published eAIP. The whole AIP by default."
+    )
     parser.add_argument("--out", default="qatar-aip", help="directory to write into")
     parser.add_argument(
         "--section", action="append", metavar="CODE",
-        help=f"section to fetch, repeatable. Default: {', '.join(DEFAULT_SECTIONS)}",
+        help="fetch only these, repeatable. Default is every section on the index",
+    )
+    parser.add_argument(
+        "--quick", action="store_true",
+        help=f"only the starter set: {', '.join(QUICK_SECTIONS)}",
     )
     parser.add_argument(
         "--edition", metavar="URL",
         help="a specific edition index URL, skipping the history lookup",
     )
+    parser.add_argument(
+        "--delay", type=float, default=POLITE_DELAY,
+        help=f"seconds between requests (default {POLITE_DELAY})",
+    )
+    parser.add_argument(
+        "--refetch", action="store_true",
+        help="fetch pages already saved. Without it the run resumes",
+    )
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
 
     out = Path(args.out)
-    wanted = tuple(args.section) if args.section else DEFAULT_SECTIONS
 
     if args.edition:
         index_url = args.edition
@@ -142,15 +199,13 @@ def main() -> int:
         print(f"history: {HISTORY}")
         body = fetch(HISTORY, args.timeout)
         save(out, "QA-history-en-GB.html", body)
-        html = body.decode("utf-8", "replace")
-        found = editions(html, HISTORY)
+        found = editions(body.decode("utf-8", "replace"), HISTORY)
         if not found:
             die(
-                "no edition links found on the history page. Save it and hand "
-                "it over — the layout has changed and the reader needs to see "
-                "the real thing rather than guess."
+                "no edition links found on the history page. It is saved — "
+                "hand it over rather than letting this guess a URL."
             )
-        print(f"  {len(found)} editions listed; newest looks like:")
+        print(f"  {len(found)} editions listed; taking the newest:")
         for url, text in found[:3]:
             print(f"    {text or '(no text)'}  {url}")
         index_url = found[0][0]
@@ -160,35 +215,80 @@ def main() -> int:
     save(out, "index-en-GB.html", body)
     index_html = body.decode("utf-8", "replace")
 
-    located = sections_on(index_html, index_url, wanted)
-    missing = [c for c in wanted if c not in located]
-
+    # An eAIP index is often a frameset. Gather sections from it and from one
+    # level of whatever it points at, which is where the menu usually lives.
+    located = all_sections_on(index_html, index_url)
     if not located:
-        # The index may be a frameset pointing at a menu. Follow one level.
-        print("  no sections on the index; following its frames")
-        for url, _ in links(index_html, index_url)[:20]:
+        print("  no sections on the index itself; following its frames")
+        for url, _ in links(index_html, index_url)[:30]:
             if not re.search(r"\.html?$", url, re.I):
                 continue
+            time.sleep(args.delay)
             inner = fetch(url, args.timeout).decode("utf-8", "replace")
-            located.update(sections_on(inner, url, wanted))
-            if located:
-                break
-        missing = [c for c in wanted if c not in located]
+            located.update(all_sections_on(inner, url))
+        if located:
+            print(f"  found {len(located)} through the frames")
 
-    print()
-    for code, url in sorted(located.items()):
-        save(out, f"{code}-en-GB.html", fetch(url, args.timeout))
+    if not located:
+        die(
+            "no AIP sections found. The index is saved — hand it over and the "
+            "reader will describe what is actually there."
+        )
 
-    if missing:
-        print(f"\nnot found on this edition: {', '.join(missing)}")
-        print("  Not necessarily absent — the index may name them differently.")
-        print(f"  {out}/index-en-GB.html is saved; hand it over and the reader")
-        print("  will describe what is actually there.")
+    if args.section:
+        wanted = {c.upper() for c in args.section}
+        located = {
+            k: v for k, v in located.items()
+            if k.upper() in wanted or any(w in k.upper() for w in wanted)
+        }
+    elif args.quick:
+        located = {
+            k: v for k, v in located.items()
+            if any(q.upper() in k.upper() for q in QUICK_SECTIONS)
+        }
+
+    order = sorted(located, key=_sort_key)
+    print(f"\n{len(order)} sections to fetch")
+    if args.delay:
+        print(f"  {args.delay}s between requests — a State's AIM server is not a CDN")
+
+    got = skipped = 0
+    for index, code in enumerate(order, start=1):
+        target = out / f"{code}-en-GB.html"
+        if target.exists() and not args.refetch:
+            skipped += 1
+            continue
+        if got:
+            time.sleep(args.delay)
+        print(f"  [{index}/{len(order)}] {code}")
+        save(out, target.name, fetch(located[code], args.timeout))
+        got += 1
+
+    print(f"\n{got} fetched, {skipped} already held")
+    if skipped and not args.refetch:
+        print("  --refetch to fetch them again")
+
+    parts: dict[str, int] = {}
+    for code in order:
+        parts[code.split("-")[0].upper()] = parts.get(code.split("-")[0].upper(), 0) + 1
+    print("  " + "  ".join(f"{k} {v}" for k, v in sorted(parts.items())))
 
     print(f"\nHand {out}/ to AeroPub:")
     print(f"  python -m aeropub.eaip probe {out}/ENR-4.4-en-GB.html --state OT \\")
     print("      --name Qatar --draft profiles/ot.json")
     return 0
+
+
+def _sort_key(code: str):
+    """GEN before ENR before AD, then by number rather than as text.
+
+    So ENR-3.2 sorts before ENR-10 rather than after it, and a reader looking
+    for a section finds it where an AIP would put it.
+    """
+    part = code.split("-")[0].upper()
+    rank = {"GEN": 0, "ENR": 1, "AD": 2}.get(part, 3)
+    numbers = [int(n) for n in re.findall(r"\d+", code)]
+    return (rank, numbers, code)
 
 
 if __name__ == "__main__":

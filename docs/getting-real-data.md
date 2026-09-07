@@ -70,6 +70,18 @@ public:
 python3 tools/fetch_qatar_aip.py --out qatar-aip/
 ```
 
+**It fetches the whole AIP**, not a chosen few sections — every GEN, ENR and AD
+page the index links to, including the AD 2 page for each aerodrome. A platform
+that holds five sections of an AIP holds five sections of an AIP. `--quick`
+takes the starter set and `--section` names individual ones where that is what
+you want.
+
+It is polite about it: half a second between requests, because a full AIP is a
+hundred and more pages and a State's AIM server is not a CDN. It resumes — a
+page already saved is skipped unless `--refetch` — and it fetches in AIP order,
+GEN then ENR then AD, with numbers sorted as numbers so ENR 3.2 comes before
+ENR 10.1.
+
 It starts at the edition history, follows the newest edition's link to its
 index, follows the index to the sections, and saves each one. **It follows
 links rather than building URLs**, and that is the whole design: the amendment
