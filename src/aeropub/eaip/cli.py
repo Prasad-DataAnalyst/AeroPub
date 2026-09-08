@@ -1,5 +1,6 @@
 """``python -m aeropub.eaip`` — the two commands that onboard a State.
 
+    survey <directory>              what a whole fetched AIP holds
     probe <page.html> --state OT --draft OT.json
     parse <page.html> --profile OT.json --aerodrome OTHH --document "AIP AD 2"
 
@@ -19,9 +20,11 @@ import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+from aeropub.aip import SECTIONS
 from aeropub.eaip.parse import parse_page
 from aeropub.eaip.probe import draft_profile, probe
 from aeropub.eaip.profile import ProfileError, load_layout
+from aeropub.eaip.survey import survey_directory
 
 __all__ = ["main"]
 
@@ -90,6 +93,26 @@ def _cmd_parse(args: argparse.Namespace) -> int:
     return OK if result.is_complete else INCOMPLETE
 
 
+def _cmd_survey(args: argparse.Namespace) -> int:
+    result = survey_directory(args.directory)
+    print(result.describe())
+    if not result.pages:
+        print(f"\nNothing to survey: no pages in {args.directory}", file=sys.stderr)
+        return CANNOT_RUN
+    # An absence is the finding, not a footnote. A survey that turned up
+    # unreadable pages, pages whose name and content disagree, or a missing
+    # currency spine has not established coverage, and must not exit as
+    # though it had.
+    spine_absent = [
+        section.code
+        for section in SECTIONS
+        if section.is_currency and section.code not in result.codes_held
+    ]
+    if result.unread or result.contradictions or spine_absent:
+        return INCOMPLETE
+    return OK
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m aeropub.eaip",
@@ -100,6 +123,12 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
+
+    walk = sub.add_parser(
+        "survey", help="describe a whole fetched AIP and set it against Doc 10066"
+    )
+    walk.add_argument("directory", help="a directory of saved eAIP pages")
+    walk.set_defaults(handler=_cmd_survey)
 
     look = sub.add_parser("probe", help="describe a page and draft a profile")
     look.add_argument("page", help="a saved eAIP page (HTML)")
