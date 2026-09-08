@@ -239,3 +239,35 @@ class TestTheCitationNamesTheAuthority:
             parse=one_fact, keep=archiver([]),
         )
         assert result.link.document == "Qatar SUP 16/2026"
+
+
+class TestKeptBecauseItIsASection:
+    """Retention follows the document, not whether a parser happened to run.
+
+    Keying it on "was it parsed" meant a State onboarded before its profile
+    was written archived nothing, and when the profile arrived there was no
+    history to read it against. Two things need the bytes and only one is
+    parsing: a hash says *that* a section changed, and only the previous bytes
+    say *what* changed.
+    """
+
+    def test_a_section_with_no_parser_is_still_archived(self):
+        calls: list = []
+        result = read_publication(
+            SECTION, retriever(b"<html>ENR 3.2</html>"), keep=archiver(calls)
+        )
+        assert not result.parsed
+        assert result.link.retention is Retention.ARCHIVED
+        assert calls
+
+    def test_it_is_the_baseline_a_later_diff_reads_against(self):
+        result = read_publication(
+            SECTION, retriever(b"<html>ENR 3.2</html>"), keep=archiver([])
+        )
+        assert not result.citation_will_expire
+
+    def test_a_chart_with_no_parser_is_still_not_archived(self):
+        """The rule is the document's kind, not the absence of a parser."""
+        calls: list = []
+        read_publication(CHART, retriever(b"%PDF-1.7"), keep=archiver(calls))
+        assert calls == []

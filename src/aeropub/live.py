@@ -120,18 +120,29 @@ KEEP_EXTRACT: frozenset[str] = frozenset(
 )
 
 
-def retention_for(media_type: str, *, parsed: bool) -> Retention:
+def retention_for(media_type: str, *, carries_values: bool) -> Retention:
     """What to keep of a document of this type.
 
-    ``parsed`` says whether a value was drawn from it. A document nothing was
-    drawn from is linked whatever its type — there is no citation to protect,
-    so holding it would be storage spent on nothing.
+    ``carries_values`` is a property of the *document*, not of whether a parser
+    happened to run. That distinction cost a design pass to find: keying this
+    on "was it parsed" meant a State onboarded before its profile was written
+    archived nothing at all, and when the profile finally arrived there was no
+    history to read it against. A section is kept because it is a section.
+
+    Two things need the bytes and only one of them is parsing. The other is
+    change detection: a hash says *that* a section changed, and only the
+    previous bytes say *what* changed — which is the question an AIRAC diff
+    exists to answer.
+
+    A document that carries no values — a chart, a navigation page — is linked
+    whatever its type. There is no citation to protect and no diff anyone will
+    ask for, so holding it would be storage spent on nothing.
 
     An unrecognised media type that was parsed is archived whole rather than
     linked. Guessing wrong towards keeping costs bytes; guessing wrong towards
     discarding costs the citation, and only one of those is recoverable.
     """
-    if not parsed:
+    if not carries_values:
         return Retention.LINKED
     normalised = media_type.split(";")[0].strip().lower()
     if normalised in KEEP_EXTRACT:

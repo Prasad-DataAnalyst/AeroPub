@@ -111,10 +111,24 @@ class Retrieved:
     media_type: str
     type_was_declared: bool
     retrieved_at: datetime = field(default_factory=_utcnow)
+    unchanged: bool = False
+    """The server answered 304. ``body`` is empty and carries no meaning.
+
+    A conditional request is how checking the world stays affordable — most
+    checks find nothing new — but the empty body it returns is a trap. Hashing
+    it would record every unchanged document as having changed to nothing.
+    """
 
     @property
     def content_hash(self) -> str:
         """SHA-256 of exactly what we read, lowercase hex."""
+        if self.unchanged:
+            raise ValueError(
+                f"{self.url} answered 'not modified', so there is no body to "
+                "hash. The hash that still stands is the one recorded when it "
+                "was last read — take that from the ledger rather than hashing "
+                "an empty body."
+            )
         return hashlib.sha256(self.body).hexdigest()
 
     @property
@@ -202,7 +216,12 @@ def read_publication(
     got = retrieve(publication.url)
 
     will_parse = parse is not None and publication.kind.carries_values
-    retention = retention_for(got.media_type, parsed=will_parse)
+    # Retention follows the document, not the parser. A section with no
+    # profile yet is still the baseline the next cycle's diff is read against,
+    # so it is kept whether or not anything read values out of it today.
+    retention = retention_for(
+        got.media_type, carries_values=publication.kind.carries_values
+    )
 
     archive_key: str | None = None
     degraded = ""
