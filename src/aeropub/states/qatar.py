@@ -76,6 +76,8 @@ Confirm by capture before building a parser::
 
 from __future__ import annotations
 
+import re
+
 from datetime import date
 
 from aeropub.airac import AiracCycle
@@ -321,3 +323,120 @@ PROFILE = StateProfile(
         "unreachable from the build environment, so nothing is verified."
     ),
 )
+
+
+# ---------------------------------------------------------------------------
+# The route, verified
+# ---------------------------------------------------------------------------
+#
+# Everything above this line was inferred from a public search index while the
+# host was unreachable. Everything below was written against pages Qatar
+# actually served, retrieved 07 SEP 2026 by an operator on a network that can
+# reach the host. Three things the inference got wrong or could not have known:
+#
+# 1. The index is a frameset of 1,201 bytes with no anchors at all. The
+#    contents live two hops in, at ``eAIP/QA-menu-en-GB.html``.
+# 2. Every anchor in that menu carries a fragment —
+#    ``QA-GEN-0.1-en-GB.html#i197343`` — because the menu addresses an element
+#    within a page, not the page.
+# 3. Supplements and circulars are not in the AIP tree at all. They sit under
+#    ``eSUP/`` and ``eAIC/``, reached from tabs on the menu. The note above
+#    saying their index pages "have not been located" is now answered.
+
+from dataclasses import dataclass, field  # noqa: E402
+
+from aeropub.publication import Edition, Publication, kind_of  # noqa: E402
+from aeropub.resolve import EaipTraversal, Read  # noqa: E402
+
+#: Retrieved 07 SEP 2026. Qatar serves the current edition and the next one,
+#: and lists its expired issues as ``NIL`` — nothing older is kept. An edition
+#: withdrawn is gone, which is why a citation into Qatar's AIP cannot rest on
+#: the URL continuing to resolve.
+ARCHIVE_POLICY = "current and next only; expired issues listed as NIL"
+
+
+@dataclass
+class QatarResolver:
+    """Qatar's route to its publications: five hops from one known address.
+
+    ``QA-history-en-GB.html`` → the edition Qatar labels → a frameset →
+    ``eAIP/QA-menu-en-GB.html`` → the sections, and separately the supplement
+    and circular lists in their own directories.
+
+    Only the first address is treated as known. The amendment number in an
+    edition path — ``AIP-30`` — is a running count that cannot be derived from
+    the AIRAC cycle, so an edition URL is followed, never built. The functions
+    above that build one are kept for the legacy layout and for addressing a
+    known edition directly; neither is used for discovery.
+    """
+
+    state: str = "OT"
+    name: str = "Qatar"
+    entry_point: str = HISTORY_URL
+    walk: EaipTraversal = field(default_factory=EaipTraversal)
+
+    def editions(self, read: Read) -> tuple[Edition, ...]:
+        """Editions Qatar lists, carrying Qatar's own labels for them.
+
+        The history page files each under ``current-issues-table``,
+        ``next-issues-table`` or ``archived-issues-table``. That declaration is
+        used in preference to the effective date in the path: both agree today,
+        but only the declaration stays right if Qatar republishes out of order
+        or carries two effective editions at once.
+        """
+        html = read(self.entry_point).decode("utf-8", "replace")
+        return self.walk.editions_on(html, self.entry_point)
+
+    def publications(self, edition: Edition, read: Read) -> tuple[Publication, ...]:
+        """Every document in one edition: sections, supplements, circulars.
+
+        The supplement and circular lists are followed because precedence runs
+        AIP < AMDT < SUP < NOTAM. Qatar's current edition is titled "AIP 2nd
+        Edition Including AIRAC AIP SUP 07/2026 - 15/2026" — nine supplements
+        named in the edition's own title. Gathering the AIP sections alone
+        would take the layer all nine of them override.
+        """
+        contents, base = self.walk.contents_of(edition, read)
+        companions = self.walk.companion_indexes(contents, base)
+
+        # A list of supplements is not a supplement. The tabs on the menu are
+        # indexes, and typing them by their directory would file three index
+        # pages as an AMDT, a SUP and an AIC — documents a parser would then
+        # read values out of. They are followed, not published.
+        indexes = set(companions.values())
+        found = [
+            p
+            for p in self.walk.publications_on(contents, base, edition)
+            if p.url not in indexes
+        ]
+
+        for url in companions.values():
+            try:
+                listing = read(url).decode("utf-8", "replace")
+            except Exception:  # noqa: BLE001 — one missing list is not fatal
+                continue
+            for document in self.walk.documents_beside(listing, url):
+                found.append(
+                    Publication(
+                        url=document,
+                        kind=kind_of(document),
+                        edition=edition,
+                        code=_supplement_code(document),
+                    )
+                )
+        seen: dict[str, Publication] = {}
+        for publication in found:
+            seen.setdefault(publication.url, publication)
+        return tuple(seen.values())
+
+
+def _supplement_code(url: str) -> str:
+    """``"SUP 16/2026"`` from ``QA-SUP-16-2026-en-GB.html``, or ``""``."""
+    name = url.rsplit("/", 1)[-1]
+    match = re.search(r"(SUP|AIC)[-_ ]?(\d+)[-_ ](\d{4})", name, re.I)
+    if match is None:
+        return ""
+    return f"{match.group(1).upper()} {int(match.group(2))}/{match.group(3)}"
+
+
+RESOLVER = QatarResolver()
