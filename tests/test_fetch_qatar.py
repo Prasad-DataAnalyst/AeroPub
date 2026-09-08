@@ -286,3 +286,144 @@ class TestWhichEditionIsInForce:
 
         listed = [("https://aim.gov.qa/AIP/whenever/html/index-en-GB.html", "?")]
         assert tool.in_force_on(listed, date(2026, 9, 7)) is None
+
+
+#: An anchor as Qatar's menu really writes it. Every one of the hundred-odd
+#: section links carries a fragment, because the menu points at an element
+#: within a page rather than at the page. A reader that requires the closing
+#: quote straight after ``.html`` finds none of them — and reports "no AIP
+#: sections found" for an index that names the entire AIP.
+REAL_MENU = """<html><body>
+<div class="tab">
+<a target="_self" href="../eAIP/QA-menu-en-GB.html" title="eAIP ToC: " id="current">AIP</a>
+<a target="_self" href="../eAIP/QA-AMDT-en-GB.html" title="List of Changes">AMDT</a>
+<a target="_self" href="../eSUP/QA-eSUPs-en-GB.html" title="List of AIP Supplements">SUPs</a>
+<a target="_self" href="../eAIC/QA-eAICs-en-GB.html" title="List of Circulars">AICs</a>
+<a target="_self" href="../search/QA-search-en-GB.html" title="">Search</a>
+</div>
+<div class="H1"><a href="QA-GEN-0.1-en-GB.html#i197343" id="i197343">GEN 0.1</a></div>
+<div class="H2"><a href="QA-ENR-1.3-en-GB.html#i198012" id="i198012">ENR 1.3</a></div>
+<div class="H2"><a href="QA-AD-2-OTHH-en-GB.html#i201456" id="i201456">OTHH</a></div>
+</body></html>"""
+
+#: Qatar's history page, as served. It files each edition under a table whose
+#: class says what the edition *is* — the State's own declaration, which is
+#: better evidence than a date read out of a URL.
+REAL_HISTORY = """<html><body>
+<div class="section"><h2>Currently effective Issues</h2>
+<table class="history-table current-issues-table"><tbody><tr>
+<td class="date">11 JUN 2026</td><td class="date">06 AUG 2026</td>
+<td class="description-top"><a
+ href="11-JUN-2026/AIP-29/2026-08-06-000000/html/index-en-GB.html">AIP 2nd Edition</a></td>
+</tr></tbody></table></div>
+<div class="section"><h2>Next Issues</h2>
+<table class="history-table next-issues-table"><tbody><tr>
+<td class="date">03 SEP 2026</td><td class="date">01 OCT 2026</td>
+<td class="description-top"><a
+ href="03-SEP-2026/AIP-30/2026-10-01-000000/html/index-en-GB.html">AIRAC AIP AMDT 01/2026</a></td>
+</tr></tbody></table></div>
+<div class="section"><h2>Expired Issues (Archives)</h2>
+<table class="history-table archived-issues-table"><tbody><tr>
+<td class="date">NIL</td><td class="date">NIL</td><td>NIL</td>
+</tr></tbody></table></div>
+</body></html>"""
+
+MENU_BASE = (
+    "https://aim.gov.qa/AIP/03-SEP-2026/AIP-30/2026-10-01-000000/html/eAIP/"
+    "QA-menu-en-GB.html"
+)
+
+
+class TestAnchorsCarryFragments:
+    """The defect that made a fully-populated menu read as empty."""
+
+    def test_a_fragment_does_not_hide_the_page(self, tool):
+        found = tool.all_sections_on(REAL_MENU, MENU_BASE)
+        assert "GEN-0.1" in found
+        assert found["GEN-0.1"].endswith("QA-GEN-0.1-en-GB.html")
+
+    def test_the_fragment_is_dropped_not_kept(self, tool):
+        """Kept, it would be saved as a separate file per anchor."""
+        assert "#" not in tool.all_sections_on(REAL_MENU, MENU_BASE)["ENR-1.3"]
+
+    def test_every_part_is_reached(self, tool):
+        found = tool.all_sections_on(REAL_MENU, MENU_BASE)
+        assert {"GEN-0.1", "ENR-1.3", "AD-2-OTHH"} <= set(found)
+
+    def test_a_query_string_is_dropped_too(self, tool):
+        html = '<a href="QA-ENR-4.4-en-GB.html?lang=en">x</a>'
+        assert tool.all_sections_on(html, MENU_BASE)["ENR-4.4"].endswith(
+            "QA-ENR-4.4-en-GB.html"
+        )
+
+
+class TestTheCompanionPublications:
+    """AIP < AMDT < SUP < NOTAM. Fetching the AIP alone takes the bottom.
+
+    A supplement in force changes what an AIP section means. An AIP fetched
+    without its supplements reads as though nothing supersedes it, and no
+    amount of looking at the pages that did arrive would show the gap.
+    """
+
+    def test_the_three_lists_are_found(self, tool):
+        found = tool.companion_indexes(REAL_MENU, MENU_BASE)
+        assert set(found) == {"AMDT", "eSUPs", "eAICs"}
+
+    def test_they_are_absolute_urls(self, tool):
+        found = tool.companion_indexes(REAL_MENU, MENU_BASE)
+        assert found["eSUPs"].endswith("/html/eSUP/QA-eSUPs-en-GB.html")
+
+    def test_search_is_not_one_of_them(self, tool):
+        assert "search" not in " ".join(tool.companion_indexes(REAL_MENU, MENU_BASE))
+
+    def test_documents_beside_an_index_are_found(self, tool):
+        index = (
+            '<a href="QA-SUP-16-2026-en-GB.html">SUP 16/2026</a>'
+            '<a href="QA-SUP-15-2026-en-GB.html">SUP 15/2026</a>'
+        )
+        base = "https://aim.gov.qa/AIP/x/html/eSUP/QA-eSUPs-en-GB.html"
+        assert set(tool.documents_beside(index, base)) == {
+            "QA-SUP-16-2026-en-GB", "QA-SUP-15-2026-en-GB"
+        }
+
+    def test_a_link_back_to_the_aip_is_not_followed(self, tool):
+        """A SUP list links back to the menu. Following it re-walks the AIP."""
+        index = '<a href="../eAIP/QA-menu-en-GB.html">back</a>'
+        base = "https://aim.gov.qa/AIP/x/html/eSUP/QA-eSUPs-en-GB.html"
+        assert tool.documents_beside(index, base) == {}
+
+
+class TestTheStateLabelsItsOwnEditions:
+    """Qatar says which edition is current. That beats inferring from a date."""
+
+    HISTORY_URL = "https://aim.gov.qa/AIP/QA-history-en-GB.html"
+
+    def test_the_declaration_is_read(self, tool):
+        grouped = tool.editions_by_status(REAL_HISTORY, self.HISTORY_URL)
+        assert set(grouped) >= {"current", "next"}
+
+    def test_current_is_the_older_edition(self, tool):
+        """The newest published is the one that is not yet in force."""
+        grouped = tool.editions_by_status(REAL_HISTORY, self.HISTORY_URL)
+        assert "AIP-29" in grouped["current"][0][0]
+        assert "AIP-30" in grouped["next"][0][0]
+
+    def test_the_declaration_agrees_with_the_dates_here(self, tool):
+        """Belt and braces: two independent readings, same answer."""
+        from datetime import date
+
+        grouped = tool.editions_by_status(REAL_HISTORY, self.HISTORY_URL)
+        by_date = tool.in_force_on(
+            tool.editions(REAL_HISTORY, self.HISTORY_URL), date(2026, 9, 7)
+        )
+        assert by_date[0] == grouped["current"][0][0]
+
+    def test_an_empty_archive_row_is_not_an_edition(self, tool):
+        """The archive table holds a NIL row, not a link."""
+        grouped = tool.editions_by_status(REAL_HISTORY, self.HISTORY_URL)
+        assert "archived" not in grouped
+
+    def test_a_layout_without_labels_returns_nothing(self, tool):
+        """Not a guess. The caller falls back to dates rather than this
+        inventing a status the page never declared."""
+        assert tool.editions_by_status(HISTORY, self.HISTORY_URL) == {}

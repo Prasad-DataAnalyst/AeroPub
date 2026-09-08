@@ -170,7 +170,13 @@ def all_sections_on(html: str, base: str) -> dict[str, str]:
 #: Any quoted path ending .html — an anchor's href, a frame's src, or a
 #: string inside a menu's JavaScript. They are indistinguishable here and
 #: that is the point: reading only <a href> misses a frameset entirely.
-_HREFISH = re.compile(r"""["']([^"'<>\s]+?\.html?)["']""", re.I)
+#: An anchor in a real eAIP menu carries a fragment — ``QA-GEN-0.1-en-GB.html#i197343``
+#: names the page *and* the element within it. Requiring the quote straight after
+#: ``.html`` made every one of Qatar's hundred-odd section links invisible, so the
+#: fragment and any query are matched and discarded rather than assumed absent.
+_HREFISH = re.compile(
+    r"""["']([^"'<>\s#?]+?\.html?)(?:[#?][^"'<>\s]*)?["']""", re.I
+)
 
 
 def referenced_pages(text: str, base: str) -> list[str]:
@@ -285,6 +291,92 @@ def in_force_on(
     return (best[1], best[2])
 
 
+#: Qatar's history page files each edition under a table that says what it
+#: is: ``current-issues-table``, ``next-issues-table``,
+#: ``archived-issues-table``. That is the State's own declaration, and it
+#: beats inferring status from a date in a path — the inference happens to
+#: agree here, but only the declaration stays right when a State republishes
+#: out of order or carries two effective editions at once.
+_STATUS_TABLE = re.compile(
+    r"<table[^>]*\bclass\s*=\s*[\"']([^\"']*)[\"'][^>]*>(.*?)</table>",
+    re.I | re.S,
+)
+
+_STATUS_NAMES = (
+    ("current", "current-issues"),
+    ("next", "next-issues"),
+    ("archived", "archived-issues"),
+)
+
+
+def editions_by_status(html: str, base: str) -> dict[str, list[tuple[str, str]]]:
+    """Editions grouped as the State itself groups them.
+
+    Returns ``{}`` when the page carries no such tables, which is the honest
+    answer for a layout that does not declare status — the caller then falls
+    back to dates rather than this inventing a status.
+    """
+    grouped: dict[str, list[tuple[str, str]]] = {}
+    for match in _STATUS_TABLE.finditer(html):
+        classes, body = match.group(1).lower(), match.group(2)
+        status = next(
+            (name for name, marker in _STATUS_NAMES if marker in classes), None
+        )
+        if status is None:
+            continue
+        rows = [
+            (url, text)
+            for url, text in links(body, base)
+            if re.search(r"index[^/]*\.html?$", url, re.I)
+        ]
+        if rows:
+            grouped.setdefault(status, []).extend(rows)
+    return grouped
+
+
+#: The menu's tabs name three more bodies of publication that are not AIP
+#: sections and are not optional. AeroPub's precedence is
+#: AIP < AMDT < SUP < NOTAM, so fetching the AIP part alone takes the
+#: *lowest* layer and silently misses everything that supersedes it. A
+#: supplement in force changes what an AIP section means; not having it is
+#: not the same as it not existing.
+_COMPANION_TAB = re.compile(r"(?:AMDT|eSUPs?|eAICs?)[-_]?", re.I)
+
+
+def companion_indexes(html: str, base: str) -> dict[str, str]:
+    """The AMDT, SUP and AIC list pages the menu links to: label -> url."""
+    found: dict[str, str] = {}
+    for url, text in links(html, base):
+        name = url.rsplit("/", 1)[-1].split("#")[0]
+        if not name.lower().endswith((".html", ".htm")):
+            continue
+        match = _COMPANION_TAB.search(name)
+        if match is None:
+            continue
+        label = re.sub(r"^QA-|-[a-z]{2}-[A-Z]{2}\.html?$", "", name, flags=re.I)
+        found.setdefault(label or (text or name), url)
+    return found
+
+
+def documents_beside(html: str, base: str) -> dict[str, str]:
+    """Every document a companion index links to, in its own directory.
+
+    Scoped to the index's directory deliberately: a SUP list links to its
+    supplements and also back to the AIP menu, and following the latter would
+    walk the whole AIP a second time.
+    """
+    home = base.rsplit("/", 1)[0] + "/"
+    found: dict[str, str] = {}
+    for url in referenced_pages(html, base):
+        if not url.startswith(home):
+            continue
+        name = url[len(home):]
+        if "/" in name or _NOT_A_SECTION.search(name):
+            continue
+        found.setdefault(re.sub(r"\.html?$", "", name, flags=re.I), url)
+    return found
+
+
 def save(out: Path, name: str, body: bytes) -> Path:
     out.mkdir(parents=True, exist_ok=True)
     path = out / name
@@ -322,6 +414,10 @@ def main() -> int:
         "--refetch", action="store_true",
         help="fetch pages already saved. Without it the run resumes",
     )
+    parser.add_argument(
+        "--no-companions", action="store_true",
+        help="AIP sections only — skip the AMDT, SUP and AIC lists",
+    )
     parser.add_argument("--timeout", type=int, default=60)
     args = parser.parse_args()
 
@@ -341,6 +437,12 @@ def main() -> int:
                 "hand it over rather than letting this guess a URL."
             )
         today = date.today()
+        declared = editions_by_status(body.decode("utf-8", "replace"), HISTORY)
+        if declared:
+            print("  the State labels its editions:")
+            for status in ("current", "next", "archived"):
+                for url, text in declared.get(status, []):
+                    print(f"    {status:9} {effective_date(url)}  {text[:52]}")
         print(f"  {len(found)} editions listed:")
         for url, text in found:
             effective = effective_date(url)
@@ -352,7 +454,17 @@ def main() -> int:
                 when = f"effective {effective}  in {(effective - today).days} days"
             print(f"    {when}  {text or '(no text)'}")
 
-        current = in_force_on(found, today)
+        # The State's own label wins over a date read out of a path. They
+        # agree here; only the label stays right when a State republishes out
+        # of order or carries two effective editions at once.
+        current = None
+        if declared.get("current"):
+            current = declared["current"][0]
+        else:
+            current = in_force_on(found, today)
+        if declared.get("next"):
+            found = declared["next"] + [e for e in found if e not in declared["next"]]
+
         if args.in_force:
             if current is None:
                 die(
@@ -418,6 +530,44 @@ def main() -> int:
         print(f"  [{index}/{len(order)}] {code}")
         save(out, target.name, fetch(located[code], args.timeout))
         got += 1
+
+    # The AIP part is the lowest layer of the precedence stack. A supplement
+    # in force changes what a section means, and an AIP fetched without its
+    # supplements reads as though nothing supersedes it — which is not a gap
+    # you would notice by looking at the pages that did arrive.
+    companions = companion_indexes(index_html, index_url)
+    if args.no_companions:
+        print("\nskipping AMDT, SUP and AIC lists (--no-companions)")
+    elif not companions:
+        print(
+            "\nno AMDT, SUP or AIC list found on the index. That may be right "
+            "for this\n  State, or the menu may name them elsewhere — it is "
+            "reported, not assumed."
+        )
+    else:
+        print(f"\n{len(companions)} companion lists: {', '.join(companions)}")
+        for label, url in companions.items():
+            time.sleep(args.delay)
+            page = fetch(url, args.timeout, fatal=False)
+            if page is None:
+                continue
+            folder = url.rsplit("/", 2)[-2]
+            here = out / folder
+            save(here, url.rsplit("/", 1)[-1], page)
+            documents = documents_beside(page.decode("utf-8", "replace"), url)
+            documents.pop(re.sub(r"\.html?$", "", url.rsplit("/", 1)[-1], flags=re.I), None)
+            print(f"  {label}: {len(documents)} documents")
+            for name in sorted(documents):
+                target = here / f"{name}.html"
+                if target.exists() and not args.refetch:
+                    skipped += 1
+                    continue
+                time.sleep(args.delay)
+                content = fetch(documents[name], args.timeout, fatal=False)
+                if content is None:
+                    continue
+                save(here, target.name, content)
+                got += 1
 
     print(f"\n{got} fetched, {skipped} already held")
     if skipped and not args.refetch:
