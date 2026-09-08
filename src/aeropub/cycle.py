@@ -88,7 +88,20 @@ class Ledger(Protocol):
         """The content hash last recorded for this URL, or ``None``."""
         ...
 
-    def record(self, url: str, content_hash: str, at: datetime) -> None:
+    def record(
+        self,
+        url: str,
+        content_hash: str,
+        at: datetime,
+        *,
+        archive_key: str | None = None,
+    ) -> None:
+        """Note what this URL holds, and what we kept of it.
+
+        The archive key is what lets a ledger be checked against the archive.
+        Without it a ledger that outlives its archive answers UNCHANGED
+        forever while holding nothing — total data loss reported as health.
+        """
         ...
 
     def failures_for(self, state: str) -> int:
@@ -110,14 +123,23 @@ class InMemoryLedger:
 
     hashes: dict[str, str] = field(default_factory=dict)
     seen_at: dict[str, datetime] = field(default_factory=dict)
+    archive_keys: dict[str, str | None] = field(default_factory=dict)
     state_failures: dict[str, int] = field(default_factory=dict)
 
     def hash_for(self, url: str) -> str | None:
         return self.hashes.get(url)
 
-    def record(self, url: str, content_hash: str, at: datetime) -> None:
+    def record(
+        self,
+        url: str,
+        content_hash: str,
+        at: datetime,
+        *,
+        archive_key: str | None = None,
+    ) -> None:
         self.hashes[url] = content_hash
         self.seen_at[url] = at
+        self.archive_keys[url] = archive_key
 
     def failures_for(self, state: str) -> int:
         return self.state_failures.get(state, 0)
@@ -437,7 +459,12 @@ class Cycle:
             )
 
         if current:
-            self.ledger.record(publication.url, current, moment)
+            self.ledger.record(
+                publication.url,
+                current,
+                moment,
+                archive_key=result.link.archive_key,
+            )
         return DocumentOutcome(
             url=publication.url,
             code=publication.code,
