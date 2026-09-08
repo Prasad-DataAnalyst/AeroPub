@@ -415,6 +415,17 @@ class Cycle:
             keep=self.keep,
         )
 
+        if result.unchanged:
+            # The server settled it without sending a body. Asking the ledger
+            # would be asking a question already answered, and hashing what
+            # did not arrive is how a 304 becomes a reported failure.
+            return DocumentOutcome(
+                url=publication.url,
+                code=publication.code,
+                outcome=Outcome.UNCHANGED,
+                result=result,
+            )
+
         held = self.ledger.hash_for(publication.url)
         current = result.link.content_hash
         if held is not None and current == held:

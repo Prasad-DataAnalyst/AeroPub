@@ -156,6 +156,12 @@ class ReadResult:
     facts: tuple = ()
     parsed: bool = False
     not_parsed_because: str = ""
+    unchanged: bool = False
+    """The server confirmed what we hold is current. Nothing was re-read.
+
+    Distinct from every other not-parsed reason: those mean we do not have
+    the values, this means we already do.
+    """
     confidence: Confidence = Confidence.HIGH
     degraded_because: str = ""
 
@@ -170,7 +176,12 @@ class ReadResult:
 
         False where the citation cannot be resolved later. That is not a
         judgement about the State's data — it is a judgement about ours.
+
+        An unchanged document is usable: what we hold was confirmed current,
+        and it was archived when it was read.
         """
+        if self.unchanged:
+            return True
         return (
             self.parsed
             and self.confidence is not Confidence.LOW
@@ -179,7 +190,9 @@ class ReadResult:
 
     def describe(self) -> str:
         lines = [self.link.describe()]
-        if self.parsed:
+        if self.unchanged:
+            lines.append("  unchanged — what we hold was confirmed current")
+        elif self.parsed:
             lines.append(f"  {len(self.facts)} facts, confidence {self.confidence.value}")
         else:
             lines.append(f"  not parsed — {self.not_parsed_because}")
@@ -214,6 +227,28 @@ def read_publication(
     resolving as soon as the State withdraws the edition.
     """
     got = retrieve(publication.url)
+
+    if got.unchanged:
+        # The healthiest answer a server gives, and the commonest. There is
+        # no body to hash, nothing to archive and nothing to parse — the copy
+        # we already hold is confirmed current, which is the whole point of
+        # asking conditionally. Treating this as a failure, which hashing an
+        # absent body would, turns a working feed into a permanently
+        # incomplete one.
+        return ReadResult(
+            publication=publication,
+            link=DocumentLink(
+                url=got.url,
+                document=publication.cite_as(state_name),
+                media_type=got.media_type,
+                retrieved_at=got.retrieved_at,
+                retention=Retention.LINKED,
+                content_hash=None,
+            ),
+            parsed=False,
+            not_parsed_because="not modified since it was last read",
+            unchanged=True,
+        )
 
     will_parse = parse is not None and publication.kind.carries_values
     # Retention follows the document, not the parser. A section with no

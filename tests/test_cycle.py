@@ -343,3 +343,66 @@ class TestOneStateCannotConsumeTheCycle:
         assert outcome.not_attempted[0].outcome is Outcome.NOT_ATTEMPTED
         assert outcome.not_attempted[0].leaves_data_stale
         assert not outcome.is_complete
+
+
+class TestA304IsTheHealthiestOutcome:
+    """The commonest response from a live server, and it read as FAILED.
+
+    An AIP is checked far more often than it changes, so once validators are
+    remembered most responses are 304. Hashing the absent body raised, the
+    document guard caught it, and every document reported FAILED with every
+    State permanently incomplete — a bug invisible against fixtures, because a
+    fixture always has a body.
+    """
+
+    def _cycle(self, **kwargs):
+        return Cycle(
+            resolvers=(FakeState("OT", "Qatar", codes=("ENR 3.2",)),),
+            retrieve=lambda url: Retrieved(
+                url=url, body=b"", media_type="text/html",
+                type_was_declared=True, retrieved_at=NOW, unchanged=True,
+            ),
+            keep=archiver(),
+            **kwargs,
+        )
+
+    def test_it_is_unchanged_not_failed(self):
+        [outcome] = self._cycle().run(now=NOW).states
+        assert outcome.documents[0].outcome is Outcome.UNCHANGED
+
+    def test_the_state_stays_complete(self):
+        [outcome] = self._cycle().run(now=NOW).states
+        assert outcome.is_complete
+
+    def test_the_cycle_is_quiet(self):
+        assert self._cycle().run(now=NOW).quiet
+
+    def test_it_does_not_leave_data_stale(self):
+        """What we hold was confirmed current — the opposite of stale."""
+        [outcome] = self._cycle().run(now=NOW).states
+        assert not outcome.documents[0].leaves_data_stale
+
+    def test_nothing_is_archived_again(self):
+        """There is no body to archive, and the copy we hold is unchanged."""
+        kept: list = []
+        Cycle(
+            resolvers=(FakeState("OT", "Qatar", codes=("ENR 3.2",)),),
+            retrieve=lambda url: Retrieved(
+                url=url, body=b"", media_type="text/html",
+                type_was_declared=True, retrieved_at=NOW, unchanged=True,
+            ),
+            keep=lambda body, media_type: kept.append(body) or "sha256:x",
+        ).run(now=NOW)
+        assert kept == []
+
+    def test_the_ledger_is_not_rewritten_from_an_absent_body(self):
+        ledger = InMemoryLedger()
+        Cycle(
+            resolvers=(FakeState("OT", "Qatar", codes=("ENR 3.2",)),),
+            retrieve=lambda url: Retrieved(
+                url=url, body=b"", media_type="text/html",
+                type_was_declared=True, retrieved_at=NOW, unchanged=True,
+            ),
+            ledger=ledger, keep=archiver(),
+        ).run(now=NOW)
+        assert ledger.hashes == {}
