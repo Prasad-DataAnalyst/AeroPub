@@ -219,7 +219,10 @@ class Publication:
         where we got it; a citation naming "AIP Qatar ENR 3.2" tells them what
         it is, which is what an auditor asks for.
         """
-        parts = [f"AIP {state_name}" if self.kind is Kind.AIP_SECTION else state_name]
+        lead = state_name.strip()
+        if lead and self.kind is Kind.AIP_SECTION:
+            lead = f"AIP {lead}"
+        parts = [lead]
         # A citation naming only the State identifies nothing — every value we
         # ever read from Qatar would carry the same one. Where neither a code
         # nor a title was determined, the filename is a poor name but a real
