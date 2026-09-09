@@ -342,6 +342,16 @@ PROFILE = StateProfile(
 # 3. Supplements and circulars are not in the AIP tree at all. They sit under
 #    ``eSUP/`` and ``eAIC/``, reached from tabs on the menu. The note above
 #    saying their index pages "have not been located" is now answered.
+#
+# And one thing the menu declares that changes what can be built on Qatar:
+# eighteen of its eighty sections carry ``[NIL]``, the eAIP marker for "the
+# State has nothing to publish here". Among them is GEN 0.4, the checklist of
+# AIP pages. :mod:`aeropub.checklist` reconciles holdings against that
+# checklist, and for Qatar there is nothing to reconcile against — not a gap
+# in our coverage but a property of the State, and the two must never look
+# alike on a board. Three others are operational facts in their own right:
+# ENR 3.1 NIL (Qatar publishes RNAV routes only), ENR 5.2 NIL (no military
+# areas or ADIZ declared) and ENR 5.6 NIL (no bird hazard areas).
 
 from dataclasses import dataclass, field  # noqa: E402
 

@@ -85,6 +85,13 @@ _HREFISH = re.compile(
 _FRAME = re.compile(r"<i?frame\b[^>]*\bsrc\s*=\s*[\"']([^\"']+)[\"']", re.I)
 _SCRIPT = re.compile(r"<script\b[^>]*\bsrc\s*=\s*[\"']([^\"']+\.js)[\"']", re.I)
 
+#: How a eAIP menu marks a section the State has nothing to publish in.
+#: Observed in Qatar's menu against eighteen sections; it is the EUROCONTROL
+#: convention rather than a Qatari one, so it is read here rather than in the
+#: State module. A State that marks absence some other way is not misread by
+#: this — it simply is not detected, and the section reads as ordinary.
+_NIL_MARKER = re.compile(r"\[\s*NIL\s*\]", re.I)
+
 _STATUS_TABLE = re.compile(
     r"<table[^>]*\bclass\s*=\s*[\"']([^\"']*)[\"'][^>]*>(.*?)</table>", re.I | re.S
 )
@@ -255,7 +262,22 @@ class EaipTraversal:
     def publications_on(
         self, html: str, base: str, edition: Edition
     ) -> tuple[Publication, ...]:
-        """Every document a contents page names, typed by kind."""
+        """Every document a contents page names, typed by kind.
+
+        A menu's link *text* carries what its URL cannot: the ``[NIL]`` marker
+        by which a State declares it has nothing to publish in a section. That
+        is the difference between a gap and an answer, so the text is read
+        alongside the paths rather than thrown away.
+        """
+        # Fragment-stripped on both sides. A menu anchor names an element
+        # within a page — QA-ENR-5.6-en-GB.html#i197279 — while
+        # referenced_pages names the page, so keying on the raw href would
+        # build two sets that never intersect and quietly find no NIL at all.
+        nil_marked = {
+            url.split("#", 1)[0]
+            for url, text in links(html, base)
+            if _NIL_MARKER.search(text)
+        }
         found: dict[str, Publication] = {}
         for url in referenced_pages(html, base):
             kind = kind_of(url)
@@ -264,7 +286,10 @@ class EaipTraversal:
             code = _section_code(url) if kind is Kind.AIP_SECTION else ""
             found.setdefault(
                 url,
-                Publication(url=url, kind=kind, edition=edition, code=code),
+                Publication(
+                    url=url, kind=kind, edition=edition, code=code,
+                    declared_empty=url in nil_marked,
+                ),
             )
         return tuple(found.values())
 

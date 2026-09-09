@@ -218,3 +218,44 @@ class TestAnUndeclaredEditionIsNotCurrent:
             index_url="https://x.test/index.html", effective_on=date(2026, 8, 6)
         )
         assert edition.in_force_on(date(2026, 9, 7)) is True
+
+
+class TestTheStateDeclaresItsOwnAbsences:
+    """A eAIP menu writes [NIL] beside a section the State has nothing to
+    publish in. That is the strongest evidence a coverage board can have and
+    the opposite of a gap: the State was asked and answered.
+    """
+
+    def test_qatar_declares_eighteen(self, read, next_edition):
+        pubs = RESOLVER.publications(next_edition, read)
+        assert sum(1 for p in pubs if p.declared_empty) == 18
+
+    def test_the_page_checklist_is_one_of_them(self, read, next_edition):
+        """GEN 0.4 is the reconciliation source checklist.py was built for.
+        Qatar publishes it as NIL, so that reconciliation is not available
+        for this State — which is a fact about Qatar, not a gap in us."""
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert pubs["GEN 0.4"].declared_empty
+
+    def test_conventional_routes_are_declared_empty(self, read, next_edition):
+        """Qatar publishes RNAV routes only. A parser finding nothing in
+        ENR 3.1 has succeeded."""
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert pubs["ENR 3.1"].declared_empty
+        assert not pubs["ENR 3.2"].declared_empty
+
+    def test_a_section_with_content_is_not_marked(self, read, next_edition):
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert not pubs["ENR 4.4"].declared_empty
+        assert not pubs["AD 2 OTHH"].declared_empty
+
+    def test_the_marker_is_read_despite_the_fragment(self, read, next_edition):
+        """A menu anchor names an element within a page. Keying the NIL set on
+        the raw href builds two sets that never intersect, and every section
+        reads as ordinary — which is how this was wrong the first time."""
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert pubs["ENR 5.6"].declared_empty
+
+    def test_a_declared_absence_shows_in_the_description(self, read, next_edition):
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert "declared NIL" in pubs["ENR 3.1"].describe()

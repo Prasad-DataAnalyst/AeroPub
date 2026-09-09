@@ -195,6 +195,21 @@ class Publication:
 
     title: str = ""
 
+    declared_empty: bool = False
+    """The State marked this section as having nothing to publish.
+
+    A EUROCONTROL eAIP menu writes ``[NIL]`` beside such a section. Qatar
+    marks eighteen that way, including ENR 3.1 (it publishes no conventional
+    routes, only RNAV), ENR 5.2 (no military areas or ADIZ) and ENR 5.6 (no
+    bird hazard areas).
+
+    This is the strongest evidence a coverage board can have, and it is the
+    opposite of a gap: the State was asked and answered. A parser finding
+    nothing in such a section has succeeded, not failed, and
+    :attr:`~aeropub.aip.HoldingState.ABSENT` is what it should record — never
+    the same as a section nobody read.
+    """
+
     def __post_init__(self) -> None:
         if not self.url.strip():
             raise ValueError("Publication.url must be a non-empty string")
@@ -246,4 +261,8 @@ class Publication:
 
     def describe(self) -> str:
         layer = self.precedence.name if self.precedence else "no precedence"
-        return f"{self.kind.value:12} {layer:14} {self.code or self.title or self.url}"
+        nil = "  [declared NIL]" if self.declared_empty else ""
+        return (
+            f"{self.kind.value:12} {layer:14} "
+            f"{self.code or self.title or self.url}{nil}"
+        )
