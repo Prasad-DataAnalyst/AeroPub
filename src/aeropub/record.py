@@ -46,6 +46,9 @@ __all__ = [
     "record_cycle",
     "supplements_from",
     "write_supplement_manifest",
+    "Withdrawal",
+    "ListingChange",
+    "listing_change",
 ]
 
 
@@ -293,3 +296,162 @@ def write_supplement_manifest(
     }
     target.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return len(ordered)
+
+
+@dataclass(frozen=True, slots=True)
+class Withdrawal:
+    """A document the State listed before and does not list now."""
+
+    identifier: str
+    url: str
+    last_seen_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ListingChange:
+    """What moved in a State's supplement list between two cycles.
+
+    A supplement leaving the list is the State withdrawing it. Nothing is
+    published to say so — no NOTAM, no amendment, no AIRAC date — and until
+    somebody reads the validity windows it is the only end date obtainable.
+    So it is worth catching, and it is worth being careful about.
+    """
+
+    added: tuple[str, ...] = ()
+    withdrawn: tuple[Withdrawal, ...] = ()
+    unverifiable_because: str = ""
+    """Why no conclusion could be drawn this cycle.
+
+    Set when the list itself could not be read. That case is the whole reason
+    this is a class rather than a set difference: a SUP index that 404s makes
+    *every* supplement look withdrawn at once, and acting on that would retire
+    a State's entire live supplement layer because one page was briefly down.
+    An unreadable list yields no withdrawals, only this sentence.
+    """
+
+    @property
+    def is_conclusive(self) -> bool:
+        return not self.unverifiable_because
+
+    def describe(self) -> str:
+        if not self.is_conclusive:
+            return (
+                "SUPPLEMENT LISTING — no conclusion\n"
+                f"  {self.unverifiable_because}\n"
+                "  Nothing is treated as withdrawn: an unreadable list makes "
+                "every\n  supplement look withdrawn at once."
+            )
+        if not (self.added or self.withdrawn):
+            return "SUPPLEMENT LISTING — unchanged"
+        lines = ["SUPPLEMENT LISTING"]
+        for identifier in self.added:
+            lines.append(f"  + {identifier}")
+        for gone in self.withdrawn:
+            lines.append(
+                f"  − {gone.identifier}  withdrawn "
+                f"(last listed {gone.last_seen_at:%Y-%m-%d})"
+            )
+        if self.withdrawn:
+            lines.append(
+                "  A supplement leaving the list is the State withdrawing it. "
+                "Nothing was\n  published to say so, and the layer beneath it "
+                "now governs."
+            )
+        return "\n".join(lines)
+
+
+def listing_change(report, ledger, *, state: str) -> ListingChange:
+    """What entered and left a State's supplement list this cycle.
+
+    Compares what the cycle discovered against the supplement URLs the ledger
+    already knows. Requires the list itself to have been read: without it there
+    is no evidence of absence, only absence of evidence, and the two produce
+    opposite actions.
+    """
+    from .cycle import Outcome
+    from .publication import Kind, kind_of
+
+    for state_outcome in report.states:
+        if state_outcome.state != state:
+            continue
+
+        # Found by code rather than by result, because a presumed document
+        # carries no result at all — and reporting "not read" for a list that
+        # was resolved and deliberately not confirmed names the wrong cause.
+        listing = [
+            document
+            for document in state_outcome.documents
+            if (document.code or "").lower().startswith("esup")
+        ]
+        if any(d.outcome is Outcome.PRESUMED_UNCHANGED for d in listing):
+            return ListingChange(
+                unverifiable_because=(
+                    f"{state}: this was a shallow pass, so the supplement list "
+                    "was resolved but not confirmed"
+                )
+            )
+        confirmed = [
+            document
+            for document in listing
+            if document.result is not None
+            and document.result.publication.kind is Kind.INDEX
+        ]
+        if not confirmed:
+            failed = [d for d in listing if d.outcome is Outcome.FAILED]
+            return ListingChange(
+                unverifiable_because=(
+                    f"{state}: the supplement list was not read this cycle"
+                    + (f" ({failed[0].detail})" if failed else "")
+                )
+            )
+
+        found = {
+            document.result.publication.url: document.code
+            for document in state_outcome.documents
+            if document.result is not None
+            and document.result.publication.kind is Kind.SUPPLEMENT
+        }
+        # Typed rather than matched on a substring. The list page lives in the
+        # same directory as the supplements it lists, so a path test calls it a
+        # supplement — and then reports the index itself as withdrawn every
+        # time, because it is an INDEX and never appears among the supplements.
+        known = {
+            entry.url: entry
+            for entry in getattr(ledger, "entries", lambda: ())()
+            if kind_of(entry.url) is Kind.SUPPLEMENT
+        }
+
+        # The ledger is written *during* the cycle, so by now everything this
+        # pass discovered is already known to it. What separates a new
+        # supplement from an old one is when it was first seen, not whether it
+        # is present.
+        added = tuple(
+            sorted(
+                code
+                for url, code in found.items()
+                if url not in known or known[url].first_seen_at >= report.at
+            )
+        )
+        withdrawn = tuple(
+            Withdrawal(
+                identifier=_identifier_of(url),
+                url=url,
+                last_seen_at=entry.last_seen_at,
+            )
+            for url, entry in sorted(known.items())
+            if url not in found
+        )
+        return ListingChange(added=added, withdrawn=withdrawn)
+
+    return ListingChange(unverifiable_because=f"{state}: not in this cycle")
+
+
+def _identifier_of(url: str) -> str:
+    """``SUP 16/2026`` from a supplement's URL, or its filename."""
+    import re
+
+    name = url.rsplit("/", 1)[-1]
+    match = re.search(r"(SUP|AIC)[-_ ]?(\d+)[-_ ](\d{4})", name, re.I)
+    if match is None:
+        return re.sub(r"\.html?$", "", name, flags=re.I)
+    return f"{match.group(1).upper()} {int(match.group(2))}/{match.group(3)}"

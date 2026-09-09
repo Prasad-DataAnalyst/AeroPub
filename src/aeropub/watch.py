@@ -45,7 +45,12 @@ from .archive import Archive
 from .cycle import Cycle, CycleReport
 from .ledger import SqliteLedger
 from .publication import Edition, EditionStatus
-from .record import record_cycle, supplements_from, write_supplement_manifest
+from .record import (
+    listing_change,
+    record_cycle,
+    supplements_from,
+    write_supplement_manifest,
+)
 from .reader import Retrieved
 from .resolve import Resolver
 from .serve import Loop, interval_at
@@ -198,7 +203,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if written.documents:
             print("\n" + written.describe())
 
-        _write_supplements(home, report)
+        _write_supplements(home, report, ledger)
 
         return OK if not (report.incomplete or report.unreached) else INCOMPLETE
     finally:
@@ -228,7 +233,7 @@ def _plan(cycle: Cycle, transport: LiveTransport) -> int:
     return OK
 
 
-def _write_supplements(home: Path, report: CycleReport) -> None:
+def _write_supplements(home: Path, report: CycleReport, ledger=None) -> None:
     """Record the supplements this cycle knows about, per State.
 
     Written even when the set is unchanged: the file is what a person edits to
@@ -236,6 +241,15 @@ def _write_supplements(home: Path, report: CycleReport) -> None:
     would leave a register drifting from what the State publishes.
     """
     for state in report.states:
+        if ledger is not None:
+            # Reported before the manifest is rewritten, and only where the
+            # list was actually read: a supplement leaving is the State
+            # withdrawing it, and that is the only end date obtainable until
+            # somebody reads the validity windows.
+            change = listing_change(report, ledger, state=state.state)
+            if change.withdrawn or change.added or not change.is_conclusive:
+                print("\n" + change.describe())
+
         found = supplements_from(report, state=state.state)
         if not found:
             continue
@@ -342,7 +356,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 written = record_cycle(store, report)
             if written.documents:
                 print(written.describe())
-            _write_supplements(home, report)
+            _write_supplements(home, report, ledger)
             print()
 
         loop = Loop(
