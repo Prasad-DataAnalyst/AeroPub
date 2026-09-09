@@ -36,10 +36,16 @@ from datetime import datetime, timezone
 from typing import Protocol
 
 from .facts import Fact
-from .provenance import Confidence
+from .provenance import Confidence, SourceRef
 from .reader import ReadResult
 
-__all__ = ["Recorded", "FactSink", "record_result", "record_cycle"]
+__all__ = [
+    "Recorded",
+    "FactSink",
+    "record_result",
+    "record_cycle",
+    "supplements_from",
+]
 
 
 class FactSink(Protocol):
@@ -150,3 +156,62 @@ def record_cycle(sink: FactSink, report, *, at: datetime | None = None) -> Recor
                 skipped_unparsed=total.skipped_unparsed + one.skipped_unparsed,
             )
     return total
+
+
+def supplements_from(
+    report, *, state: str, parser_version: str = "discovery-1"
+) -> tuple:
+    """Every supplement this cycle knows about, as register records.
+
+    The cycle discovers a supplement as a document: it has an identifier, a
+    URL and a hash, and nothing has read a word of it. That is a real thing to
+    know and the register is where it belongs — a supplement nobody has read
+    is still a supplement that exists, and an operator asking "what
+    supplements are in force at OTHH" should be told about it rather than have
+    it silently omitted until a parser is written.
+
+    What it must not do is claim a window. :attr:`ForcePeriod.UNDATED` exists
+    for precisely this, and :attr:`ForcePeriod.applies` returns ``None`` for
+    it — not a soft no. A supplement whose dates nobody has transcribed is one
+    nobody can say has ended, and quietly retiring it would take a restriction
+    that is still in force off an operator's screen on a day nothing happened.
+    """
+    from .publication import Kind
+    from .supplement import Supplement
+
+    found: list[Supplement] = []
+    seen: set[str] = set()
+    for state_outcome in report.states:
+        for document in state_outcome.documents:
+            result = document.result
+            if result is None:
+                continue
+            if result.publication.kind is not Kind.SUPPLEMENT:
+                continue
+            identifier = result.publication.code or result.link.document
+            if not identifier.strip() or identifier in seen:
+                continue
+            seen.add(identifier)
+            found.append(
+                Supplement(
+                    identifier=identifier,
+                    source=SourceRef(
+                        source_id=state,
+                        document=result.link.document,
+                        locator="the supplement list",
+                        retrieved_at=result.link.retrieved_at,
+                        content_hash=result.link.content_hash or "0" * 64,
+                        parser_id="cycle.discovery",
+                        parser_version=parser_version,
+                        confidence=Confidence.LOW,
+                        original_url=result.link.url,
+                        archive_key=result.link.archive_key,
+                    ),
+                    summary=(
+                        "Discovered in the State's supplement list. Nothing "
+                        "has read its content, so neither its validity window "
+                        "nor what it bears on is known."
+                    ),
+                )
+            )
+    return tuple(found)

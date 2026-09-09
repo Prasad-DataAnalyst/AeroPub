@@ -307,11 +307,54 @@ class SupplementRegister:
         return tuple(out)
 
     def in_force(self, on: date) -> tuple[Supplement, ...]:
+        """Supplements *known* to apply on this day.
+
+        Excludes those whose window nobody has read, because saying a
+        supplement is in force is a claim and an unread window does not
+        support one. That exclusion is the reason
+        :meth:`not_known_to_have_ended` exists, and why a screening path must
+        use that instead: ``applies`` is three-valued, ``None`` is falsy, and
+        a filter written on truthiness drops exactly the supplements nobody
+        can vouch for either way.
+        """
         replaced = self.superseded
         return tuple(
             s
             for s in self.supplements
-            if s.identifier not in replaced and s.state_on(on).applies
+            if s.identifier not in replaced and s.state_on(on).applies is True
+        )
+
+    def of_unread_window(self) -> tuple[Supplement, ...]:
+        """Supplements held with no dates read from them.
+
+        A visible category, like :meth:`unattached`, and not a discard pile. A
+        supplement discovered in a State's list and never opened is a real
+        document that exists; what is unknown is when it starts and stops.
+        """
+        replaced = self.superseded
+        return tuple(
+            s
+            for s in self.supplements
+            if s.identifier not in replaced
+            and s.state_on(date.min) is ForcePeriod.UNDATED
+        )
+
+    def not_known_to_have_ended(self, on: date) -> tuple[Supplement, ...]:
+        """Everything a screening path must consider: in force, or unreadable.
+
+        The union of :meth:`in_force` and :meth:`of_unread_window`. A
+        supplement whose dates nobody transcribed is one nobody can say has
+        ended, so retiring it from a screen would take a restriction that may
+        still be in force off an operator's display on a day nothing happened.
+        Erring the other way shows a document that may have lapsed, which a
+        reader can check.
+        """
+        replaced = self.superseded
+        return tuple(
+            s
+            for s in self.supplements
+            if s.identifier not in replaced
+            and s.state_on(on).applies is not False
         )
 
     def section_wide(
