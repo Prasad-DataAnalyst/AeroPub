@@ -69,6 +69,20 @@ class Outcome(str, Enum):
     UNCHANGED = "UNCHANGED"
     """Confirmed identical to what we hold. The cheap and usual case."""
 
+    PRESUMED_UNCHANGED = "PRESUMED_UNCHANGED"
+    """Not checked, because the edition it belongs to has not moved.
+
+    A eAIP edition is largely immutable once published: a change normally
+    means a *new* edition, which the State's history page shows in one
+    request. So a shallow pass resolves — three pages — and presumes the
+    eighty sections beneath an unmoved edition are as we hold them.
+
+    Presumed is not confirmed, and the two must not be spelled the same. A
+    State that republishes a section in place without touching its index
+    would look identical from here, which is why a deep pass runs on its own
+    schedule regardless of what a shallow one concluded.
+    """
+
     FAILED = "FAILED"
     """Reached for and not obtained. What we hold is now stale, not current."""
 
@@ -166,6 +180,17 @@ class DocumentOutcome:
         """Whether what we hold for this is older than we intended it to be."""
         return self.outcome in (Outcome.FAILED, Outcome.NOT_ATTEMPTED)
 
+    @property
+    def was_confirmed(self) -> bool:
+        """Whether the State itself vouched for this, this pass.
+
+        False for a presumption. Nothing operational should turn on the
+        difference between a section confirmed a minute ago and one presumed
+        for a day — but a coverage board that cannot show the difference
+        cannot show a State that has quietly stopped serving.
+        """
+        return self.outcome in (Outcome.READ, Outcome.UNCHANGED)
+
 
 @dataclass(frozen=True, slots=True)
 class StateOutcome:
@@ -196,6 +221,12 @@ class StateOutcome:
     @property
     def unchanged(self) -> tuple[DocumentOutcome, ...]:
         return tuple(d for d in self.documents if d.outcome is Outcome.UNCHANGED)
+
+    @property
+    def presumed(self) -> tuple[DocumentOutcome, ...]:
+        return tuple(
+            d for d in self.documents if d.outcome is Outcome.PRESUMED_UNCHANGED
+        )
 
     @property
     def failed(self) -> tuple[DocumentOutcome, ...]:
@@ -234,6 +265,8 @@ class StateOutcome:
             f"{len(self.read)} read",
             f"{len(self.unchanged)} unchanged",
         ]
+        if self.presumed:
+            parts.append(f"{len(self.presumed)} presumed")
         if self.failed:
             parts.append(f"{len(self.failed)} FAILED")
         if self.not_attempted:
@@ -256,6 +289,8 @@ class CycleReport:
 
     at: datetime
     states: tuple[StateOutcome, ...] = ()
+    deep: bool = True
+    """Whether every document was checked, or only those never seen before."""
 
     @property
     def complete(self) -> tuple[StateOutcome, ...]:
@@ -284,7 +319,8 @@ class CycleReport:
 
     def describe(self) -> str:
         lines = [
-            f"CYCLE {self.at.isoformat(timespec='seconds')}",
+            f"CYCLE {self.at.isoformat(timespec='seconds')}"
+            + ("" if self.deep else "  (shallow — resolve only)"),
             "",
             f"{len(self.states)} States  ·  {len(self.complete)} complete  ·  "
             f"{len(self.incomplete)} incomplete  ·  {len(self.unreached)} not reached",
@@ -337,21 +373,33 @@ class Cycle:
     NOT_ATTEMPTED, never as unchanged.
     """
 
-    def run(self, *, now: datetime | None = None) -> CycleReport:
-        """Every State, once. Does not raise."""
+    def run(self, *, now: datetime | None = None, deep: bool = True) -> CycleReport:
+        """Every State, once. Does not raise.
+
+        ``deep`` reads every document. A shallow pass resolves only — three
+        pages for a EUROCONTROL eAIP — reads anything the ledger has never
+        seen, and presumes the rest are as we hold them. Cheap enough to run
+        every five minutes across a publication window; a presumption, and
+        recorded as one.
+        """
         moment = now or _utcnow()
         return CycleReport(
             at=moment,
-            states=tuple(self._state_safely(r, moment) for r in self.resolvers),
+            deep=deep,
+            states=tuple(
+                self._state_safely(r, moment, deep=deep) for r in self.resolvers
+            ),
         )
 
     # -- one State ---------------------------------------------------------
 
-    def _state_safely(self, resolver: Resolver, moment: datetime) -> StateOutcome:
+    def _state_safely(
+        self, resolver: Resolver, moment: datetime, *, deep: bool = True
+    ) -> StateOutcome:
         state = getattr(resolver, "state", "??")
         name = getattr(resolver, "name", "")
         try:
-            outcome = self._run_state(resolver, moment)
+            outcome = self._run_state(resolver, moment, deep=deep)
         except Exception as error:  # noqa: BLE001 — the guarantee of this module
             outcome = StateOutcome(
                 state=state,
@@ -367,7 +415,9 @@ class Cycle:
             outcome, consecutive_failures=self.ledger.failures_for(state)
         )
 
-    def _run_state(self, resolver: Resolver, moment: datetime) -> StateOutcome:
+    def _run_state(
+        self, resolver: Resolver, moment: datetime, *, deep: bool = True
+    ) -> StateOutcome:
         state, name = resolver.state, resolver.name
 
         editions = resolver.editions(self._read_bytes)
@@ -387,6 +437,19 @@ class Cycle:
         documents: list[DocumentOutcome] = []
         budget = self.budget
         for publication in publications:
+            if not deep and self.ledger.hash_for(publication.url) is not None:
+                # Known, and its edition has not moved. Anything the ledger has
+                # never seen still gets read: a section appearing mid-edition
+                # is exactly the kind of change a shallow pass must not miss.
+                documents.append(
+                    DocumentOutcome(
+                        url=publication.url,
+                        code=publication.code,
+                        outcome=Outcome.PRESUMED_UNCHANGED,
+                        detail="shallow pass; the edition has not moved",
+                    )
+                )
+                continue
             if budget is not None and budget <= 0:
                 documents.append(
                     DocumentOutcome(

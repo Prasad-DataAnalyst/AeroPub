@@ -6,6 +6,7 @@ policy, a ledger that survives a restart, and a cycle that does not stop. This
 is the assembly, and it is deliberately thin — it decides nothing about
 aeronautical data, only which pieces are handed to which.
 
+    python -m aeropub.watch serve               keep running, on the AIRAC cadence
     python -m aeropub.watch run                 every registered State, once
     python -m aeropub.watch run --state OT      one State
     python -m aeropub.watch run --plan          what it would fetch, fetching nothing
@@ -37,7 +38,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .archive import Archive
@@ -46,6 +47,7 @@ from .ledger import SqliteLedger
 from .publication import Edition, EditionStatus
 from .reader import Retrieved
 from .resolve import Resolver
+from .serve import Loop, interval_at
 from .states import qatar
 from .transport import LiveTransport, TransportError
 
@@ -218,6 +220,56 @@ def _print_changes(report: CycleReport) -> None:
         print(f"  and {len(changed) - 40} more")
 
 
+def _cmd_serve(args: argparse.Namespace) -> int:
+    """Run until asked to stop."""
+    import time
+
+    home = Path(args.home)
+    transport = LiveTransport()
+    try:
+        cycle, ledger, archive = build_cycle(
+            home, only=args.state, edition=args.edition, transport=transport
+        )
+    except ValueError as error:
+        print(str(error), file=sys.stderr)
+        return CANNOT_RUN
+
+    try:
+        result = ledger.reconcile(holds=archive.has, on_forget=transport.forget)
+        if not result.is_sound:
+            print(result.describe())
+            print()
+
+        def announce(report: CycleReport) -> None:
+            # A quiet pass every five minutes for days would bury the one that
+            # matters, so silence is the default and only the interesting
+            # passes print. The counts are still in the loop's own report.
+            if report.quiet and not args.verbose:
+                return
+            print(report.describe())
+            _print_changes(report)
+            print()
+
+        loop = Loop(
+            cycle=cycle,
+            sleep=time.sleep,
+            on_report=announce,
+            deep_every=timedelta(hours=args.deep_every),
+            max_passes=args.passes,
+        )
+        loop.install_signal_handlers()
+        print(
+            f"watching {len(cycle.resolvers)} States. "
+            f"Next wait: {interval_at(datetime.now(timezone.utc).date())}. "
+            "Ctrl-C to stop after the current pass."
+        )
+        report = loop.run_forever()
+        print("\n" + report.describe())
+        return OK
+    finally:
+        ledger.close()
+
+
 def _cmd_reconcile(args: argparse.Namespace) -> int:
     home = Path(args.home)
     archive = Archive(home / "archive")
@@ -307,6 +359,28 @@ def _parser() -> argparse.ArgumentParser:
         help="skip the ledger check. The wrong default, and rarely right",
     )
     run.set_defaults(handler=_cmd_run)
+
+    keep_going = sub.add_parser(
+        "serve", help="keep running, on the AIRAC publication cadence"
+    )
+    keep_going.add_argument("--state", default="", metavar="OT")
+    keep_going.add_argument(
+        "--edition", default="current", choices=("current", "next")
+    )
+    keep_going.add_argument(
+        "--deep-every", dest="deep_every", type=float, default=24.0, metavar="HOURS",
+        help="how often to confirm every document rather than presume it "
+             "(default 24)",
+    )
+    keep_going.add_argument(
+        "--passes", type=int, default=None,
+        help="stop after this many passes. Default is to keep going",
+    )
+    keep_going.add_argument(
+        "--verbose", action="store_true",
+        help="print quiet passes too. Most passes are quiet",
+    )
+    keep_going.set_defaults(handler=_cmd_serve)
 
     check = sub.add_parser(
         "reconcile", help="check every ledger claim against the archive"
