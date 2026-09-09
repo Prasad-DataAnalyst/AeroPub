@@ -355,7 +355,12 @@ PROFILE = StateProfile(
 
 from dataclasses import dataclass, field  # noqa: E402
 
-from aeropub.publication import Edition, Publication, kind_of  # noqa: E402
+from aeropub.publication import (  # noqa: E402
+    Edition,
+    Kind,
+    Publication,
+    kind_of,
+)
 from aeropub.resolve import EaipTraversal, Read  # noqa: E402
 
 #: Retrieved 07 SEP 2026. Qatar serves the current edition and the next one,
@@ -409,21 +414,31 @@ class QatarResolver:
         contents, base = self.walk.contents_of(edition, read)
         companions = self.walk.companion_indexes(contents, base)
 
-        # A list of supplements is not a supplement. The tabs on the menu are
-        # indexes, and typing them by their directory would file three index
-        # pages as an AMDT, a SUP and an AIC — documents a parser would then
-        # read values out of. They are followed, not published.
-        indexes = set(companions.values())
-        found = [
-            p
-            for p in self.walk.publications_on(contents, base, edition)
-            if p.url not in indexes
+        # A list of supplements is not a supplement — it carries no values and
+        # nothing may parse it for any. It is still a document the State
+        # publishes, and it is where a supplement is announced, so it is
+        # monitored rather than merely followed. Swallowing a failure here
+        # reported the State complete while holding none of the supplements
+        # its own edition title names.
+        # The labelled index goes in first. publications_on emits the same
+        # URLs typed from their paths and with no code, and the de-duplication
+        # below keeps whichever arrived first — so ordering is what decides
+        # whether a failing SUP list reports as "eSUPs list" or as a blank.
+        found: list[Publication] = [
+            Publication(
+                url=url, kind=Kind.INDEX, edition=edition, code=f"{label} list"
+            )
+            for label, url in companions.items()
         ]
+        found += list(self.walk.publications_on(contents, base, edition))
 
-        for url in companions.values():
+        for label, url in companions.items():
             try:
                 listing = read(url).decode("utf-8", "replace")
-            except Exception:  # noqa: BLE001 — one missing list is not fatal
+            except Exception:  # noqa: BLE001 — the list is published above, so
+                # its failure is already visible as a document that failed to
+                # read. Continuing gathers the other States' lists rather than
+                # losing them to one that is down.
                 continue
             for document in self.walk.documents_beside(listing, url):
                 found.append(

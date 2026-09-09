@@ -255,7 +255,7 @@ def read_publication(
     # profile yet is still the baseline the next cycle's diff is read against,
     # so it is kept whether or not anything read values out of it today.
     retention = retention_for(
-        got.media_type, carries_values=publication.kind.carries_values
+        got.media_type, must_be_kept=publication.kind.must_be_kept
     )
 
     archive_key: str | None = None

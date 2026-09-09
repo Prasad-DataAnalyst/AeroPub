@@ -120,11 +120,12 @@ KEEP_EXTRACT: frozenset[str] = frozenset(
 )
 
 
-def retention_for(media_type: str, *, carries_values: bool) -> Retention:
+def retention_for(media_type: str, *, must_be_kept: bool) -> Retention:
     """What to keep of a document of this type.
 
-    ``carries_values`` is a property of the *document*, not of whether a parser
-    happened to run. That distinction cost a design pass to find: keying this
+    ``must_be_kept`` is a property of the *document*, not of whether a parser
+    happened to run, and it is wider than "we draw facts from it": a circular
+    carries no values and is still a document the State issued. That distinction cost a design pass to find: keying this
     on "was it parsed" meant a State onboarded before its profile was written
     archived nothing at all, and when the profile finally arrived there was no
     history to read it against. A section is kept because it is a section.
@@ -142,7 +143,7 @@ def retention_for(media_type: str, *, carries_values: bool) -> Retention:
     linked. Guessing wrong towards keeping costs bytes; guessing wrong towards
     discarding costs the citation, and only one of those is recoverable.
     """
-    if not carries_values:
+    if not must_be_kept:
         return Retention.LINKED
     normalised = media_type.split(";")[0].strip().lower()
     if normalised in KEEP_EXTRACT:

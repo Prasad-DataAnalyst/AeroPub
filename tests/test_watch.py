@@ -84,19 +84,22 @@ class TestTheAssembly:
             build_cycle(home, only="ZZ")
 
     def test_a_run_reads_the_whole_aip(self, home):
+        """Eighty sections plus the three lists — AMDT, SUP and AIC — which
+        are documents the State publishes and where a supplement is
+        announced, so they are monitored rather than merely followed."""
         report, _ = run_once(home)
-        assert len(report.states[0].read) == 80
+        assert len(report.states[0].read) == 83
 
     def test_it_archives_to_disk(self, home):
         _, archive = run_once(home)
-        assert len(archive) == 80
+        assert len(archive) == 83
         assert archive.total_bytes() > 0
 
     def test_a_second_run_is_quiet(self, home):
         run_once(home)
         report, _ = run_once(home)
         assert report.quiet
-        assert len(report.states[0].unchanged) == 80
+        assert len(report.states[0].unchanged) == 83
 
     def test_the_ledger_survives_between_runs(self, home):
         """The point of the durable one: a restart re-reads nothing."""
@@ -153,7 +156,7 @@ class TestALostArchiveIsCaught:
         shutil.rmtree(home / "archive")
         main(["--home", str(home), "reconcile", "--check"])
         ledger = SqliteLedger(home / "ledger.db")
-        assert len(list(ledger.entries())) == 80
+        assert len(list(ledger.entries())) == 83
         ledger.close()
 
     def test_reconcile_forgets_so_the_next_run_re_reads(self, home):
@@ -163,8 +166,8 @@ class TestALostArchiveIsCaught:
         shutil.rmtree(home / "archive")
         main(["--home", str(home), "reconcile"])
         report, archive = run_once(home)
-        assert len(report.states[0].read) == 80
-        assert len(archive) == 80
+        assert len(report.states[0].read) == 83
+        assert len(archive) == 83
 
     def test_a_run_reconciles_before_it_fetches(self, home, capsys):
         """Not behind a flag: a ledger outliving its archive answers UNCHANGED
@@ -194,7 +197,7 @@ class TestALostArchiveIsCaught:
         ledger.reconcile(holds=Archive(home / "archive").has,
                          on_forget=transport.forget)
         ledger.close()
-        assert len(transport.forgotten) == 80
+        assert len(transport.forgotten) == 83
 
 
 class TestNothingReadsAsHealthWhenItIsNot:
@@ -202,7 +205,7 @@ class TestNothingReadsAsHealthWhenItIsNot:
     def test_status_on_a_sound_store_exits_ok(self, home, capsys):
         run_once(home)
         assert main(["--home", str(home), "status"]) == OK
-        assert "80 known, 80 backed" in capsys.readouterr().out
+        assert "83 known, 83 backed" in capsys.readouterr().out
 
     def test_status_does_not_report_known_as_held(self, home, capsys):
         """'80 documents' beside an empty archive is absence rendering as a

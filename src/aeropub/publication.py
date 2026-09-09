@@ -68,6 +68,17 @@ class Kind(str, Enum):
     AMENDMENT = "AMENDMENT"
     SUPPLEMENT = "SUPPLEMENT"
     CIRCULAR = "CIRCULAR"
+    INDEX = "INDEX"
+    """A list of documents the State publishes — its SUP or AIC listing.
+
+    Not a supplement and not navigation. It is where a State announces that a
+    supplement exists, so it changes whenever one is issued, and a State whose
+    SUP list is unreachable is a State whose supplements we cannot know about.
+    Filing it as navigation made that failure invisible: eighty sections would
+    read fine and the State would report complete while holding none of the
+    supplements its own edition title names.
+    """
+
     CHART = "CHART"
     """A graphic. Read by people, not parsed for values, and never archived."""
 
@@ -94,8 +105,31 @@ class Kind(str, Enum):
 
     @property
     def carries_values(self) -> bool:
-        """Whether facts are drawn from this, and so whether it must be kept."""
+        """Whether facts are drawn from this."""
         return self.precedence is not None
+
+    @property
+    def must_be_kept(self) -> bool:
+        """Whether we must be able to answer questions about this later.
+
+        Wider than :attr:`carries_values`, and the two were conflated until an
+        AIC went unarchived for being advisory. A circular carries no values
+        and overrides nothing — and it is still a document the State issued,
+        small, textual, and something an operator may need to read a year
+        after the State withdrew it. A SUP or AIC list is the same: it is the
+        evidence of what existed at a date.
+
+        What is excluded is what a State serves better than we can: charts and
+        imagery, which are large, do not deduplicate, and are wanted from the
+        authority that drew them.
+        """
+        return self in {
+            Kind.AIP_SECTION,
+            Kind.AMENDMENT,
+            Kind.SUPPLEMENT,
+            Kind.CIRCULAR,
+            Kind.INDEX,
+        }
 
 
 class EditionStatus(str, Enum):
@@ -120,6 +154,14 @@ class EditionStatus(str, Enum):
 #: but a State that named one ``ENR-SUP`` would otherwise land as a section.
 _KIND_BY_PATH: tuple[tuple[Kind, re.Pattern[str]], ...] = (
     (Kind.CHART, re.compile(r"\.(?:pdf|png|jpe?g|gif|svg|tiff?)$", re.I)),
+    # A list page before the directory rules see it. QA-eSUPs-en-GB.html sits
+    # in eSUP/ and would otherwise type as a supplement — an index page a
+    # parser would then read values out of. The plural is the tell, and it is
+    # the eAIP convention rather than a Qatari one.
+    (
+        Kind.INDEX,
+        re.compile(r"(?:^|[-_/])(?:e?SUPs|e?AICs|AMDT)[-_.]", re.I),
+    ),
     (Kind.SUPPLEMENT, re.compile(r"(?:^|/)e?SUPs?/|(?:^|[-_/])SUP[-_ ]?\d", re.I)),
     (Kind.CIRCULAR, re.compile(r"(?:^|/)e?AICs?/|(?:^|[-_/])AIC[-_ ]?\d", re.I)),
     (Kind.AMENDMENT, re.compile(r"(?:^|[-_/])AMDT(?:[-_ ]|\.html?$)", re.I)),
@@ -220,12 +262,8 @@ class Publication:
 
     @property
     def must_be_kept(self) -> bool:
-        """Whether losing this would leave a value uncitable.
-
-        True exactly when values are drawn from it. A chart is not kept; the
-        section a runway length was read from is.
-        """
-        return self.kind.carries_values
+        """Whether losing this would leave a question unanswerable."""
+        return self.kind.must_be_kept
 
     def cite_as(self, state_name: str) -> str:
         """How a value from this document names its source.

@@ -31,25 +31,25 @@ class TestWhatToKeep:
         ["text/html", "application/xml", "text/html; charset=UTF-8"],
     )
     def test_markup_we_parsed_is_kept_whole(self, media_type):
-        assert retention_for(media_type, carries_values=True) is Retention.ARCHIVED
+        assert retention_for(media_type, must_be_kept=True) is Retention.ARCHIVED
 
     def test_a_parsed_pdf_keeps_its_text_not_its_megabytes(self):
         """A supplement published as PDF. Keeping it whole is waste; keeping
         nothing makes the facts drawn from it unverifiable."""
-        assert retention_for("application/pdf", carries_values=True) is Retention.EXTRACT_ONLY
+        assert retention_for("application/pdf", must_be_kept=True) is Retention.EXTRACT_ONLY
 
     def test_a_chart_is_linked(self):
         """Carries no values, and nobody wants our copy of a chart."""
-        assert retention_for("image/png", carries_values=False) is Retention.LINKED
+        assert retention_for("image/png", must_be_kept=False) is Retention.LINKED
 
     def test_nothing_drawn_from_it_means_nothing_kept(self):
         """Type does not matter when there is no citation and no diff."""
-        assert retention_for("text/html", carries_values=False) is Retention.LINKED
+        assert retention_for("text/html", must_be_kept=False) is Retention.LINKED
 
-    def test_an_unknown_type_that_carries_values_is_kept(self):
+    def test_an_unknown_type_that_must_be_kept_is_archived(self):
         """Guessing wrong towards keeping costs bytes. Guessing wrong towards
         discarding costs the citation, and only one of those is recoverable."""
-        assert retention_for("application/x-unheard-of", carries_values=True) is (
+        assert retention_for("application/x-unheard-of", must_be_kept=True) is (
             Retention.ARCHIVED
         )
 

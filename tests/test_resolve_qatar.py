@@ -116,13 +116,14 @@ class TestReachingTheContents:
 
 class TestWhatWasFound:
 
-    def test_eighty_sections(self, read, next_edition):
+    def test_eighty_sections_and_three_lists(self, read, next_edition):
         pubs = RESOLVER.publications(next_edition, read)
-        assert len(pubs) == 80
+        assert len(pubs) == 83
+        assert sum(1 for p in pubs if p.kind is Kind.AIP_SECTION) == 80
 
-    def test_every_one_is_an_aip_section(self, read, next_edition):
+    def test_the_sections_and_the_three_lists(self, read, next_edition):
         kinds = Counter(p.kind for p in RESOLVER.publications(next_edition, read))
-        assert kinds == {Kind.AIP_SECTION: 80}
+        assert kinds == {Kind.AIP_SECTION: 80, Kind.INDEX: 3}
 
     def test_all_three_parts_are_present(self, read, next_edition):
         codes = {p.code for p in RESOLVER.publications(next_edition, read)}
@@ -144,25 +145,51 @@ class TestWhatWasFound:
         assert pubs["ENR 3.2"].cite_as("Qatar") == "AIP Qatar ENR 3.2"
 
 
-class TestAListIsNotADocument:
-    """The menu's tabs are indexes. Typing them by directory would file three
-    index pages as an AMDT, a SUP and an AIC — and a parser would then read
-    values out of a table of contents."""
+class TestAListIsNotASupplement:
+    """Typing the menu's tabs by their directory would file three index pages
+    as an AMDT, a SUP and an AIC — documents a parser would then read values
+    out of. They are their own kind: no precedence, nothing parses them, and
+    they are monitored, because a State whose SUP list is unreachable is a
+    State whose supplements we cannot know about."""
 
     def test_the_companion_indexes_are_found(self, read, next_edition):
         contents, base = EaipTraversal().contents_of(next_edition, read)
         found = EaipTraversal().companion_indexes(contents, base)
         assert set(found) == {"AMDT", "eSUPs", "eAICs"}
 
-    def test_they_are_not_published_as_documents(self, read, next_edition):
-        urls = {p.url for p in RESOLVER.publications(next_edition, read)}
-        assert not any("eSUPs" in u or "eAICs" in u or "AMDT" in u for u in urls)
+    def test_they_are_published_as_indexes(self, read, next_edition):
+        kinds = {
+            p.code: p.kind
+            for p in RESOLVER.publications(next_edition, read)
+            if "list" in p.code
+        }
+        assert kinds == {
+            "AMDT list": Kind.INDEX,
+            "eSUPs list": Kind.INDEX,
+            "eAICs list": Kind.INDEX,
+        }
 
-    def test_no_publication_lacks_a_precedence(self, read, next_edition):
-        """An index page has no precedence, so one appearing here would show
-        up as a document nothing can file."""
-        pubs = RESOLVER.publications(next_edition, read)
-        assert all(p.precedence is not None for p in pubs)
+    def test_an_index_is_never_filed_under_a_precedence_layer(self, read, next_edition):
+        """Filing a table of contents as a supplement puts it above the AIP."""
+        for publication in RESOLVER.publications(next_edition, read):
+            if publication.kind is Kind.INDEX:
+                assert publication.precedence is None
+
+    def test_every_section_still_has_one(self, read, next_edition):
+        sections = [
+            p for p in RESOLVER.publications(next_edition, read)
+            if p.kind is Kind.AIP_SECTION
+        ]
+        assert len(sections) == 80
+        assert all(p.precedence is not None for p in sections)
+
+    def test_a_labelled_index_beats_an_unlabelled_one(self, read, next_edition):
+        """publications_on emits the same URLs typed from their paths and with
+        no code. De-duplication keeps whichever arrived first, so a failing SUP
+        list must report as 'eSUPs list' rather than as a blank."""
+        pubs = {p.url: p for p in RESOLVER.publications(next_edition, read)}
+        sup_list = next(p for p in pubs.values() if "eSUPs" in p.url)
+        assert sup_list.code == "eSUPs list"
 
 
 class TestKindDecidesPrecedence:
@@ -175,7 +202,9 @@ class TestKindDecidesPrecedence:
             (f"{EDITION}/eAIP/QA-ENR-3.2-en-GB.html", Kind.AIP_SECTION),
             (f"{EDITION}/eSUP/QA-SUP-16-2026-en-GB.html", Kind.SUPPLEMENT),
             (f"{EDITION}/eAIC/QA-AIC-07-2026-A-en-GB.html", Kind.CIRCULAR),
-            (f"{EDITION}/eAIP/QA-AMDT-en-GB.html", Kind.AMENDMENT),
+            (f"{EDITION}/eAIP/QA-AMDT-en-GB.html", Kind.INDEX),
+            (f"{EDITION}/eSUP/QA-eSUPs-en-GB.html", Kind.INDEX),
+            (f"{EDITION}/eSUP/QA-SUP-16-2026-en-GB.html", Kind.SUPPLEMENT),
             (f"{EDITION}/graphics/OTHH-ADC.pdf", Kind.CHART),
             (f"{EDITION}/index-en-GB.html", Kind.NAVIGATION),
         ],
@@ -259,3 +288,83 @@ class TestTheStateDeclaresItsOwnAbsences:
     def test_a_declared_absence_shows_in_the_description(self, read, next_edition):
         pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
         assert "declared NIL" in pubs["ENR 3.1"].describe()
+
+
+class TestSupplementsAndCircularsAreMonitored:
+    """Precedence runs AIP < AMDT < SUP < NOTAM. A supplement in force changes
+    what a section means, so an AIP gathered without its supplements reads as
+    though nothing supersedes it — and Qatar's own edition title names nine.
+    """
+
+    SUPS = (
+        "https://aim.gov.qa/AIP/03-SEP-2026/AIP-30/2026-10-01-000000/html/"
+        "eSUP/QA-eSUPs-en-GB.html"
+    )
+    LISTING = (
+        b'<html><a href="QA-SUP-16-2026-en-GB.html">SUP 16/2026</a>'
+        b'<a href="QA-SUP-15-2026-en-GB.html">SUP 15/2026</a></html>'
+    )
+
+    @pytest.fixture()
+    def read_with_sups(self):
+        def _read(url: str) -> bytes:
+            name = SERVED.get(url)
+            if name is not None:
+                return (FIXTURES / name).read_bytes()
+            if url == self.SUPS:
+                return self.LISTING
+            raise FileNotFoundError(url)
+        return _read
+
+    def test_the_lists_are_published_not_only_followed(self, read, next_edition):
+        """A State whose SUP list is unreachable is a State whose supplements
+        we cannot know about, and that must be a document that failed."""
+        codes = {p.code for p in RESOLVER.publications(next_edition, read)}
+        assert {"eSUPs list", "eAICs list", "AMDT list"} <= codes
+
+    def test_a_list_is_typed_as_an_index(self, read, next_edition):
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read)}
+        assert pubs["eSUPs list"].kind is Kind.INDEX
+
+    def test_an_index_carries_no_values(self):
+        """Nothing may parse a table of contents for aeronautical data."""
+        assert not Kind.INDEX.carries_values
+        assert Kind.INDEX.precedence is None
+
+    def test_but_it_is_kept(self):
+        """It is the evidence of which supplements existed at a date."""
+        assert Kind.INDEX.must_be_kept
+
+    def test_supplements_behind_the_list_are_found(self, read_with_sups, next_edition):
+        codes = {p.code for p in RESOLVER.publications(next_edition, read_with_sups)}
+        assert {"SUP 16/2026", "SUP 15/2026"} <= codes
+
+    def test_a_supplement_outranks_the_aip(self, read_with_sups, next_edition):
+        from aeropub.facts import Precedence
+
+        pubs = {p.code: p for p in RESOLVER.publications(next_edition, read_with_sups)}
+        assert pubs["SUP 16/2026"].precedence is Precedence.SUP
+        assert pubs["SUP 16/2026"].precedence > pubs["ENR 3.2"].precedence
+
+
+class TestACircularIsKeptEvenThoughItOverridesNothing:
+    """An AIC carries no values and is still a document the State issued —
+    small, textual, and something an operator may need to read a year after
+    the State withdrew it. Treating it like a chart left it unarchived."""
+
+    def test_it_has_no_precedence(self):
+        assert Kind.CIRCULAR.precedence is None
+
+    def test_it_is_still_kept(self):
+        assert Kind.CIRCULAR.must_be_kept
+
+    def test_a_chart_is_not(self):
+        """What a State serves better than we can: large, no deduplication,
+        and wanted from the authority that drew it."""
+        assert not Kind.CHART.must_be_kept
+
+    def test_retention_follows_being_kept_not_carrying_values(self):
+        from aeropub.live import Retention, retention_for
+
+        assert retention_for("text/html", must_be_kept=True) is Retention.ARCHIVED
+        assert retention_for("text/html", must_be_kept=False) is Retention.LINKED
