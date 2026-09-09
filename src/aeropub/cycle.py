@@ -43,6 +43,7 @@ from typing import Callable, Iterable, Protocol
 
 from .publication import Edition, EditionStatus, Publication
 from .reader import Keep, ReadResult, Retrieve, read_publication
+from .revision import DocumentRevision, compare
 from .resolve import Resolver
 
 __all__ = [
@@ -118,6 +119,15 @@ class Ledger(Protocol):
         """
         ...
 
+    def archive_key_for(self, url: str) -> str | None:
+        """The archive key recorded for this URL, or ``None``.
+
+        Distinct from :meth:`hash_for`: the hash says what the document
+        contained, the key says where the copy of it is. Comparing two
+        versions needs the second.
+        """
+        ...
+
     def failures_for(self, state: str) -> int:
         """Consecutive failed cycles for a State."""
         ...
@@ -142,6 +152,9 @@ class InMemoryLedger:
 
     def hash_for(self, url: str) -> str | None:
         return self.hashes.get(url)
+
+    def archive_key_for(self, url: str) -> str | None:
+        return self.archive_keys.get(url)
 
     def record(
         self,
@@ -174,6 +187,13 @@ class DocumentOutcome:
     code: str = ""
     detail: str = ""
     result: ReadResult | None = None
+    revision: DocumentRevision | None = None
+    """How this reading differs from the one before it.
+
+    ``None`` means the comparison was not made — because nothing recalls
+    archived bytes, or because the previous copy could not be recalled. Never
+    that nothing changed.
+    """
 
     @property
     def leaves_data_stale(self) -> bool:
@@ -223,6 +243,29 @@ class StateOutcome:
         return tuple(d for d in self.documents if d.outcome is Outcome.UNCHANGED)
 
     @property
+    def amended(self) -> tuple[DocumentOutcome, ...]:
+        """Read documents whose reading text actually moved."""
+        return tuple(
+            d for d in self.documents
+            if d.revision is not None and d.revision.is_substantive
+        )
+
+    @property
+    def regenerated(self) -> tuple[DocumentOutcome, ...]:
+        """Read documents rebuilt without a word changing.
+
+        Separated from amended because reporting these as changes is what
+        makes a board unreadable: a State rebuilding its eAIP moves every byte
+        of every page on a day nothing was published.
+        """
+        return tuple(
+            d for d in self.documents
+            if d.revision is not None
+            and not d.revision.is_substantive
+            and d.outcome is Outcome.READ
+        )
+
+    @property
     def presumed(self) -> tuple[DocumentOutcome, ...]:
         return tuple(
             d for d in self.documents if d.outcome is Outcome.PRESUMED_UNCHANGED
@@ -261,10 +304,18 @@ class StateOutcome:
                 f"{self.state} {self.name}: NOT REACHED{mark} — "
                 f"{self.failed_because}"
             )
-        parts = [
-            f"{len(self.read)} read",
-            f"{len(self.unchanged)} unchanged",
-        ]
+        amended, regenerated = self.amended, self.regenerated
+        if amended or regenerated:
+            parts = [f"{len(amended)} amended"]
+            if regenerated:
+                parts.append(f"{len(regenerated)} regenerated")
+            if len(self.read) > len(amended) + len(regenerated):
+                parts.append(
+                    f"{len(self.read) - len(amended) - len(regenerated)} read"
+                )
+        else:
+            parts = [f"{len(self.read)} read"]
+        parts.append(f"{len(self.unchanged)} unchanged")
         if self.presumed:
             parts.append(f"{len(self.presumed)} presumed")
         if self.failed:
@@ -313,6 +364,15 @@ class CycleReport:
         return sum(len(s.read) for s in self.states)
 
     @property
+    def documents_amended(self) -> int:
+        """Read documents whose reading text actually moved."""
+        return sum(len(s.amended) for s in self.states)
+
+    @property
+    def documents_regenerated(self) -> int:
+        return sum(len(s.regenerated) for s in self.states)
+
+    @property
     def quiet(self) -> bool:
         """Nothing changed and nothing broke — the shape of most cycles."""
         return not self.documents_read and not self.incomplete and not self.unreached
@@ -324,7 +384,7 @@ class CycleReport:
             "",
             f"{len(self.states)} States  ·  {len(self.complete)} complete  ·  "
             f"{len(self.incomplete)} incomplete  ·  {len(self.unreached)} not reached",
-            f"{self.documents_read} documents read",
+            _read_line(self),
         ]
         if self.persistently_failing:
             lines += [
@@ -350,6 +410,29 @@ class CycleReport:
         return "\n".join(lines)
 
 
+def _read_line(report: "CycleReport") -> str:
+    """The headline count, with rebuilds separated from amendments.
+
+    "80 documents read" on a day a State rebuilt its eAIP and amended one
+    section is true and alarming, and the alarm is the problem: a reader
+    scanning the summary cannot tell it from eighty amendments.
+    """
+    read = report.documents_read
+    if not read:
+        return "0 documents read"
+    amended = report.documents_amended
+    regenerated = report.documents_regenerated
+    if not (amended or regenerated):
+        return f"{read} documents read"
+    parts = [f"{amended} amended"]
+    if regenerated:
+        parts.append(f"{regenerated} regenerated")
+    uncompared = read - amended - regenerated
+    if uncompared:
+        parts.append(f"{uncompared} not compared")
+    return f"{read} documents read — " + ", ".join(parts)
+
+
 @dataclass
 class Cycle:
     """One pass over every State, isolated so nothing can stop it.
@@ -363,6 +446,15 @@ class Cycle:
     retrieve: Retrieve
     ledger: Ledger = field(default_factory=InMemoryLedger)
     keep: Keep | None = None
+    recall: Callable[[str], bytes | None] | None = None
+    """Reads archived bytes back by key, so two versions can be compared.
+
+    Without it a changed document is reported as READ and nothing more. On the
+    day a State regenerates its eAIP that is eighty sections reported changed
+    when not one word moved — the noise that makes an operator stop reading a
+    board. Recall is how the cycle tells a rebuild from an amendment.
+    """
+
     parse_for: Callable[[Publication], Callable | None] | None = None
     choose_edition: Callable[[tuple[Edition, ...]], Edition | None] | None = None
     budget: int | None = None
@@ -521,6 +613,10 @@ class Cycle:
                 result=result,
             )
 
+        # Compared before the ledger is rewritten: until then its entry still
+        # names the version about to be replaced.
+        revision = self._revision_of(publication, result)
+
         if current:
             self.ledger.record(
                 publication.url,
@@ -533,6 +629,40 @@ class Cycle:
             code=publication.code,
             outcome=Outcome.READ,
             result=result,
+            revision=revision,
+        )
+
+    def _revision_of(
+        self, publication: Publication, result: ReadResult
+    ) -> DocumentRevision | None:
+        """How this reading differs from the one before it, where we can tell.
+
+        Both versions are recalled from the archive rather than held in
+        memory: the new one was archived a moment ago and the old one has been
+        there since it was read, so an eighty-section pass never holds more
+        than two documents at once.
+        """
+        if self.recall is None or result.link.archive_key is None:
+            return None
+
+        naming = getattr(self.ledger, "archive_key_for", None)
+        previous_key = naming(publication.url) if naming else None
+
+        try:
+            after = self.recall(result.link.archive_key)
+            before = self.recall(previous_key) if previous_key else None
+        except Exception:  # noqa: BLE001 — a lost blob is not a failed document
+            return None
+
+        if after is None:
+            return None
+        if previous_key is not None and before is None:
+            # We know the document and cannot recall what we held. Reporting
+            # it as first seen would be false, so no comparison is offered.
+            return None
+
+        return compare(
+            result.link.document, before, after, facts_were_read=result.parsed
         )
 
     # -- helpers -----------------------------------------------------------

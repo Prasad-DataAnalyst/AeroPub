@@ -406,3 +406,186 @@ class TestA304IsTheHealthiestOutcome:
             ledger=ledger, keep=archiver(),
         ).run(now=NOW)
         assert ledger.hashes == {}
+
+
+class TestARebuildIsNotAnAmendment:
+    """A State regenerating its eAIP moves every byte of every page on a day
+    nothing was published. Reporting eighty sections changed is what makes an
+    operator stop reading a board — which costs more than the board was worth.
+    """
+
+    def _pieces(self):
+        archive: dict[str, bytes] = {}
+        bodies: dict[str, bytes] = {}
+
+        def keep(body: bytes, media_type: str) -> str:
+            import hashlib
+
+            key = hashlib.sha256(body).hexdigest()
+            archive[key] = body
+            return key
+
+        def retrieve(url: str) -> Retrieved:
+            body = bodies.get(url, b"<html><p>ENR content</p></html>")
+            return Retrieved(url=url, body=body, media_type="text/html",
+                             type_was_declared=True, retrieved_at=NOW)
+
+        return archive, bodies, keep, retrieve
+
+    def test_a_regeneration_is_not_counted_as_amended(self):
+        archive, bodies, keep, retrieve = self._pieces()
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retrieve, ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        cycle.run(now=NOW)
+        for url in list(cycle.ledger.hashes):
+            bodies[url] = b'<html id="rebuilt"><p>ENR content</p></html>'
+        [outcome] = cycle.run(now=NOW).states
+        assert len(outcome.regenerated) == 2
+        assert not outcome.amended
+
+    def test_a_real_amendment_is(self):
+        archive, bodies, keep, retrieve = self._pieces()
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retrieve, ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        cycle.run(now=NOW)
+        url = next(iter(cycle.ledger.hashes))
+        bodies[url] = b"<html><p>ENR content REVISED: RNP 4 required</p></html>"
+        [outcome] = cycle.run(now=NOW).states
+        assert len(outcome.amended) == 1
+        assert "RNP 4" in outcome.amended[0].revision.describe()
+
+    def test_the_report_names_them_separately(self):
+        archive, bodies, keep, retrieve = self._pieces()
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retrieve, ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        cycle.run(now=NOW)
+        for url in list(cycle.ledger.hashes):
+            bodies[url] = b'<html id="rebuilt"><p>ENR content</p></html>'
+        assert "regenerated" in cycle.run(now=NOW).states[0].describe()
+
+
+class TestNoComparisonIsNotNoChange:
+
+    def test_without_recall_no_revision_is_offered(self):
+        """Reporting 'unchanged' because nothing looked would be the quietest
+        possible lie."""
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retriever(), ledger=InMemoryLedger(), keep=archiver(),
+        )
+        [outcome] = cycle.run(now=NOW).states
+        assert all(d.revision is None for d in outcome.read)
+
+    def test_a_first_reading_is_first_seen_not_unchanged(self):
+        archive: dict[str, bytes] = {}
+
+        def keep(body, media_type):
+            import hashlib
+            key = hashlib.sha256(body).hexdigest()
+            archive[key] = body
+            return key
+
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retriever(), ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        [outcome] = cycle.run(now=NOW).states
+        from aeropub.revision import RevisionKind
+
+        assert outcome.read[0].revision.kind is RevisionKind.FIRST_SEEN
+
+    def test_a_lost_previous_copy_declines_rather_than_guesses(self):
+        """Saying 'first seen' for a document we know is false, so nothing is
+        said at all."""
+        archive: dict[str, bytes] = {}
+
+        def keep(body, media_type):
+            import hashlib
+            key = hashlib.sha256(body).hexdigest()
+            archive[key] = body
+            return key
+
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retriever(), ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        cycle.run(now=NOW)
+        archive.clear()
+        cycle.retrieve = retriever(bodies={
+            "https://ot.test/eAIP/ENR-3.2.html": b"<html>changed</html>"
+        })
+        [outcome] = cycle.run(now=NOW).states
+        changed = [d for d in outcome.read if d.code == "ENR 3.2"]
+        assert changed and changed[0].revision is None
+
+
+class TestTheHeadlineCountSaysWhichKind:
+    """'80 documents read' on a day a State rebuilt its eAIP and amended one
+    section is true and alarming, and the alarm is the problem: a reader
+    scanning the summary cannot tell it from eighty amendments."""
+
+    def _rebuilt_cycle(self):
+        archive: dict[str, bytes] = {}
+        bodies: dict[str, bytes] = {}
+
+        def keep(body: bytes, media_type: str) -> str:
+            import hashlib
+            key = hashlib.sha256(body).hexdigest()
+            archive[key] = body
+            return key
+
+        def retrieve(url: str) -> Retrieved:
+            return Retrieved(
+                url=url, body=bodies.get(url, b"<html><p>content</p></html>"),
+                media_type="text/html", type_was_declared=True, retrieved_at=NOW,
+            )
+
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test",
+                                 codes=("ENR 3.2", "GEN 0.4", "AD 1.1")),),
+            retrieve=retrieve, ledger=InMemoryLedger(), keep=keep,
+            recall=archive.get,
+        )
+        cycle.run(now=NOW)
+        for url in list(cycle.ledger.hashes):
+            bodies[url] = b'<html id="rebuilt"><p>content</p></html>'
+        bodies["https://ot.test/eAIP/ENR-3.2.html"] = (
+            b'<html id="rebuilt"><p>content REVISED</p></html>'
+        )
+        return cycle
+
+    def test_the_summary_separates_them(self):
+        report = self._rebuilt_cycle().run(now=NOW)
+        assert "1 amended, 2 regenerated" in report.describe()
+
+    def test_the_totals_are_counted(self):
+        report = self._rebuilt_cycle().run(now=NOW)
+        assert (report.documents_amended, report.documents_regenerated) == (1, 2)
+
+    def test_a_plain_first_read_says_nothing_extra(self):
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retriever(), ledger=InMemoryLedger(), keep=archiver(),
+        )
+        assert "2 documents read" in cycle.run(now=NOW).describe()
+
+    def test_documents_read_without_a_comparison_are_named_as_such(self):
+        """Not compared is not unchanged, and the count must not imply it."""
+        cycle = Cycle(
+            resolvers=(FakeState("OT", "Qatar", host="ot.test"),),
+            retrieve=retriever(), ledger=InMemoryLedger(), keep=archiver(),
+        )
+        report = cycle.run(now=NOW)
+        assert report.documents_amended == 0
+        assert report.documents_regenerated == 0

@@ -124,11 +124,24 @@ def build_cycle(
     def keep(body: bytes, media_type: str) -> str:
         return _keeper(archive, next(iter(chosen), "??"))(body, media_type)
 
+    def recall(key: str) -> bytes | None:
+        """The archived bytes for a key, or None where the copy is gone.
+
+        A lost blob must not become a failed document, and must not become a
+        document reported as first seen either — the comparison is simply not
+        offered.
+        """
+        try:
+            return archive.get(key) if archive.has(key) else None
+        except Exception:  # noqa: BLE001 — a corrupt blob is not this pass's problem
+            return None
+
     cycle = Cycle(
         resolvers=tuple(chosen.values()),
         retrieve=fetch,
         ledger=ledger,
         keep=keep,
+        recall=recall,
         choose_edition=_edition_chooser(edition),
     )
     return cycle, ledger, archive
@@ -214,18 +227,44 @@ def _plan(cycle: Cycle, transport: LiveTransport) -> int:
 
 
 def _print_changes(report: CycleReport) -> None:
-    changed = [
-        (state.state, document.code or document.url)
+    """What moved, with amendments separated from rebuilds.
+
+    A State regenerating its eAIP moves every byte of every page on a day
+    nothing was published. Listing those beside real amendments is what makes
+    a board stop being read, so they are counted rather than enumerated.
+    """
+    amended = [
+        (state.state, document)
+        for state in report.states
+        for document in state.amended
+    ]
+    regenerated = sum(len(state.regenerated) for state in report.states)
+    unexplained = [
+        (state.state, document)
         for state in report.states
         for document in state.read
+        if document.revision is None
     ]
-    if not changed:
-        return
-    print("\nREAD THIS CYCLE")
-    for state, what in changed[:40]:
-        print(f"  {state}  {what}")
-    if len(changed) > 40:
-        print(f"  and {len(changed) - 40} more")
+
+    if amended:
+        print("\nAMENDED")
+        for state, document in amended[:20]:
+            print(f"  {state}  {document.revision.describe(limit=4)}")
+        if len(amended) > 20:
+            print(f"  and {len(amended) - 20} more")
+
+    if regenerated:
+        print(
+            f"\n{regenerated} documents regenerated — every byte moved, not "
+            "one word did"
+        )
+
+    if unexplained:
+        print("\nREAD, NOT COMPARED")
+        for state, document in unexplained[:20]:
+            print(f"  {state}  {document.code or document.url}")
+        if len(unexplained) > 20:
+            print(f"  and {len(unexplained) - 20} more")
 
 
 def _cmd_serve(args: argparse.Namespace) -> int:

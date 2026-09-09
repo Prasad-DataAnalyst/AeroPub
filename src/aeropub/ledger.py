@@ -167,6 +167,17 @@ class SqliteLedger:
         ).fetchone()
         return row["content_hash"] if row else None
 
+    def archive_key_for(self, url: str) -> str | None:
+        """Where the copy of this URL's content is, or ``None``.
+
+        The hash says what it contained; this says where to find it. Comparing
+        two versions of a document needs the second.
+        """
+        row = self._connection.execute(
+            "SELECT archive_key FROM seen WHERE url = ?", (url,)
+        ).fetchone()
+        return row["archive_key"] if row else None
+
     def record(
         self,
         url: str,
