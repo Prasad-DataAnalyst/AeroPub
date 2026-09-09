@@ -290,6 +290,35 @@ class SqliteFactStore:
             )
             return cursor.rowcount
 
+    def supersede_document(self, document: str, at: datetime) -> int:
+        """Close every current row that came from one document.
+
+        Scoped to the document on purpose, and the difference is not
+        cosmetic. :meth:`supersede` closes every current row for a *key*
+        whatever published it — so using it when an AIP section is re-read
+        would close a NOTAM covering the same attribute, and an operator
+        would stop seeing a restriction that is still in force because an
+        unrelated page was refetched. Precedence exists so a NOTAM sits above
+        an AIP fact; a re-read of the layer beneath must not reach up through
+        it.
+
+        Returns how many rows were closed.
+        """
+        if at.tzinfo is None:
+            raise ValueError("supersede_document(at=) must be timezone-aware (UTC)")
+        if not document.strip():
+            raise ValueError(
+                "supersede_document needs a document; an empty one would match "
+                "every row that never recorded which document it came from"
+            )
+        with self._transaction() as connection:
+            cursor = connection.execute(
+                "UPDATE facts SET superseded_at = ? "
+                "WHERE document = ? AND superseded_at IS NULL",
+                (at.isoformat(), document),
+            )
+            return cursor.rowcount
+
     # -- reading ---------------------------------------------------------
 
     def _query(self, sql: str, params: tuple = ()) -> list[Fact]:

@@ -45,10 +45,12 @@ from .archive import Archive
 from .cycle import Cycle, CycleReport
 from .ledger import SqliteLedger
 from .publication import Edition, EditionStatus
+from .record import record_cycle
 from .reader import Retrieved
 from .resolve import Resolver
 from .serve import Loop, interval_at
 from .states import qatar
+from .store import SqliteFactStore
 from .transport import LiveTransport, TransportError
 
 __all__ = ["main", "resolvers", "build_cycle"]
@@ -177,6 +179,12 @@ def _cmd_run(args: argparse.Namespace) -> int:
         report = cycle.run()
         print(report.describe())
         _print_changes(report)
+
+        with SqliteFactStore(home / "facts.db") as store:
+            written = record_cycle(store, report)
+        if written.documents:
+            print("\n" + written.describe())
+
         return OK if not (report.incomplete or report.unreached) else INCOMPLETE
     finally:
         ledger.close()
@@ -248,6 +256,10 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 return
             print(report.describe())
             _print_changes(report)
+            with SqliteFactStore(home / "facts.db") as store:
+                written = record_cycle(store, report)
+            if written.documents:
+                print(written.describe())
             print()
 
         loop = Loop(
@@ -294,6 +306,10 @@ def _cmd_status(args: argparse.Namespace) -> int:
         entries = list(ledger.entries())
         print(f"AEROPUB — {home}")
         print()
+        facts_db = home / "facts.db"
+        if facts_db.exists():
+            with SqliteFactStore(facts_db) as store:
+                print(f"  {len(store)} facts held over {len(store.entities())} entities")
         print(f"  {len(entries)} documents known  ·  {len(archive)} archived  ·  "
               f"{archive.total_bytes():,} bytes")
         unarchived = [e for e in entries if not e.claims_a_copy]

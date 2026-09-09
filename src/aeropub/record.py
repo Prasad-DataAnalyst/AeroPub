@@ -1,0 +1,152 @@
+"""Facts read this cycle, into the store that keeps them.
+
+:mod:`aeropub.cycle` moves documents. This is what turns a document that was
+read into values the application holds, and it is short because the store
+already enforces most of what matters — append-only, bitemporal, a citation on
+every row.
+
+What it has to get right is what happens to *last* cycle's reading of the same
+document. Appending alone leaves two live values for one key with no way to
+tell which is current. Superseding too widely is worse, and is the reason this
+module exists rather than a two-line call at the end of the cycle.
+
+The narrow supersede
+--------------------
+An AIP section is re-read and yields a new value for OTHH's runway length. The
+previous value from *that section* is no longer current and must be closed. A
+NOTAM covering the same attribute is a different matter entirely: it sits above
+the AIP in :class:`~aeropub.facts.Precedence` precisely so it overrides it, and
+closing it because the layer beneath was refetched would take a restriction
+that is still in force off an operator's screen. So the supersede is scoped to
+the document, never to the key.
+
+Nothing is recorded from a citation that will not resolve
+---------------------------------------------------------
+A document read but not archived produces facts at ``LOW`` confidence, because
+its citation stops resolving as soon as the State withdraws the edition. Those
+facts are still recorded — refusing them would deny a State's data over a fault
+of ours — but :attr:`Recorded.unresolvable` counts them, so a store that has
+quietly filled with values nobody can verify is visible rather than inferred.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Protocol
+
+from .facts import Fact
+from .provenance import Confidence
+from .reader import ReadResult
+
+__all__ = ["Recorded", "FactSink", "record_result", "record_cycle"]
+
+
+class FactSink(Protocol):
+    """The part of a fact store this needs. Injected, so a test needs no disk."""
+
+    def extend(self, facts) -> None:
+        ...
+
+    def supersede_document(self, document: str, at: datetime) -> int:
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class Recorded:
+    """What one recording pass wrote."""
+
+    documents: int = 0
+    facts: int = 0
+    superseded: int = 0
+    unresolvable: int = 0
+    """Facts whose citation stops resolving when the State moves on.
+
+    Written, and counted. A store filling with values nobody can verify is a
+    condition to see, not one to infer from a confidence column nobody reads.
+    """
+
+    skipped_unparsed: int = 0
+    """Documents that produced no facts because nothing parsed them.
+
+    Never confused with a document that parsed and found nothing: one is a
+    parser we have not written, the other is a page with nothing in it.
+    """
+
+    def describe(self) -> str:
+        lines = [
+            f"{self.facts} facts from {self.documents} documents"
+            f"  ·  {self.superseded} superseded"
+        ]
+        if self.unresolvable:
+            lines.append(
+                f"  {self.unresolvable} rest on a citation that will not "
+                "resolve once the State withdraws the edition"
+            )
+        if self.skipped_unparsed:
+            lines.append(
+                f"  {self.skipped_unparsed} documents had no parser, so nothing "
+                "was read from them"
+            )
+        return "\n".join(lines)
+
+
+def record_result(
+    sink: FactSink, result: ReadResult, *, at: datetime | None = None
+) -> Recorded:
+    """Write one document's facts, closing that document's previous reading.
+
+    A document that was not parsed writes nothing and supersedes nothing —
+    an absent parser is not evidence that the previous values are wrong.
+    """
+    moment = at or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        raise ValueError("record_result(at=) must be timezone-aware (UTC)")
+
+    if not result.parsed:
+        return Recorded(documents=1, skipped_unparsed=1)
+
+    document = result.link.document
+    # Closed before the new rows go in, so no window exists where both the
+    # old and the new reading are current.
+    closed = sink.supersede_document(document, moment)
+
+    facts = tuple(result.facts)
+    if facts:
+        sink.extend(facts)
+
+    return Recorded(
+        documents=1,
+        facts=len(facts),
+        superseded=closed,
+        unresolvable=(
+            len(facts)
+            if result.confidence is Confidence.LOW or result.citation_will_expire
+            else 0
+        ),
+    )
+
+
+def record_cycle(sink: FactSink, report, *, at: datetime | None = None) -> Recorded:
+    """Write every document read this cycle.
+
+    Only documents that were *read*. An unchanged document's facts are already
+    in the store and rewriting them would replace a row recorded when the
+    value actually arrived with one recorded today — losing exactly the date
+    an investigation asks for.
+    """
+    moment = at or datetime.now(timezone.utc)
+    total = Recorded()
+    for state in report.states:
+        for outcome in state.read:
+            if outcome.result is None:
+                continue
+            one = record_result(sink, outcome.result, at=moment)
+            total = Recorded(
+                documents=total.documents + one.documents,
+                facts=total.facts + one.facts,
+                superseded=total.superseded + one.superseded,
+                unresolvable=total.unresolvable + one.unresolvable,
+                skipped_unparsed=total.skipped_unparsed + one.skipped_unparsed,
+            )
+    return total
