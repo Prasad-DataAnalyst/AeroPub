@@ -45,7 +45,7 @@ from .archive import Archive
 from .cycle import Cycle, CycleReport
 from .ledger import SqliteLedger
 from .publication import Edition, EditionStatus
-from .record import record_cycle
+from .record import record_cycle, supplements_from, write_supplement_manifest
 from .reader import Retrieved
 from .resolve import Resolver
 from .serve import Loop, interval_at
@@ -198,6 +198,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
         if written.documents:
             print("\n" + written.describe())
 
+        _write_supplements(home, report)
+
         return OK if not (report.incomplete or report.unreached) else INCOMPLETE
     finally:
         ledger.close()
@@ -224,6 +226,47 @@ def _plan(cycle: Cycle, transport: LiveTransport) -> int:
         except (TransportError, Exception) as error:  # noqa: BLE001
             print(f"  {resolver.state}: {type(error).__name__}: {error}")
     return OK
+
+
+def _write_supplements(home: Path, report: CycleReport) -> None:
+    """Record the supplements this cycle knows about, per State.
+
+    Written even when the set is unchanged: the file is what a person edits to
+    fill in the validity windows, and a run that quietly stopped maintaining it
+    would leave a register drifting from what the State publishes.
+    """
+    for state in report.states:
+        found = supplements_from(report, state=state.state)
+        if not found:
+            continue
+        listing = next(
+            (
+                d.result
+                for d in state.documents
+                if d.result is not None
+                and d.result.publication.code.startswith("eSUP")
+            ),
+            None,
+        )
+        if listing is None or not listing.link.content_hash:
+            # The list is what the manifest cites. Without it the file cannot
+            # be read back, so none is written and the reason is said.
+            print(
+                f"\n{state.state}: {len(found)} supplements found, none "
+                "written — the list they came from was not read this cycle, "
+                "so nothing could cite them."
+            )
+            continue
+        path = home / f"supplements-{state.state}.json"
+        count = write_supplement_manifest(
+            path, found, state=state.state,
+            list_url=listing.link.url, list_hash=listing.link.content_hash,
+        )
+        print(f"\n{state.state}: {count} supplements recorded in {path.name}")
+        print(
+            "  Their validity windows are unread, so none can be said to have "
+            "ended.\n  Fill the dates in that file to make them forecastable."
+        )
 
 
 def _print_changes(report: CycleReport) -> None:
@@ -299,6 +342,7 @@ def _cmd_serve(args: argparse.Namespace) -> int:
                 written = record_cycle(store, report)
             if written.documents:
                 print(written.describe())
+            _write_supplements(home, report)
             print()
 
         loop = Loop(
@@ -349,6 +393,15 @@ def _cmd_status(args: argparse.Namespace) -> int:
         if facts_db.exists():
             with SqliteFactStore(facts_db) as store:
                 print(f"  {len(store)} facts held over {len(store.entities())} entities")
+        for manifest in sorted(home.glob("supplements-*.json")):
+            from .supplement import load_supplements
+
+            register = load_supplements(manifest)
+            unread = len(register.of_unread_window())
+            line = f"  {len(register)} supplements held ({manifest.stem.split('-')[-1]})"
+            if unread:
+                line += f", {unread} with no window read"
+            print(line)
         print(f"  {len(entries)} documents known  ·  {len(archive)} archived  ·  "
               f"{archive.total_bytes():,} bytes")
         unarchived = [e for e in entries if not e.claims_a_copy]

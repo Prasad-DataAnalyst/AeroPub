@@ -45,6 +45,7 @@ __all__ = [
     "record_result",
     "record_cycle",
     "supplements_from",
+    "write_supplement_manifest",
 ]
 
 
@@ -215,3 +216,80 @@ def supplements_from(
                 )
             )
     return tuple(found)
+
+
+def write_supplement_manifest(
+    path,
+    supplements,
+    *,
+    state: str,
+    list_url: str = "",
+    list_hash: str = "",
+) -> int:
+    """Write discovered supplements where :func:`load_supplements` can read them.
+
+    The manifest format already exists for supplements a person transcribed,
+    and a discovered one is the same shape with fewer fields filled. Reusing it
+    means nothing downstream needs to know which way a supplement arrived — and
+    a person who later reads the windows edits this file rather than replacing
+    it.
+
+    Every entry is written with empty dates, deliberately. A file that carried
+    invented windows would be indistinguishable from a transcribed one, and the
+    whole point of :attr:`~aeropub.supplement.ForcePeriod.UNDATED` is that an
+    unread window stays visibly unread.
+
+    ``list_hash`` is the hash of the page the supplements were listed on, and
+    it is required: :func:`~aeropub.supplement.load_supplements` refuses a
+    manifest whose document cannot be identified, so writing one without it
+    produces a file that can never be read back. Failing here, with the reason,
+    beats leaving that to be discovered later.
+    """
+    import json
+    from pathlib import Path
+
+    target = Path(path)
+    ordered = sorted(supplements, key=lambda s: s.identifier)
+    if ordered and not list_hash.strip():
+        raise ValueError(
+            "write_supplement_manifest needs list_hash — the hash of the page "
+            "these were listed on. load_supplements refuses a manifest whose "
+            "document cannot be identified, so one written without it can "
+            "never be read back."
+        )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    first = ordered[0].source if ordered else None
+
+    manifest = {
+        "source": {
+            "source_id": state,
+            "document": f"{state} supplement list",
+            "document_path": "",
+            "retrieved_at": (
+                first.retrieved_at.isoformat()
+                if first
+                else datetime.now(timezone.utc).isoformat()
+            ),
+            "published_at": "",
+            "original_url": list_url or (first.original_url if first else ""),
+            "content_hash": list_hash,
+        },
+        "region": "",
+        "supplements": [
+            {
+                "identifier": s.identifier,
+                "section": s.section,
+                "subjects": list(s.subjects),
+                "effective_from": "",
+                "effective_to": "",
+                "supersession": s.supersession.value,
+                "summary": s.summary,
+                "replaces": s.replaces,
+                "remarks": s.remarks,
+                "locator": s.source.original_url or s.source.locator,
+            }
+            for s in ordered
+        ],
+    }
+    target.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return len(ordered)

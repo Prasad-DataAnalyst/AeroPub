@@ -84,9 +84,9 @@ class TestTheAssembly:
             build_cycle(home, only="ZZ")
 
     def test_a_run_reads_the_whole_aip(self, home):
-        """Eighty sections plus the three lists — AMDT, SUP and AIC — which
-        are documents the State publishes and where a supplement is
-        announced, so they are monitored rather than merely followed."""
+        """Eighty sections plus the three lists — AMDT, SUP and AIC. This
+        fixture's SUP list is empty, so no supplements sit behind it; the
+        supplement path has its own test below."""
         report, _ = run_once(home)
         assert len(report.states[0].read) == 83
 
@@ -227,3 +227,79 @@ class TestNothingReadsAsHealthWhenItIsNot:
         report = cycle.run()
         ledger.close()
         assert report.states[0].is_complete
+
+
+class TestSupplementsAreRecordedByARun:
+    """A run that found supplements must leave them where a person can fill in
+    the validity windows, and must say why when it cannot."""
+
+    SUPS = (
+        "https://aim.gov.qa/AIP/11-JUN-2026/AIP-29/2026-08-06-000000/html/"
+        "eSUP/QA-eSUPs-en-GB.html"
+    )
+    LISTING = b"".join(
+        b'<a href="QA-SUP-%02d-2026-en-GB.html">SUP %02d/2026</a>' % (n, n)
+        for n in range(7, 16)
+    )
+
+    class WithSupplements(Offline):
+        def __call__(self, url: str) -> Retrieved:
+            if url == TestSupplementsAreRecordedByARun.SUPS:
+                body = TestSupplementsAreRecordedByARun.LISTING
+                media_type, declared = media_type_of(url, body, "text/html")
+                return Retrieved(
+                    url=url, body=body, media_type=media_type,
+                    type_was_declared=declared,
+                    retrieved_at=datetime.now(timezone.utc),
+                )
+            return super().__call__(url)
+
+    def test_the_manifest_is_written(self, home, capsys):
+        from aeropub.watch import _write_supplements
+
+        report, _ = run_once(home, self.WithSupplements())
+        _write_supplements(home, report)
+        assert (home / "supplements-OT.json").exists()
+        assert "9 supplements recorded" in capsys.readouterr().out
+
+    def test_it_loads_back_with_windows_unread(self, home):
+        from aeropub.supplement import load_supplements
+        from aeropub.watch import _write_supplements
+
+        report, _ = run_once(home, self.WithSupplements())
+        _write_supplements(home, report)
+        register = load_supplements(home / "supplements-OT.json")
+        assert len(register) == 9
+        assert len(register.of_unread_window()) == 9
+
+    def test_status_reports_them_as_unread(self, home, capsys):
+        from aeropub.watch import _write_supplements
+
+        report, _ = run_once(home, self.WithSupplements())
+        _write_supplements(home, report)
+        capsys.readouterr()
+        main(["--home", str(home), "status"])
+        assert "9 with no window read" in capsys.readouterr().out
+
+    def test_nothing_is_written_when_the_list_was_not_read(self, home, capsys):
+        """The list is what the manifest cites. Without it the file cannot be
+        read back, so none is written and the reason is said."""
+        from aeropub.cycle import Outcome
+        from aeropub.watch import _write_supplements
+        import dataclasses
+
+        report, _ = run_once(home, self.WithSupplements())
+        state = report.states[0]
+        stripped = tuple(
+            dataclasses.replace(d, result=None, outcome=Outcome.FAILED)
+            if d.result is not None
+            and d.result.publication.code.startswith("eSUP")
+            else d
+            for d in state.documents
+        )
+        report = dataclasses.replace(
+            report, states=(dataclasses.replace(state, documents=stripped),)
+        )
+        _write_supplements(home, report)
+        assert not (home / "supplements-OT.json").exists()
+        assert "nothing could cite them" in capsys.readouterr().out

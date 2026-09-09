@@ -157,3 +157,127 @@ class TestAnUnreadWindowIsNotAnEndedOne:
             period = supplement.state_on(TODAY)
             screened = supplement in register.not_known_to_have_ended(TODAY)
             assert screened == (period.applies is not False)
+
+
+class TestPersistingWhatWasFound:
+    """Discovered supplements go into the manifest format that already exists
+    for transcribed ones, so nothing downstream needs to know which way a
+    supplement arrived — and a person who later reads the windows edits this
+    file rather than replacing it."""
+
+    def _written(self, tmp_path, supplements):
+        from aeropub.record import write_supplement_manifest
+
+        path = tmp_path / "supplements.json"
+        count = write_supplement_manifest(
+            path, supplements, state="QA-CAA",
+            list_url="https://aim.gov.qa/eSUP/QA-eSUPs-en-GB.html",
+            list_hash="c" * 64,
+        )
+        return path, count
+
+    def test_it_round_trips(self, tmp_path):
+        from aeropub.supplement import load_supplements
+
+        found = supplements_from(a_report("SUP 15/2026", "SUP 16/2026"), state="QA-CAA")
+        path, count = self._written(tmp_path, found)
+        assert count == 2
+        assert len(load_supplements(path)) == 2
+
+    def test_the_windows_come_back_unread(self, tmp_path):
+        """A file carrying invented dates would be indistinguishable from a
+        transcribed one."""
+        from aeropub.supplement import load_supplements
+
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        path, _ = self._written(tmp_path, found)
+        register = load_supplements(path)
+        assert len(register.of_unread_window()) == 1
+        assert register.in_force(TODAY) == ()
+
+    def test_each_entry_points_at_its_own_document(self, tmp_path):
+        import json
+
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        path, _ = self._written(tmp_path, found)
+        entry = json.loads(path.read_text())["supplements"][0]
+        assert entry["locator"].endswith("SUP-15-2026.html")
+
+    def test_a_manifest_without_a_hash_is_refused_at_write_time(self, tmp_path):
+        """load_supplements refuses a manifest whose document cannot be
+        identified, so one written without a hash can never be read back.
+        Failing here, with the reason, beats discovering it later."""
+        from aeropub.record import write_supplement_manifest
+
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        with pytest.raises(ValueError, match="needs list_hash"):
+            write_supplement_manifest(
+                tmp_path / "bad.json", found, state="QA-CAA"
+            )
+
+    def test_an_empty_set_needs_no_hash(self, tmp_path):
+        """Nothing to cite, so nothing to refuse."""
+        from aeropub.record import write_supplement_manifest
+
+        assert write_supplement_manifest(
+            tmp_path / "empty.json", (), state="QA-CAA"
+        ) == 0
+
+
+class TestAForecastSaysWhatItCouldNotSee:
+    """horizon exists to answer what changes that nobody will announce. A
+    supplement whose window is unread is exactly such a change — it may end
+    tomorrow with the layer beneath resurfacing and nothing published to say
+    so — and a forecast that silently omits it reads as complete."""
+
+    def _horizon(self, tmp_path, register=None):
+        from aeropub.horizon import horizon
+        from aeropub.store import SqliteFactStore
+
+        with SqliteFactStore(tmp_path / "f.db") as store:
+            return horizon(
+                store, "OTHH", from_date=TODAY, days=90, supplements=register
+            )
+
+    def test_without_a_register_it_reports_no_blind_spots(self, tmp_path):
+        assert not self._horizon(tmp_path).has_blind_spots
+
+    def test_undated_supplements_are_carried(self, tmp_path):
+        found = supplements_from(a_report("SUP 15/2026", "SUP 16/2026"), state="QA-CAA")
+        view = self._horizon(tmp_path, SupplementRegister(found))
+        assert len(view.undated_supplements) == 2
+
+    def test_the_forecast_is_not_exact(self, tmp_path):
+        """Not a fault in the forecast — a fault in what was read — and the
+        distinction belongs on the screen."""
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        assert not self._horizon(tmp_path, SupplementRegister(found)).is_exact
+
+    def test_it_says_so_where_a_reader_will_see_it(self, tmp_path):
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        text = self._horizon(tmp_path, SupplementRegister(found)).render()
+        assert "NOT IN THIS FORECAST" in text
+        assert "SUP 15/2026" in text
+
+    def test_an_empty_forecast_still_names_them(self, tmp_path):
+        """'No dated change ahead' with nine unreadable supplements held is
+        the reading this exists to prevent."""
+        found = supplements_from(
+            a_report(*[f"SUP {n:02d}/2026" for n in range(7, 16)]), state="QA-CAA"
+        )
+        text = self._horizon(tmp_path, SupplementRegister(found)).render()
+        assert "No dated change ahead" in text
+        assert "9 supplements held with no window read" in text
+
+    def test_a_dated_supplement_is_not_a_blind_spot(self, tmp_path):
+        dated = SupplementRegister((
+            Supplement(identifier="SUP 07/2026", source=a_source(),
+                       effective_from=date(2026, 6, 1),
+                       effective_to=date(2026, 12, 31)),
+        ))
+        assert self._horizon(tmp_path, dated).undated_supplements == ()
+
+    def test_the_summary_counts_them(self, tmp_path):
+        found = supplements_from(a_report("SUP 15/2026"), state="QA-CAA")
+        summary = self._horizon(tmp_path, SupplementRegister(found)).summary()
+        assert summary["undated_supplements"] == 1

@@ -137,6 +137,35 @@ class Horizon:
     """The belief this was computed from. A horizon is only as complete as what
     was held when it was taken, and this is what makes it reproducible."""
 
+    undated_supplements: tuple = ()
+    """Supplements held whose validity window nobody has read.
+
+    A supplement with no dates contributes no transition, correctly — there is
+    no date on which to place one. But this module exists to answer *what
+    changes that nobody will announce*, and a supplement whose window is
+    unread is exactly such a change: it may end tomorrow, and the layer
+    beneath would resurface with nothing published to say so.
+
+    So they are carried rather than omitted. A forecast that silently leaves
+    out what it could not see reads as complete, and a reader who trusts it
+    twice stops checking.
+    """
+
+    @property
+    def has_blind_spots(self) -> bool:
+        """Whether something is held that this forecast could not place."""
+        return bool(self.undated_supplements)
+
+    @property
+    def is_exact(self) -> bool:
+        """Whether every held document contributed what it says.
+
+        False where a supplement's window is unread. Not a fault in the
+        forecast — a fault in what was read — and the distinction belongs on
+        the screen rather than in a caveat nobody reads.
+        """
+        return not self.has_blind_spots
+
     @property
     def unannounced(self) -> tuple[Transition, ...]:
         """The ones nobody will be told about. The reason this module exists."""
@@ -166,6 +195,7 @@ class Horizon:
             "announced": len(self.announced),
             "within_7_days": len(self.within(7)),
             "within_28_days": len(self.within(28)),
+            "undated_supplements": len(self.undated_supplements),
         }
 
     def render(self) -> str:
@@ -181,6 +211,7 @@ class Horizon:
                 "No dated change ahead in what is held. That is not a forecast: "
                 "a NOTAM issued tomorrow would change it."
             )
+            lines += _blind_spot_lines(self)
             return "\n".join(lines)
 
         lines.append(
@@ -206,12 +237,31 @@ class Horizon:
                 lines.append(f"  {item.describe()}")
                 lines.append(f"      {item.why()}")
 
+        lines += _blind_spot_lines(self)
         lines += [
             "",
             "Computed from what is held now. It is exact about those "
             "publications and silent about any not yet issued.",
         ]
         return "\n".join(lines)
+
+
+def _blind_spot_lines(view: Horizon) -> list[str]:
+    """What this forecast is holding and could not place on a date."""
+    if not view.undated_supplements:
+        return []
+    lines = [
+        "",
+        f"NOT IN THIS FORECAST — {len(view.undated_supplements)} supplements "
+        "held with no window read",
+        "  Each may end on a day nothing is published. Until their dates are "
+        "read,\n  this view cannot say when.",
+    ]
+    for supplement in view.undated_supplements[:10]:
+        lines.append(f"    {supplement.identifier}")
+    if len(view.undated_supplements) > 10:
+        lines.append(f"    and {len(view.undated_supplements) - 10} more")
+    return lines
 
 
 def _trigger(before: Fact | None, after: Fact | None) -> Trigger:
@@ -256,12 +306,19 @@ def horizon(
     days: int = DEFAULT_DAYS,
     through: date | None = None,
     as_known_at: datetime | None = None,
+    supplements=None,
 ) -> Horizon:
     """Every dated change ahead for one entity and everything beneath it.
 
     Exact rather than predictive: it evaluates the CES on each date a held
     window opens or closes, and reports the differences. Nothing is
     extrapolated, and nothing not yet published is guessed at.
+
+    ``supplements`` is a :class:`~aeropub.supplement.SupplementRegister`. Its
+    dated entries already reach here through the fact store; what it adds is
+    the ones with no window read, which cannot be placed on any date and are
+    carried as blind spots rather than dropped. Omitting them would make a
+    forecast that could not see them look complete.
     """
     key = normalise(entity)
     if not key:
@@ -315,10 +372,18 @@ def horizon(
             )
 
     transitions.sort(key=lambda t: (t.on, t.entity, t.attribute))
+    undated = ()
+    if supplements is not None:
+        # Dated supplements already reach this view through the fact store.
+        # These are the ones no date can place, and dropping them would let a
+        # forecast that could not see them read as complete.
+        undated = tuple(supplements.of_unread_window())
+
     return Horizon(
         entity=key,
         from_date=start,
         through=end,
         transitions=tuple(transitions),
         as_known_at=as_known_at,
+        undated_supplements=undated,
     )
